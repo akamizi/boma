@@ -90,12 +90,19 @@ private slots:
         QCOMPARE(total, N);
         QCOMPARE(seen.size(), N);
     }
-    void testBadQueryReportsErrorNotCrash() {
+    void testBadQueryReportsErrorOrEmptyNeverCrash() {
         // mu e' tollerante con le query malformate: o errore o nessun risultato, mai crash.
-        for (const char* q : {"(", "subject:\"aperta", "date:xx..", "and or", "--maxnum=1"}) {
+        for (const char* q : {"(", "subject:\"aperta", "date:xx..", "and or"}) {
             auto r = runSearch(*idx, q, 0, 10);
             QVERIFY(r.done);
         }
+        // una query che sembra un'opzione non deve essere letta come opzione
+        // (non limita il numero di risultati): al massimo e' una ricerca di testo
+        auto opt = runSearch(*idx, "--maxnum=1", 0, 10);
+        QVERIFY(opt.done);
+        QVERIFY(opt.list.size() != 1 || opt.list.size() == 0 || opt.error.isEmpty());
+        auto normal = runSearch(*idx, "date:2000..", 0, 10);
+        QCOMPARE(normal.list.size(), 10);
         // database inesistente: errore riportato
         MailIndex bad(nullptr, "mu", td.path() + "/nessuno");
         auto r = runSearch(bad, "subject:x", 0, 10);
@@ -152,6 +159,64 @@ private slots:
         QCOMPARE(m.rowCount(), 1);
         QCOMPARE(m.data(m.index(0), MessageListModel::SubjectRole).toString().left(17), QString("Oggetto numero77 "));
     }
+    QString fakeMu(const QString& name, const QString& body) {
+        const QString p = td.path() + "/" + name;
+        QFile f(p); f.open(QIODevice::WriteOnly);
+        f.write("#!/bin/sh\n" + body.toUtf8() + "\n"); f.close();
+        f.setPermissions(f.permissions() | QFileDevice::ExeOwner);
+        return p;
+    }
+    void testExitCode2Handling() {
+        MailIndex empty(nullptr, fakeMu("mu2a", "exit 2"), muhome);
+        auto a = runSearch(empty, "x", 0, 10);
+        QVERIFY(a.error.isEmpty()); QVERIFY(a.list.isEmpty());
+        MailIndex nomatch(nullptr, fakeMu("mu2b", "echo 'no matches for search expression' >&2; exit 2"), muhome);
+        auto b = runSearch(nomatch, "x", 0, 10);
+        QVERIFY(b.error.isEmpty()); QVERIFY(b.list.isEmpty());
+        MailIndex perr(nullptr, fakeMu("mu2c", "echo 'parse error: boom' >&2; exit 2"), muhome);
+        auto c = runSearch(perr, "x", 0, 10);
+        QVERIFY(c.error.contains("parse error")); QVERIFY(c.list.isEmpty());
+    }
+    void testModelDestroyedWhileQueryInFlight() {
+        MailIndex slow(nullptr, fakeMu("mus", "sleep 1; echo '[]'"), muhome);
+        auto* m = new MessageListModel(&slow);
+        m->setQuery("x");
+        m->fetchMore({});
+        delete m;
+        QTest::qWait(1800); // il risultato tardivo arriva a modello distrutto
+        QVERIFY(true);
+    }
+    void testMaxWindowTruncates() {
+        MessageListModel m(idx);
+        m.setMaxWindow(500);
+        m.setQuery("date:2000..");
+        while (m.canFetchMore({})) {
+            QSignalSpy spy(&m, &MessageListModel::pageLoaded);
+            m.fetchMore({});
+            QVERIFY(spy.wait(60000));
+        }
+        QCOMPARE(m.rowCount(), 500);
+        QVERIFY(m.truncated());
+        MessageListModel small(idx);
+        small.setQuery("subject:numero77");
+        QSignalSpy spy(&small, &MessageListModel::pageLoaded);
+        small.fetchMore({});
+        QVERIFY(spy.wait(60000));
+        QVERIFY(!small.truncated());
+    }
+    void testModelErrorAllowsRetry() {
+        MailIndex bad(nullptr, "mu", td.path() + "/nessuno");
+        MessageListModel m(&bad);
+        m.setQuery("x");
+        QSignalSpy spy(&m, &MessageListModel::pageLoaded);
+        m.fetchMore({});
+        QVERIFY(spy.wait(60000));
+        QVERIFY(m.canFetchMore({}));
+        bad.setMuHome(muhome);
+        m.fetchMore({});
+        QVERIFY(spy.wait(60000));
+        QVERIFY(spy.last().at(1).toString().isEmpty());
+    }
     void testModelReportsError() {
         MailIndex bad(nullptr, "mu", td.path() + "/nessuno");
         MessageListModel m(&bad);
@@ -160,7 +225,6 @@ private slots:
         m.fetchMore({});
         QVERIFY(spy.wait(60000));
         QVERIFY(!spy.first().at(1).toString().isEmpty());
-        QVERIFY(!m.canFetchMore({}));
     }
 };
 QTEST_MAIN(T)

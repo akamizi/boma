@@ -24,9 +24,13 @@ using SearchCallback = std::function<void(QList<MessageSummary>, QString error)>
 // per data, dal piu' recente.
 // - mu find non ha un offset: per la pagina [offset, offset+limit) si chiede
 //   --maxnum=offset+limit e si scartano i primi "offset" risultati. Il costo
-//   cresce con la profondita' della pagina.
-// - "nessuna corrispondenza" (mu esce con codice 2) e' un risultato vuoto, non
-//   un errore. mu e' tollerante con le query malformate: spesso le tratta come
+//   cresce linearmente con la profondita' della pagina (tutte le righe sono
+//   rianalizzate sul thread della GUI): misurato 493 ms a offset 5000 su 50k
+//   messaggi. Limite noto della v1; MessageListModel limita la finestra
+//   (kMaxWindow) e segnala truncated(). Se l'indice cambia tra due pagine gli
+//   offset si spostano: azzerare il modello dopo reindex/azioni.
+// - "nessuna corrispondenza" (mu esce con codice 2 e scrive "no matches" su
+//   stderr) e' un risultato vuoto; codice 2 con altro stderr e' un errore. mu e' tollerante con le query malformate: spesso le tratta come
 //   ricerca senza risultati.
 // - mu index lavora sull'intera radice configurata: accountId in reindex()
 //   serve solo al chiamante.

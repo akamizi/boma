@@ -22,6 +22,8 @@ public:
         AccountIdRole
     };
     static constexpr int PageSize = 200;
+    // Finestra massima richiesta a mu (il costo cresce con la profondita').
+    static constexpr int kMaxWindow = 5000;
 
     explicit MessageListModel(MailIndex* index, QObject* parent = nullptr);
 
@@ -29,6 +31,10 @@ public:
     void setQuery(const QString& query);
     // Come setQuery con la query corrente.
     void reset();
+    void setMaxWindow(int n) { m_maxWindow = n; }
+    // true se i risultati sono stati troncati dal limite di finestra: la UI
+    // puo' suggerire di affinare la ricerca.
+    bool truncated() const { return m_truncated; }
     QString query() const { return m_query; }
     bool isLoading() const { return m_loading; }
     const MessageSummary& summary(int row) const { return m_rows.at(row); }
@@ -44,12 +50,14 @@ signals:
     void pageLoaded(int added, const QString& error);
 
 private:
+    void applyPage(QList<MessageSummary> list, const QString& error, int want);
     QPointer<MailIndex> m_index;
     QString m_query;
     QList<MessageSummary> m_rows;
     QSet<QString> m_seen;
     int m_offset = 0; // risultati gia' richiesti a mu (incl. duplicati scartati)
-    bool m_exhausted = false, m_loading = false;
+    bool m_exhausted = false, m_loading = false, m_truncated = false;
+    int m_maxWindow = kMaxWindow;
     quint64 m_generation = 0;
 };
 

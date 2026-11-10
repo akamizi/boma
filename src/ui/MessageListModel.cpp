@@ -19,6 +19,7 @@ void MessageListModel::reset()
     m_seen.clear();
     m_offset = 0;
     m_exhausted = false;
+    m_truncated = false;
     m_loading = false;
     endResetModel();
 }
@@ -68,20 +69,42 @@ void MessageListModel::fetchMore(const QModelIndex& parent)
 {
     if (!canFetchMore(parent))
         return;
+    const int want = qMin(int(PageSize), m_maxWindow - m_offset);
+    if (want <= 0) {
+        m_exhausted = true;
+        m_truncated = true;
+        return;
+    }
     m_loading = true;
     const quint64 gen = m_generation;
-    auto cb = [this, gen](QList<MessageSummary> list, QString error) {
-        if (gen != m_generation)
-            return; // risultato di una query superata
+    QPointer<MessageListModel> self(this);
+    auto cb = [self, gen, want](QList<MessageSummary> list, QString error) {
+        if (!self || gen != self->m_generation)
+            return; // modello distrutto o risultato di una query superata
+        self->applyPage(std::move(list), error, want);
+    };
+    if (m_query.trimmed().isEmpty())
+        m_index->unread(m_offset, want, cb);
+    else
+        m_index->search(m_query, m_offset, want, cb);
+}
+
+void MessageListModel::applyPage(QList<MessageSummary> list, const QString& error, int want)
+{
+    {
         m_loading = false;
         if (!error.isEmpty()) {
-            m_exhausted = true;
+            // non definitivo: fetchMore puo' ritentare
             emit pageLoaded(0, error);
             return;
         }
         m_offset += int(list.size());
-        if (list.size() < PageSize)
+        if (list.size() < want) {
             m_exhausted = true;
+        } else if (m_offset >= m_maxWindow) {
+            m_exhausted = true;
+            m_truncated = true;
+        }
         QList<MessageSummary> fresh;
         for (const MessageSummary& s : list) {
             if (m_seen.contains(s.path))
@@ -95,11 +118,7 @@ void MessageListModel::fetchMore(const QModelIndex& parent)
             endInsertRows();
         }
         emit pageLoaded(int(fresh.size()), QString());
-    };
-    if (m_query.trimmed().isEmpty())
-        m_index->unread(m_offset, PageSize, cb);
-    else
-        m_index->search(m_query, m_offset, PageSize, cb);
+    }
 }
 
 } // namespace boma

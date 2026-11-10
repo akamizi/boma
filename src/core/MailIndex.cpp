@@ -100,7 +100,12 @@ void MailIndex::search(const QString& query, int offset, int limit, SearchCallba
                              err = r.timedOut ? QStringLiteral("mu: tempo scaduto")
                                               : QStringLiteral("mu: non eseguibile");
                      } else if (r.exitCode == 2) {
-                         // nessuna corrispondenza: risultato vuoto
+                         // "no matches for search expression" (anche su stderr):
+                         // risultato vuoto. Qualsiasi altro testo su stderr con
+                         // codice 2 e' un errore vero (es. query non valida).
+                         const QString e = QString::fromUtf8(r.err).trimmed();
+                         if (!e.isEmpty() && !e.contains(QLatin1String("no matches"), Qt::CaseInsensitive))
+                             err = e;
                      } else if (r.exitCode != 0) {
                          err = QString::fromUtf8(r.err).trimmed();
                          if (err.isEmpty())
