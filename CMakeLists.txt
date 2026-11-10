@@ -15,6 +15,8 @@ add_library(boma_core STATIC
     src/core/MaildirWriter.cpp
     src/core/MailActions.cpp
     src/core/SyncService.cpp
+    src/core/MailIndex.cpp
+    src/ui/MessageListModel.cpp
     src/ui/MainWindow.cpp
 )
 target_include_directories(boma_core PUBLIC src)

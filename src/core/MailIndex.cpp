@@ -1,0 +1,143 @@
+#include "core/MailIndex.h"
+
+#include <QDir>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <chrono>
+
+namespace boma {
+
+QStringList MailIndex::baseArgs(const QString& sub) const
+{
+    QStringList a{sub};
+    if (!m_muHome.isEmpty())
+        a << QStringLiteral("--muhome=%1").arg(m_muHome);
+    return a;
+}
+
+QString MailIndex::accountFor(const QString& path) const
+{
+    for (const Account& acc : m_accounts) {
+        if (acc.maildirRoot.isEmpty())
+            continue;
+        const QString root = QDir::cleanPath(acc.maildirRoot);
+        if (path.startsWith(root + QLatin1Char('/')))
+            return acc.id;
+    }
+    return {};
+}
+
+static QString contactText(const QJsonValue& v)
+{
+    QStringList parts;
+    for (const QJsonValue& c : v.toArray()) {
+        const QJsonObject o = c.toObject();
+        const QString name = o.value(QStringLiteral(":name")).toString();
+        const QString email = o.value(QStringLiteral(":email")).toString();
+        parts << (name.isEmpty() ? email : name);
+    }
+    return parts.join(QStringLiteral(", "));
+}
+
+QList<MessageSummary> MailIndex::parse(const QByteArray& json, QString* error) const
+{
+    QList<MessageSummary> out;
+    QJsonParseError pe;
+    const QJsonDocument doc = QJsonDocument::fromJson(json, &pe);
+    if (pe.error != QJsonParseError::NoError || !doc.isArray()) {
+        if (error)
+            *error = QStringLiteral("mu: risposta non valida (%1)").arg(pe.errorString());
+        return out;
+    }
+    const QJsonArray arr = doc.array();
+    out.reserve(arr.size());
+    for (const QJsonValue& v : arr) {
+        const QJsonObject o = v.toObject();
+        MessageSummary m;
+        m.path = o.value(QStringLiteral(":path")).toString();
+        if (m.path.isEmpty())
+            continue;
+        m.messageId = o.value(QStringLiteral(":message-id")).toString();
+        m.from = contactText(o.value(QStringLiteral(":from")));
+        m.subject = o.value(QStringLiteral(":subject")).toString();
+        const QJsonValue d = o.value(QStringLiteral(":date-unix"));
+        if (d.isDouble())
+            m.date = QDateTime::fromSecsSinceEpoch(qint64(d.toDouble()));
+        for (const QJsonValue& f : o.value(QStringLiteral(":flags")).toArray()) {
+            const QString s = f.toString();
+            if (s == QLatin1String("unread") || s == QLatin1String("new"))
+                m.unread = true;
+            else if (s == QLatin1String("attach"))
+                m.hasAttachment = true;
+        }
+        m.accountId = accountFor(m.path);
+        out.append(m);
+    }
+    return out;
+}
+
+void MailIndex::search(const QString& query, int offset, int limit, SearchCallback cb)
+{
+    if (limit <= 0 || offset < 0) {
+        if (cb)
+            cb({}, QStringLiteral("Parametri di paginazione non validi"));
+        return;
+    }
+    QStringList args = baseArgs(QStringLiteral("find"));
+    args << QStringLiteral("--format=json") << QStringLiteral("--skip-dups")
+         << QStringLiteral("--sortfield=date") << QStringLiteral("--reverse")
+         << QStringLiteral("--maxnum=%1").arg(offset + limit);
+    // "--" : la query non deve mai essere letta come opzione.
+    args << QStringLiteral("--") << query;
+    m_runner.run(m_mu, args, std::chrono::seconds(60),
+                 [this, offset, limit, cb = std::move(cb)](ProcessResult r) {
+                     QList<MessageSummary> list;
+                     QString err;
+                     if (r.crashed || r.timedOut || r.exitCode == -1) {
+                         err = QString::fromUtf8(r.err).trimmed();
+                         if (err.isEmpty())
+                             err = r.timedOut ? QStringLiteral("mu: tempo scaduto")
+                                              : QStringLiteral("mu: non eseguibile");
+                     } else if (r.exitCode == 2) {
+                         // nessuna corrispondenza: risultato vuoto
+                     } else if (r.exitCode != 0) {
+                         err = QString::fromUtf8(r.err).trimmed();
+                         if (err.isEmpty())
+                             err = QStringLiteral("mu: errore (codice %1)").arg(r.exitCode);
+                     } else {
+                         list = parse(r.out, &err);
+                         if (err.isEmpty()) {
+                             list = list.mid(offset, limit);
+                         } else {
+                             list.clear();
+                         }
+                     }
+                     if (cb)
+                         cb(std::move(list), err);
+                 });
+}
+
+void MailIndex::unread(int offset, int limit, SearchCallback cb)
+{
+    search(QStringLiteral("flag:unread AND NOT flag:trashed"), offset, limit, std::move(cb));
+}
+
+void MailIndex::reindex(const QString&, Callback cb)
+{
+    m_runner.run(m_mu, baseArgs(QStringLiteral("index")), std::chrono::minutes(60),
+                 [cb = std::move(cb)](ProcessResult r) {
+                     const bool ok = r.exitCode == 0 && !r.crashed && !r.timedOut;
+                     QString err;
+                     if (!ok) {
+                         err = QString::fromUtf8(r.err).trimmed();
+                         if (err.isEmpty())
+                             err = r.timedOut ? QStringLiteral("mu: tempo scaduto")
+                                              : QStringLiteral("mu: errore (codice %1)").arg(r.exitCode);
+                     }
+                     if (cb)
+                         cb(ok, err);
+                 });
+}
+
+} // namespace boma
