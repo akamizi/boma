@@ -2,6 +2,7 @@
 #include "ui/MessageView.h"
 #include <QDir>
 #include <QFile>
+#include <QRegularExpression>
 #include <QSignalSpy>
 #include <QAbstractTextDocumentLayout>
 #include <QElapsedTimer>
@@ -311,6 +312,75 @@ private slots:
         err.clear();
         MessageParser::parse(QByteArray(65 * 1024 * 1024, 'a'), &err);
         QVERIFY(!err.isEmpty());
+    }
+    void testTagScannerIsLinearAndTagCountBounded() {
+        QElapsedTimer t;
+        t.start();
+        for (int i = 0; i < 50; ++i)
+            MessageView::sanitizeHtml(QStringLiteral("<a") + QString(15000, QLatin1Char(' ')) + QStringLiteral("x"));
+        QString many;
+        for (int i = 0; i < 50; ++i)
+            many += QStringLiteral("<a") + QString(15000, QLatin1Char(' ')) + QStringLiteral("x>");
+        MessageView::sanitizeHtml(many);
+        MessageView::sanitizeHtml(QStringLiteral("<a ") + QStringLiteral("a=\"").repeated(100000) + QStringLiteral(">"));
+        QVERIFY2(t.elapsed() < 2000, qPrintable(QString::number(t.elapsed())));
+        // attributi sempre gestiti correttamente dalla scansione manuale
+        const QString o = MessageView::sanitizeHtml(QStringLiteral("<A HREF='x' onClick=\"e()\" B=c D>t</A><br/>"));
+        QCOMPARE(o, QStringLiteral("<a href=\"x\" b=\"c\" d>t</a><br/>"));
+        // molti piccoli elementi: troncato con nota, layout limitato
+        ParsedMessage p;
+        p.html = QStringLiteral("<b>x</b>").repeated(125000); // ~1 MB
+        MessageView v;
+        v.resize(600, 400);
+        t.restart();
+        v.show(p);
+        v.document()->documentLayout()->documentSize();
+        QVERIFY2(t.elapsed() < 5000, qPrintable(QString::number(t.elapsed())));
+        QVERIFY(v.toPlainText().contains(QStringLiteral("Messaggio troncato")));
+    }
+    void testZeroWidthSpaceNeverInsideEntity() {
+        const QString html = QStringLiteral("<p>") + QString(198, QLatin1Char('a')) + QStringLiteral("&amp;&amp;&amp;") +
+                             QString(450, QLatin1Char('b')) + QStringLiteral("&lt;");
+        const QString out = MessageView::sanitizeHtml(html);
+        QVERIFY(out.contains(QChar(0x200B))); // le sequenze lunghe sono comunque spezzate
+        QVERIFY(!QRegularExpression(QStringLiteral("&[a-z#0-9]*\\x{200B}")).match(out).hasMatch());
+        QVERIFY(out.contains(QStringLiteral("&amp;&amp;&amp;")));
+        QVERIFY(out.contains(QStringLiteral("&lt;")));
+    }
+    void testPreScanBypassesAndDeepNesting() {
+        QString err;
+        // intestazione piegata e maiuscole non eludono il conteggio
+        QByteArray folded = "Subject: x\n";
+        for (int i = 0; i < 600; ++i) folded += "Content-Type: MULTIPART\n  /mixed; boundary=a\n";
+        MessageParser::parse(folded + "\nx", &err);
+        QVERIFY(!err.isEmpty());
+        err.clear();
+        QByteArray rfc = "Subject: x\n";
+        for (int i = 0; i < 600; ++i) rfc += "Content-Type: message /rfc822\n";
+        MessageParser::parse(rfc + "\nx", &err);
+        QVERIFY(!err.isEmpty());
+        // 400 livelli annidati reali (sotto il limite): deve tornare, senza crash
+        QByteArray r = "Subject: n\nContent-Type: multipart/mixed; boundary=\"b0\"\n\n";
+        const int levels = 400;
+        for (int i = 0; i < levels - 1; ++i)
+            r += "--b" + QByteArray::number(i) + "\nContent-Type: multipart/mixed; boundary=\"b" + QByteArray::number(i + 1) + "\"\n\n";
+        r += "--b" + QByteArray::number(levels - 1) + "\nContent-Type: text/plain\n\ndeep\n";
+        for (int i = levels - 1; i >= 0; --i) r += "--b" + QByteArray::number(i) + "--\n";
+        QElapsedTimer t;
+        t.start();
+        err.clear();
+        MessageParser::parse(r, &err);
+        MessageParser::attachmentData(r, 0);
+        QVERIFY(t.elapsed() < 5000);
+    }
+    void testHugeFilenameIsFast() {
+        QElapsedTimer t;
+        t.start();
+        const QString a = MessageParser::sanitizeFilename(QString(1000000, QLatin1Char(' ')) + QString(1000000, QLatin1Char('a')) + QStringLiteral(".txt"));
+        const QString b = MessageParser::sanitizeFilename(QString(1000000, QLatin1Char('.')) + QString::fromUtf8("\U0001F600").repeated(500000));
+        QVERIFY2(t.elapsed() < 1000, qPrintable(QString::number(t.elapsed())));
+        QVERIFY(a.toUtf8().size() <= 200 && a.endsWith(QStringLiteral(".txt")));
+        QVERIFY(b.toUtf8().size() <= 200 && !b.isEmpty());
     }
     void testFilenameUnicodeAndLength() {
         // RLO (U+202E) rimosso, emoji non BMP conservata

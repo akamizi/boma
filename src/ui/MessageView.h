@@ -12,7 +12,8 @@ class MessageView : public QTextBrowser {
 public:
     explicit MessageView(QWidget* parent = nullptr);
     void show(const ParsedMessage& m);
-    static QString sanitizeHtml(const QString& html);
+    // consumed (opzionale): caratteri di input elaborati (< size se troncato per numero di tag).
+    static QString sanitizeHtml(const QString& html, qsizetype* consumed = nullptr);
 
 signals:
     void linkActivated(const QUrl& url);

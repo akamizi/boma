@@ -5,6 +5,7 @@
 
 #undef signals
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QStringConverter>
 #include <QTemporaryFile>
@@ -135,25 +136,60 @@ QByteArray exactFirstPart(const QByteArray& raw, const QByteArray& boundary) {
 }
 
 constexpr qsizetype kMaxInput = qsizetype(64) * 1024 * 1024;
-constexpr int kMaxMultipartMarkers = 100;
+constexpr int kMaxMultipartMarkers = 500;
 
 // Controllo economico prima di GMime (il cui parser e la cui distruzione sono
-// ricorsivi): dimensione massima e numero massimo di "multipart/" nel
-// messaggio, che limita anche la profondita' di annidamento.
+// ricorsivi). Limiti: 64 MB di input e al massimo 500 marcatori di struttura
+// nel messaggio, dove un marcatore e' "multipart" seguito (dopo spazi/a capo
+// opzionali, quindi anche in intestazioni piegate) da "/", oppure
+// "message/rfc822". Il confronto non distingue maiuscole. Il totale (non la
+// profondita') limita l'annidamento, e solo la sua ricerca e' lineare:
+// falsi positivi possibili in messaggi con piu' di 500 parti multipart.
 bool tooBigOrDeep(const QByteArray& raw, QString* why) {
     if (raw.size() > kMaxInput) {
         if (why) *why = QStringLiteral("messaggio troppo grande");
         return true;
     }
     const QByteArray low = raw.toLower();
+    auto skipWs = [&](qsizetype i) {
+        while (i < low.size() && (low[i] == ' ' || low[i] == '\t' || low[i] == '\r' || low[i] == '\n')) ++i;
+        return i;
+    };
     int n = 0;
-    for (qsizetype i = low.indexOf("multipart/"); i >= 0; i = low.indexOf("multipart/", i + 1)) {
-        if (++n > kMaxMultipartMarkers) {
-            if (why) *why = QStringLiteral("troppi livelli MIME annidati");
-            return true;
+    auto count = [&](const char* word, const char* rest) {
+        const qsizetype wl = qsizetype(std::strlen(word));
+        for (qsizetype i = low.indexOf(word); i >= 0; i = low.indexOf(word, i + wl)) {
+            qsizetype j = skipWs(i + wl);
+            if (j >= low.size() || low[j] != '/') continue;
+            if (*rest) {
+                j = skipWs(j + 1);
+                if (low.mid(j, qsizetype(std::strlen(rest))) != rest) continue;
+            }
+            if (++n > kMaxMultipartMarkers) return true;
         }
+        return false;
+    };
+    if (count("multipart", "") || count("message", "rfc822")) {
+        if (why) *why = QStringLiteral("troppi livelli MIME annidati");
+        return true;
     }
     return false;
+}
+
+// Umask del processo letta senza modificarla (umask() e' globale e non thread-safe).
+mode_t currentUmask() {
+    QFile f(QStringLiteral("/proc/self/status"));
+    if (f.open(QIODevice::ReadOnly)) {
+        while (!f.atEnd()) {
+            const QByteArray l = f.readLine();
+            if (l.startsWith("Umask:")) {
+                bool ok = false;
+                const uint v = l.mid(6).trimmed().toUInt(&ok, 8);
+                if (ok && v <= 0777) return mode_t(v);
+            }
+        }
+    }
+    return 022;
 }
 
 struct Parsed {
@@ -325,9 +361,7 @@ bool MessageParser::saveAttachment(const QByteArray& raw, int partIndex, const Q
     if (!tmp.open()) return fail(QStringLiteral("impossibile creare il file temporaneo: %1").arg(tmp.errorString()));
     if (tmp.write(data) != data.size() || !tmp.flush()) return fail(QStringLiteral("scrittura non riuscita: %1").arg(tmp.errorString()));
     // QTemporaryFile crea con 0600: i file salvati rispettano invece la umask.
-    const mode_t um = ::umask(0);
-    ::umask(um);
-    ::fchmod(tmp.handle(), 0666 & ~um);
+    ::fchmod(tmp.handle(), 0666 & ~currentUmask());
     ::fsync(tmp.handle());
     const QByteArray src = QFile::encodeName(tmp.fileName());
     // link() non sostituisce mai la destinazione; il file temporaneo viene rimosso dopo.
@@ -359,26 +393,35 @@ QString MessageParser::sanitizeFilename(const QString& name) {
             continue;
         cps.append(c);
     }
+    qsizetype lo = 0, hi = cps.size();
     auto trimSpace = [&] {
-        while (!cps.isEmpty() && QChar::isSpace(cps.first())) cps.removeFirst();
-        while (!cps.isEmpty() && QChar::isSpace(cps.last())) cps.removeLast();
+        while (lo < hi && QChar::isSpace(cps[lo])) ++lo;
+        while (hi > lo && QChar::isSpace(cps[hi - 1])) --hi;
     };
     trimSpace();
-    while (!cps.isEmpty() && cps.first() == U'.') cps.removeFirst();
+    while (lo < hi && cps[lo] == U'.') ++lo;
     trimSpace();
-    auto bytes = [](const QList<char32_t>& v) { return QString::fromUcs4(v.constData(), v.size()).toUtf8().size(); };
-    constexpr int kMaxBytes = 200;
-    if (bytes(cps) > kMaxBytes) {
-        // conserva l'estensione (se breve), taglia la base su un confine di code point
+    cps = cps.mid(lo, hi - lo);
+    auto cpBytes = [](char32_t c) { return c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4; };
+    constexpr qint64 kMaxBytes = 200;
+    qint64 total = 0;
+    for (char32_t c : std::as_const(cps)) total += cpBytes(c);
+    if (total > kMaxBytes) {
+        // conserva l'estensione (se breve), taglia la base su un confine di code point (lineare)
         qsizetype dot = -1;
-        for (qsizetype i = cps.size() - 1; i > 0; --i)
+        for (qsizetype i = cps.size() - 1; i > 0 && cps.size() - i <= 21; --i)
             if (cps[i] == U'.') { dot = i; break; }
-        QList<char32_t> ext = dot > 0 ? cps.mid(dot) : QList<char32_t>();
-        if (bytes(ext) > 20) ext.clear();
-        QList<char32_t> base = dot > 0 && !ext.isEmpty() ? cps.mid(0, dot) : cps;
-        while (!base.isEmpty() && bytes(base) + bytes(ext) > kMaxBytes) base.removeLast();
-        cps = base + ext;
+        qint64 extBytes = 0;
+        for (qsizetype i = dot; dot > 0 && i < cps.size(); ++i) extBytes += cpBytes(cps[i]);
+        if (dot <= 0 || extBytes > 20) { dot = cps.size(); extBytes = 0; }
+        qint64 acc = 0;
+        qsizetype keep = 0;
+        while (keep < dot && acc + cpBytes(cps[keep]) + extBytes <= kMaxBytes) acc += cpBytes(cps[keep++]);
+        cps = cps.mid(0, keep) + cps.mid(dot);
+        lo = 0;
+        hi = cps.size();
         trimSpace();
+        cps = cps.mid(lo, hi - lo);
     }
     const QString out = QString::fromUcs4(cps.constData(), cps.size());
     return out.isEmpty() ? QStringLiteral("allegato") : out;
