@@ -1,5 +1,8 @@
 #pragma once
 #include <QObject>
+#include <QPointer>
+#include <QProcess>
+#include <memory>
 #include <QQueue>
 #include <QString>
 #include <QTimer>
@@ -50,6 +53,7 @@ private:
     void begin(const QList<Account>& accounts);
     void next();
     void finish();
+    void onOutput(const QString& accountId, const QByteArray& chunk);
     void setState(State s, const QString& accountId = {}, const QString& msg = {});
 
     ProcessRunner* m_runner;
@@ -61,6 +65,9 @@ private:
     State m_state = Idle;
     QQueue<Account> m_queue;
     int m_lockFd = -1;
+    QPointer<QProcess> m_proc;
+    QByteArray m_lineBuf;
+    std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
     QString m_failedId, m_failedMsg;
 };
 

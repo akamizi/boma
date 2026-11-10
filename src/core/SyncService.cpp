@@ -17,6 +17,14 @@ SyncService::SyncService(ProcessRunner* runner, const Config& config, QString lo
 
 SyncService::~SyncService()
 {
+    // Nessuna callback deve toccare un oggetto distrutto; il figlio in corso
+    // viene terminato prima di rilasciare il lock (niente mbsync concorrenti).
+    *m_alive = false;
+    if (m_proc) {
+        m_proc->disconnect();
+        m_proc->kill();
+        m_proc->waitForFinished(2000);
+    }
     if (m_lockFd >= 0)
         ::close(m_lockFd);
 }
@@ -69,28 +77,47 @@ void SyncService::next()
         return;
     }
     const Account acc = m_queue.dequeue();
-    m_runner->run(
+    m_lineBuf.clear();
+    auto alive = m_alive;
+    m_proc = m_runner->run(
         m_program, {QStringLiteral("-V"), acc.mbsyncChannel}, m_timeout,
-        [this, acc](ProcessResult r) {
+        [this, alive, acc](ProcessResult r) {
+            if (!*alive)
+                return;
             if (r.timedOut || r.crashed || r.exitCode != 0) {
-                if (m_failedId.isEmpty()) {
-                    m_failedId = acc.id;
-                    QString detail = QString::fromUtf8(r.err).trimmed();
-                    if (detail.isEmpty())
-                        detail = QString::fromUtf8(r.out).trimmed().section('\n', -1);
-                    m_failedMsg = r.timedOut ? tr("Tempo scaduto")
-                                  : r.crashed ? tr("mbsync terminato in modo anomalo")
-                                              : tr("mbsync ha restituito %1: %2")
-                                                    .arg(r.exitCode).arg(detail);
-                }
+                QString detail = QString::fromUtf8(r.err).trimmed();
+                if (detail.isEmpty())
+                    detail = QString::fromUtf8(r.out).trimmed().section('\n', -1);
+                m_failedId = acc.id;
+                m_failedMsg = r.timedOut ? tr("Tempo scaduto")
+                              : r.crashed ? tr("mbsync terminato in modo anomalo")
+                                          : tr("mbsync ha restituito %1: %2")
+                                                .arg(r.exitCode).arg(detail);
+                m_queue.clear(); // al primo errore ci si ferma
             }
             next();
         },
-        [this, acc](const QByteArray& chunk) {
-            int d = 0, t = 0;
-            if (parseProgress(chunk, &d, &t))
-                emit progress(acc.id, d, t);
+        [this, alive, acc](const QByteArray& chunk) {
+            if (*alive)
+                onOutput(acc.id, chunk);
         });
+}
+
+void SyncService::onOutput(const QString& accountId, const QByteArray& chunk)
+{
+    // Si interpretano solo righe complete (terminate da \r o \n).
+    m_lineBuf += chunk;
+    const int cut = qMax(m_lineBuf.lastIndexOf('\n'), m_lineBuf.lastIndexOf('\r'));
+    if (cut < 0) {
+        if (m_lineBuf.size() > 65536)
+            m_lineBuf.clear();
+        return;
+    }
+    const QByteArray complete = m_lineBuf.left(cut + 1);
+    m_lineBuf = m_lineBuf.mid(cut + 1);
+    int d = 0, t = 0;
+    if (parseProgress(complete, &d, &t))
+        emit progress(accountId, d, t);
 }
 
 void SyncService::finish()

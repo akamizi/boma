@@ -1,6 +1,7 @@
 #pragma once
 #include <QByteArray>
 #include <QObject>
+#include <QProcess>
 #include <QString>
 #include <QStringList>
 #include <chrono>
@@ -25,7 +26,9 @@ public:
     using OutputCallback = std::function<void(const QByteArray&)>;
     explicit ProcessRunner(QObject* parent = nullptr) : QObject(parent) {}
 
-    void run(const QString& program, const QStringList& args,
+    // Restituisce il processo avviato (nullo dopo la distruzione) per consentire
+    // a chi chiama di terminarlo.
+    QProcess* run(const QString& program, const QStringList& args,
              std::chrono::milliseconds timeout,
              std::function<void(ProcessResult)> done,
              OutputCallback onOutput = nullptr);

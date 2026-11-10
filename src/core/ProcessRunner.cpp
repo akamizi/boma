@@ -6,7 +6,7 @@
 
 namespace boma {
 
-void ProcessRunner::run(const QString& program, const QStringList& args,
+QProcess* ProcessRunner::run(const QString& program, const QStringList& args,
                         std::chrono::milliseconds timeout,
                         std::function<void(ProcessResult)> done,
                         OutputCallback onOutput)
@@ -65,6 +65,7 @@ void ProcessRunner::run(const QString& program, const QStringList& args,
     }
 
     proc->start(program, args);
+    return proc;
 }
 
 } // namespace boma
