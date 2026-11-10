@@ -19,6 +19,7 @@ add_library(boma_core STATIC
     src/ui/MessageListModel.cpp
     src/ui/MainWindow.cpp
     src/mime/MessageParser.cpp
+    src/pgp/GpgService.cpp
     src/ui/MessageView.cpp
 )
 target_include_directories(boma_core PUBLIC src)

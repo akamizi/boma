@@ -1,7 +1,10 @@
 #include "ui/MessageView.h"
 
 #include <QImage>
+#include <QHBoxLayout>
+#include <QLabel>
 #include <QLocale>
+#include <QMessageBox>
 #include <QRegularExpression>
 #include <QSet>
 #include <QTextDocument>
@@ -171,6 +174,85 @@ MessageView::MessageView(QWidget* parent) : QTextBrowser(parent) {
     setOpenLinks(false);
     setOpenExternalLinks(false);
     connect(this, &QTextBrowser::anchorClicked, this, &MessageView::linkActivated);
+
+    bar_ = new QWidget(this);
+    auto* lay = new QHBoxLayout(bar_);
+    lay->setContentsMargins(4, 2, 4, 2);
+    lay->addWidget(new QLabel(tr("Messaggio cifrato"), bar_), 1);
+    decryptButton_ = new QPushButton(tr("Decifra"), bar_);
+    lay->addWidget(decryptButton_);
+    bar_->hide();
+    connect(decryptButton_, &QPushButton::clicked, this, &MessageView::onDecryptClicked);
+}
+
+void MessageView::resizeEvent(QResizeEvent* e) {
+    QTextBrowser::resizeEvent(e);
+    layoutBar();
+}
+
+void MessageView::layoutBar() {
+    const int h = encryptedShown_ ? bar_->sizeHint().height() : 0;
+    setViewportMargins(0, h, 0, 0);
+    bar_->setGeometry(0, 0, width(), h);
+    bar_->setVisible(encryptedShown_);
+}
+
+void MessageView::onDecryptClicked() {
+    const bool yes = confirm_ ? confirm_()
+                              : QMessageBox::question(this, tr("Decifra"),
+                                                      tr("Decifrare il messaggio? Ti verrà chiesta la password della chiave.")) ==
+                                    QMessageBox::Yes;
+    if (!yes) return;
+    decryptButton_->setEnabled(false); // niente doppie richieste
+    emit decryptRequested();
+}
+
+void MessageView::setSignatureResult(SignatureStatus status, const QString& signer) {
+    sigStatus_ = status;
+    signer_ = signer;
+    render();
+}
+
+void MessageView::showDecrypted(const ParsedMessage& m) {
+    // La verifica di un'eventuale firma interna non e' prevista nella v1.
+    encrypted_.clear();
+    encryptedShown_ = false;
+    decryptError_.clear();
+    sigStatus_ = SignatureStatus::None;
+    signer_.clear();
+    msg_ = m;
+    msg_.encryptedPgp = false;
+    render();
+    layoutBar();
+}
+
+void MessageView::showDecryptError(const QString& error) {
+    decryptError_ = error.isEmpty() ? tr("Decifrazione non riuscita.") : error;
+    decryptButton_->setEnabled(true);
+    render(); // nessun testo parziale: si mostra solo l'errore
+}
+
+QString MessageView::badgeHtml() const {
+    switch (sigStatus_) {
+    case SignatureStatus::None:
+        return {};
+    case SignatureStatus::Valid:
+        // concatenazione, non arg(): un signer con "%1" non deve essere riespanso
+        return QStringLiteral("<span style=\"color:#1a7f37\"><b>&#10003; ") + tr("Firma valida: ").toHtmlEscaped() +
+               esc(signer_) + QStringLiteral("</b></span><br>");
+    case SignatureStatus::Invalid:
+        return QStringLiteral("<span style=\"color:#c62828\"><b>&#10007; %1</b></span><br>").arg(tr("Firma non valida"));
+    case SignatureStatus::UnknownKey:
+        return QStringLiteral("<span style=\"color:#b26a00\"><b>? %1</b></span><br>")
+            .arg(tr("Firma di una chiave sconosciuta"));
+    case SignatureStatus::ExpiredKey:
+        return QStringLiteral("<span style=\"color:#b26a00\"><b>&#9888; %1</b></span><br>")
+            .arg(tr("Chiave del firmatario scaduta"));
+    case SignatureStatus::RevokedKey:
+        return QStringLiteral("<span style=\"color:#c62828\"><b>&#9888; %1</b></span><br>")
+            .arg(tr("Chiave del firmatario revocata"));
+    }
+    return {};
 }
 
 // Scansione in un solo passaggio (tempo lineare: ogni ricerca avanza sempre).
@@ -252,6 +334,19 @@ QString MessageView::sanitizeHtml(const QString& s, qsizetype* consumed) {
 }
 
 void MessageView::show(const ParsedMessage& m) {
+    msg_ = m;
+    sigStatus_ = SignatureStatus::None;
+    signer_.clear();
+    decryptError_.clear();
+    encrypted_ = m.encryptedPgp ? m.rawEncrypted : QByteArray();
+    encryptedShown_ = m.encryptedPgp;
+    decryptButton_->setEnabled(true);
+    render();
+    layoutBar();
+}
+
+void MessageView::render() {
+    const ParsedMessage& m = msg_;
     QString h = QStringLiteral("<div style=\"margin-bottom:8px\">");
     auto line = [&](const QString& label, const QString& v) {
         // intestazioni enormi bloccherebbero il layout di QTextDocument
@@ -270,13 +365,21 @@ void MessageView::show(const ParsedMessage& m) {
         for (const auto& a : m.attachments) names << a.filename;
         line(tr("Allegati"), names.join(QStringLiteral(", ")));
     }
+    h += badgeHtml();
+    if (encryptedShown_) {
+        h += QStringLiteral("<b>&#128274; %1</b><br>").arg(tr("Messaggio cifrato"));
+        if (!decryptError_.isEmpty())
+            h += QStringLiteral("<span style=\"color:#c62828\">%1</span><br>").arg(esc(decryptError_));
+    }
     h += QStringLiteral("</div><hr>");
     // Limite di visualizzazione (il layout di QTextDocument non regge corpi enormi).
     constexpr int kMaxBody = 1000000;
     auto note = [&](const QString& shown) {
         return QStringLiteral("<p><i>Messaggio troncato: %1 byte mostrati</i></p>").arg(shown.toUtf8().size());
     };
-    if (!m.plainText.isEmpty()) {
+    if (encryptedShown_) {
+        // il corpo cifrato non si mostra mai
+    } else if (!m.plainText.isEmpty()) {
         const bool cut = m.plainText.size() > kMaxBody;
         const QString t = cut ? m.plainText.left(kMaxBody) : m.plainText;
         h += QStringLiteral("<pre style=\"white-space: pre-wrap; font-family: monospace;\">") + esc(t) +
