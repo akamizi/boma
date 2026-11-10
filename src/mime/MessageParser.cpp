@@ -139,39 +139,26 @@ constexpr qsizetype kMaxInput = qsizetype(64) * 1024 * 1024;
 constexpr int kMaxMultipartMarkers = 500;
 
 // Controllo economico prima di GMime (il cui parser e la cui distruzione sono
-// ricorsivi). Limiti: 64 MB di input e al massimo 500 marcatori di struttura
-// nel messaggio, dove un marcatore e' "multipart" seguito (dopo spazi/a capo
-// opzionali, quindi anche in intestazioni piegate) da "/", oppure
-// "message/rfc822". Il confronto non distingue maiuscole. Il totale (non la
-// profondita') limita l'annidamento, e solo la sua ricerca e' lineare:
-// falsi positivi possibili in messaggi con piu' di 500 parti multipart.
+// ricorsivi). Limiti: 64 MB di input e al massimo 500 marcatori nel messaggio.
+// Il conteggio e' volutamente grossolano: ogni occorrenza della parola
+// "multipart" o "rfc822" (senza distinguere maiuscole e senza guardare cosa
+// segue, quindi immune a commenti RFC 822 e intestazioni piegate) e' un
+// marcatore. Il totale limita anche l'annidamento; sono possibili falsi
+// positivi in messaggi con piu' di 500 parti multipart/rfc822.
 bool tooBigOrDeep(const QByteArray& raw, QString* why) {
     if (raw.size() > kMaxInput) {
         if (why) *why = QStringLiteral("messaggio troppo grande");
         return true;
     }
     const QByteArray low = raw.toLower();
-    auto skipWs = [&](qsizetype i) {
-        while (i < low.size() && (low[i] == ' ' || low[i] == '\t' || low[i] == '\r' || low[i] == '\n')) ++i;
-        return i;
-    };
     int n = 0;
-    auto count = [&](const char* word, const char* rest) {
+    for (const char* word : {"multipart", "rfc822"}) {
         const qsizetype wl = qsizetype(std::strlen(word));
-        for (qsizetype i = low.indexOf(word); i >= 0; i = low.indexOf(word, i + wl)) {
-            qsizetype j = skipWs(i + wl);
-            if (j >= low.size() || low[j] != '/') continue;
-            if (*rest) {
-                j = skipWs(j + 1);
-                if (low.mid(j, qsizetype(std::strlen(rest))) != rest) continue;
+        for (qsizetype i = low.indexOf(word); i >= 0; i = low.indexOf(word, i + wl))
+            if (++n > kMaxMultipartMarkers) {
+                if (why) *why = QStringLiteral("troppi livelli MIME annidati");
+                return true;
             }
-            if (++n > kMaxMultipartMarkers) return true;
-        }
-        return false;
-    };
-    if (count("multipart", "") || count("message", "rfc822")) {
-        if (why) *why = QStringLiteral("troppi livelli MIME annidati");
-        return true;
     }
     return false;
 }

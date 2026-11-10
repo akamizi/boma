@@ -329,14 +329,35 @@ private slots:
         QCOMPARE(o, QStringLiteral("<a href=\"x\" b=\"c\" d>t</a><br/>"));
         // molti piccoli elementi: troncato con nota, layout limitato
         ParsedMessage p;
-        p.html = QStringLiteral("<b>x</b>").repeated(125000); // ~1 MB
+        p.html = QStringLiteral("<b>x</b>").repeated(75000); // 600 KB (< kMaxBody) ma > 20000 tag
         MessageView v;
         v.resize(600, 400);
         t.restart();
         v.show(p);
         v.document()->documentLayout()->documentSize();
         QVERIFY2(t.elapsed() < 5000, qPrintable(QString::number(t.elapsed())));
-        QVERIFY(v.toPlainText().contains(QStringLiteral("Messaggio troncato")));
+        QVERIFY(p.html.size() < 1000000);
+        QVERIFY(v.toPlainText().contains(QStringLiteral("Messaggio troncato"))); // dal limite dei tag
+    }
+    void testAmpersandStreamStillWrapped() {
+        const QString body = QStringLiteral("&aaaaaaaaaaa").repeated(85000); // ~1 MB senza spazi
+        QElapsedTimer t;
+        ParsedMessage p;
+        MessageView v;
+        v.resize(600, 400);
+        p.plainText = body;
+        t.start();
+        v.show(p);
+        v.document()->documentLayout()->documentSize();
+        QVERIFY2(t.elapsed() < 5000, qPrintable(QString::number(t.elapsed())));
+        QVERIFY(v.toPlainText().contains(QChar(0x200B)));
+        p.plainText.clear();
+        p.html = QStringLiteral("<p>") + body;
+        t.restart();
+        v.show(p);
+        v.document()->documentLayout()->documentSize();
+        QVERIFY2(t.elapsed() < 5000, qPrintable(QString::number(t.elapsed())));
+        QVERIFY(MessageView::sanitizeHtml(p.html).contains(QChar(0x200B)));
     }
     void testZeroWidthSpaceNeverInsideEntity() {
         const QString html = QStringLiteral("<p>") + QString(198, QLatin1Char('a')) + QStringLiteral("&amp;&amp;&amp;") +
@@ -353,6 +374,11 @@ private slots:
         QByteArray folded = "Subject: x\n";
         for (int i = 0; i < 600; ++i) folded += "Content-Type: MULTIPART\n  /mixed; boundary=a\n";
         MessageParser::parse(folded + "\nx", &err);
+        QVERIFY(!err.isEmpty());
+        err.clear();
+        QByteArray cmt = "Subject: x\n";
+        for (int i = 0; i < 600; ++i) cmt += "Content-Type: multipart(c)/mixed; boundary=a\nX: multipart\n (c)/mixed\n";
+        MessageParser::parse(cmt + "\nx", &err);
         QVERIFY(!err.isEmpty());
         err.clear();
         QByteArray rfc = "Subject: x\n";

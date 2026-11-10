@@ -124,18 +124,18 @@ QVariant dataUrlImage(const QUrl& url) {
 
 // Righe lunghissime senza spazi rendono quadratico il layout di Qt: ogni 200
 // caratteri consecutivi senza spazio inseriamo un U+200B (invisibile).
-QString softWrap(QStringView t) {
+QString softWrap(QStringView t, bool protectEntities = true) {
     QString out;
     out.reserve(t.size() + t.size() / 200 + 1);
     int run = 0;
     int ent = 0; // caratteri rimasti in una possibile entita' &...; (mai spezzata)
     for (const QChar c : t) {
-        if (c == QLatin1Char('&')) ent = 13;
+        if (protectEntities && c == QLatin1Char('&') && ent == 0) ent = 13; // una '&' non rinnova la finestra
         const bool inside = ent > 0; // anche il ';' finale appartiene all'entita'
         if (c == QLatin1Char(';') || c.isSpace()) ent = 0;
         else if (ent > 0) --ent;
         if (c.isSpace()) run = 0;
-        else if (++run > 200 && !inside) {
+        else if (++run > 200 && (!inside || run > 213)) { // al piu' 13 caratteri di rinvio
             out += QChar(0x200B);
             run = 1;
         }
@@ -144,7 +144,8 @@ QString softWrap(QStringView t) {
     return out;
 }
 
-QString esc(const QString& s) { return softWrap(s).toHtmlEscaped(); }
+// Qui l'escape avviene dopo softWrap: nessuna protezione delle entita'.
+QString esc(const QString& s) { return softWrap(s, false).toHtmlEscaped(); }
 
 // Politica unica: solo immagini data: gia' incluse nel messaggio.
 QVariant allowedResource(int type, const QUrl& name) {
