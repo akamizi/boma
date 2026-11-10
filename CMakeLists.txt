@@ -10,6 +10,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GMIME REQUIRED IMPORTED_TARGET gmime-3.0)
 
 add_library(boma_core STATIC
+    src/core/Config.cpp
     src/ui/MainWindow.cpp
 )
 target_include_directories(boma_core PUBLIC src)
