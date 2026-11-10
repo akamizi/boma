@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDebug>
+#include <QRegularExpression>
 #include <chrono>
 
 namespace boma {
@@ -144,6 +145,36 @@ void MailIndex::reindex(const QString&, Callback cb)
                      if (cb)
                          cb(ok, err);
                  });
+}
+
+QString MailIndex::parseStoreRoot(const QByteArray& out)
+{
+    static const QRegularExpression re(QStringLiteral("^\\|\\s*maildir\\s*\\|\\s*(.*?)\\s*\\|\\s*$"));
+    for (const QString& line : QString::fromUtf8(out).split(QLatin1Char('\n'))) {
+        const auto m = re.match(line.trimmed());
+        if (m.hasMatch() && !m.captured(1).isEmpty())
+            return QDir::cleanPath(m.captured(1));
+    }
+    return {};
+}
+
+void MailIndex::storeRoot(std::function<void(QString, QString)> cb)
+{
+    QStringList args{QStringLiteral("info"), QStringLiteral("store")};
+    if (!m_muHome.isEmpty())
+        args << QStringLiteral("--muhome=%1").arg(m_muHome);
+    m_runner.run(m_mu, args, std::chrono::seconds(30), [cb = std::move(cb)](ProcessResult r) {
+        QString root, err;
+        if (r.exitCode == 0 && !r.crashed && !r.timedOut)
+            root = parseStoreRoot(r.out);
+        if (root.isEmpty()) {
+            err = QString::fromUtf8(r.err).trimmed();
+            if (err.isEmpty())
+                err = QStringLiteral("radice Maildir di mu non determinabile");
+        }
+        if (cb)
+            cb(root, err);
+    });
 }
 
 } // namespace boma

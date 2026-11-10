@@ -1,5 +1,6 @@
 #include "mime/MessageParser.h"
 #include "ui/ComposeWindow.h"
+#include "core/MailIndex.h"
 #include "ui/MainWindow.h"
 #include "ui/ReplyBuilder.h"
 
@@ -108,7 +109,7 @@ struct Noticed {
 class T : public QObject {
     Q_OBJECT
     QTemporaryDir root_{QDir::currentPath() + QStringLiteral("/mwt-XXXXXX")};
-    QString home_, dir_, mu_, mbsync_, msmtp_, gpgslow_;
+    QString home_, dir_, mu_, mbsync_, msmtp_, gpgslow_, gpglog_;
     int n_ = 0;
     QString pathA_, pathB_, pathSigned_, pathEnc_;
 
@@ -145,7 +146,7 @@ class T : public QObject {
     }
     QString log(const QString& name) const { return QString::fromUtf8(readFile(dir_ + QLatin1Char('/') + name)); }
     void resetLogs() {
-        for (const char* f : {"mu.log", "count", "argv", "stdin"}) QFile::remove(dir_ + QLatin1Char('/') + QLatin1String(f));
+        for (const char* f : {"mu.log", "count", "argv", "stdin", "mbsync.log", "gpg.log", "slow", "mbok", "mba", "info.txt"}) QFile::remove(dir_ + QLatin1Char('/') + QLatin1String(f));
     }
     void listUnread(const QList<QJsonObject>& l) { writeJson(dir_ + QStringLiteral("/unread.json"), l); }
     void listSearch(const QList<QJsonObject>& l) { writeJson(dir_ + QStringLiteral("/search.json"), l); }
@@ -199,8 +200,12 @@ private slots:
                           "#!/bin/sh\nd=$(dirname \"$0\")\nprintf '%s\\n' \"$*\" >> \"$d/mu.log\"\n"
                           "case \"$1\" in\n"
                           " find) case \"$*\" in *flag:unread*) cat \"$d/unread.json\";; *) cat \"$d/search.json\";; esac;;\n"
-                          " *) exit 0;;\nesac\n");
-        mbsync_ = writeScript(dir_, QStringLiteral("mbsync"), "#!/bin/sh\necho 'mbsync: network unreachable' >&2\nexit 1\n");
+                          " move) [ -f \"$d/slow\" ] && sleep 1; exit 0;;\n info) [ -f \"$d/info.txt\" ] && cat \"$d/info.txt\" || exit 1;;\n *) exit 0;;\nesac\n");
+        mbsync_ = writeScript(dir_, QStringLiteral("mbsync"),
+                              "#!/bin/sh\nd=$(dirname \"$0\")\necho \"$*\" >> \"$d/mbsync.log\"\n"
+                              "[ -f \"$d/mbok\" ] && exit 0\n[ -f \"$d/mba\" ] && [ \"$2\" = a ] && exit 0\n"
+                              "echo 'mbsync: network unreachable' >&2\nexit 1\n");
+        gpglog_ = writeScript(dir_, QStringLiteral("gpglog"), "#!/bin/sh\nd=$(dirname \"$0\")\necho \"$*\" >> \"$d/gpg.log\"\nsleep 1\nexec gpg \"$@\"\n");
         msmtp_ = writeScript(dir_, QStringLiteral("msmtp"),
                              "#!/bin/sh\nd=$(dirname \"$0\")\necho run >> \"$d/count\"\n"
                              "for a in \"$@\"; do printf '%s\\n' \"$a\"; done > \"$d/argv\"\ncat > \"$d/stdin\"\nexit 0\n");
@@ -290,11 +295,263 @@ private slots:
         QVERIFY(w.replyButton()->styleSheet().isEmpty());
         w.deleteButton()->click();
         QVERIFY(QTest::qWaitFor([&] { return log(QStringLiteral("mu.log")).contains(QStringLiteral("/Trash")); }, 10000));
-        QVERIFY(log(QStringLiteral("mu.log")).contains(QStringLiteral("%1 /Trash").arg(pathB_)));
+        QVERIFY(log(QStringLiteral("mu.log")).contains(QStringLiteral("%1 /a/Trash").arg(pathB_)));
         QVERIFY(waitRows(w, 1)); // tolto dall'elenco
         QCOMPARE(asked, 0);
         QVERIFY(n.titles.isEmpty()); // nessuna finestra di dialogo
         QVERIFY(QFile::exists(pathB_)); // Boma non cancella mai file
+    }
+    static QStringList folderQueries(MainWindow& w) {
+        QStringList out;
+        auto* m = w.folderPane()->itemModel();
+        for (int i = 0; i < m->rowCount(); ++i)
+            for (int j = 0; j < m->item(i)->rowCount(); ++j) out << m->item(i)->child(j)->data(Qt::UserRole + 1).toString();
+        return out;
+    }
+    void testParseStoreRoot() {
+        const QByteArray t = "+---+---+\n| property | value |\n+---+---+\n| maildir           | /x/y/mail/   |\n"
+                             "| database-path | /x/h |\n";
+        QCOMPARE(MailIndex::parseStoreRoot(t), QStringLiteral("/x/y/mail"));
+        QCOMPARE(MailIndex::parseStoreRoot("niente"), QString());
+    }
+    void testMuRootFromInfoStoreGivesFolderQueriesAndTrash() {
+        writeFile(dir_ + QStringLiteral("/info.txt"), QStringLiteral("| maildir | %1/mail |\n").arg(dir_).toUtf8());
+        MainWindow w(makeConfig(), opts());
+        w.show();
+        QVERIFY(QTest::qWaitFor([&] { return folderQueries(w).contains(QStringLiteral("maildir:\"/a/INBOX\"")); }, 10000));
+        QVERIFY(folderQueries(w).contains(QStringLiteral("maildir:\"/b/INBOX\"")));
+        QVERIFY(!w.statusBar()->currentMessage().contains(QStringLiteral("radice")));
+        QFile::remove(dir_ + QStringLiteral("/info.txt"));
+    }
+    void testMuRootFromConfigOverridesInfoStore() {
+        writeFile(dir_ + QStringLiteral("/info.txt"), QStringLiteral("| maildir | /altrove |\n").toUtf8());
+        const QString p = dir_ + QStringLiteral("/configroot.ini");
+        writeFile(p, ("[general]\nmuRoot=" + dir_ + "/mail\n" + cfgText(false)).toUtf8());
+        QString err;
+        Config c = Config::load(p, &err);
+        QCOMPARE(c.muRoot(), dir_ + QStringLiteral("/mail"));
+        MainWindow w(c, opts());
+        w.show();
+        QVERIFY(QTest::qWaitFor([&] { return folderQueries(w).contains(QStringLiteral("maildir:\"/a/INBOX\"")); }, 10000));
+        QFile::remove(dir_ + QStringLiteral("/info.txt"));
+    }
+    void testMuRootFallsBackToCommonParentWithWarning() {
+        MainWindow w(makeConfig(), opts()); // info.txt assente: mu info store fallisce
+        w.show();
+        QVERIFY(QTest::qWaitFor([&] { return folderQueries(w).contains(QStringLiteral("maildir:\"/a/INBOX\"")); }, 10000));
+        QVERIFY(w.statusBar()->currentMessage().contains(QStringLiteral("radice")));
+    }
+    void testAccountOutsideMuRootIsRefused() {
+        MainWindowOptions o = opts();
+        o.muRoot = dir_ + QStringLiteral("/mail/a"); // l'account b sta fuori
+        MainWindow w(makeConfig(), o);
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        QVERIFY(!folderQueries(w).filter(QStringLiteral("/b/")).size());
+        QVERIFY(folderQueries(w).contains(QStringLiteral("maildir:\"/INBOX\"")));
+    }
+    static int countLines(const QString& text, const QString& needle) {
+        int n = 0;
+        for (const QString& l : text.split(QLatin1Char('\n')))
+            if (l.contains(needle)) ++n;
+        return n;
+    }
+    void testDeleteDoesNotOpenAdjacentRow() {
+        MainWindow w(makeConfig(), opts());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        select(w, 0);
+        QVERIFY(QTest::qWaitFor([&] { return log(QStringLiteral("mu.log")).contains(QStringLiteral("--flags=-N+S")); }, 10000));
+        resetLogs();
+        w.deleteButton()->click();
+        QVERIFY(waitRows(w, 1));
+        QTest::qWait(600);
+        QCOMPARE(countLines(log(QStringLiteral("mu.log")), QStringLiteral("--flags=-N+S")), 0); // il vicino resta non letto
+        QVERIFY(w.model()->summary(0).unread);
+        QVERIFY(!w.deleteButton()->isEnabled());
+        QVERIFY(!w.listView()->currentIndex().isValid());
+        QVERIFY(!w.messageView()->toPlainText().contains(QStringLiteral("Corpo due 2222")));
+    }
+    void testDeleteInFlightGuard() {
+        writeFile(dir_ + QStringLiteral("/slow"), "x");
+        MainWindow w(makeConfig(), opts());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        select(w, 1);
+        QVERIFY(QTest::qWaitFor([&] { return w.messageView()->toPlainText().contains(QStringLiteral("Corpo due 2222")); }, 10000));
+        w.deleteButton()->click();
+        QVERIFY(!w.deleteButton()->isEnabled());
+        w.deleteSelected(); // anche dalla scorciatoia: nessun secondo spostamento
+        QVERIFY(waitRows(w, 1));
+        QCOMPARE(countLines(log(QStringLiteral("mu.log")), QStringLiteral("/a/Trash")), 1);
+    }
+    void testDecryptInFlightGuard() {
+        listUnread({jsonMsg(pathEnc_, QStringLiteral("enc1@x"), QStringLiteral("Alice"), QStringLiteral("Cifrato"), false)});
+        MainWindowOptions o = opts();
+        o.gpgProgram = gpglog_;
+        MainWindow w(makeConfig(), o);
+        w.show();
+        QVERIFY(waitRows(w, 1));
+        select(w, 0);
+        QVERIFY(QTest::qWaitFor([&] { return w.messageView()->decryptButton()->isVisibleTo(w.messageView()); }, 10000));
+        w.messageView()->setConfirmCallback([] { return true; });
+        w.messageView()->decryptButton()->click();
+        w.messageView()->decryptButton()->click();
+        emit w.messageView()->decryptRequested();
+        QVERIFY(QTest::qWaitFor([&] { return w.messageView()->toPlainText().contains(QStringLiteral("Segreto 4242")); }, 30000));
+        QCOMPARE(countLines(log(QStringLiteral("gpg.log")), QStringLiteral("decrypt")), 1);
+    }
+    void testSelectionSurvivesSyncRefreshAndClearsWhenGone() {
+        writeFile(dir_ + QStringLiteral("/mbok"), "x");
+        MainWindow w(makeConfig(), opts());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        select(w, 1);
+        QVERIFY(QTest::qWaitFor([&] { return w.messageView()->toPlainText().contains(QStringLiteral("Corpo due 2222")); }, 10000));
+        resetLogs();
+        writeFile(dir_ + QStringLiteral("/mbok"), "x");
+        // la riga selezionata cambia posizione: dopo l'aggiornamento resta quella
+        listUnread({jsonMsg(pathA_, QStringLiteral("m1@x"), QStringLiteral("Eve"), QStringLiteral("Oggetto uno"), true),
+                    jsonMsg(pathSigned_, QStringLiteral("s@x"), QStringLiteral("Z"), QStringLiteral("Altro"), true),
+                    jsonMsg(pathB_, QStringLiteral("m2@x"), QStringLiteral("Frank"), QStringLiteral("Oggetto due"), true)});
+        w.syncNow();
+        QVERIFY(waitRows(w, 3));
+        QVERIFY(QTest::qWaitFor([&] { return w.listView()->currentIndex().isValid(); }, 5000));
+        QCOMPARE(w.listView()->currentIndex().row(), 2);
+        QVERIFY(w.messageView()->toPlainText().contains(QStringLiteral("Corpo due 2222"))); // senza richiuderlo
+        QVERIFY(w.deleteButton()->isEnabled());
+        // il messaggio sparisce dall'elenco: il visore si svuota
+        listUnread({jsonMsg(pathA_, QStringLiteral("m1@x"), QStringLiteral("Eve"), QStringLiteral("Oggetto uno"), true)});
+        w.syncNow();
+        QVERIFY(waitRows(w, 1));
+        QVERIFY(QTest::qWaitFor([&] { return !w.deleteButton()->isEnabled(); }, 5000));
+        QVERIFY(!w.messageView()->toPlainText().contains(QStringLiteral("Corpo due 2222")));
+    }
+    void testFailedSyncOfOneAccountStillReindexes() {
+        writeFile(dir_ + QStringLiteral("/mba"), "x"); // a riesce, b fallisce
+        MainWindow w(makeConfig(), opts());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        resetLogs();
+        writeFile(dir_ + QStringLiteral("/mba"), "x");
+        w.syncNow();
+        QVERIFY(QTest::qWaitFor([&] { return log(QStringLiteral("mu.log")).contains(QStringLiteral("index")); }, 10000));
+        QVERIFY(w.statusLabel()->text().contains(QStringLiteral("non riuscita")));
+    }
+    void testFullyFailedSyncDoesNotReindex() {
+        MainWindow w(makeConfig(), opts());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        resetLogs();
+        w.syncNow();
+        QVERIFY(QTest::qWaitFor([&] { return w.statusLabel()->text().contains(QStringLiteral("non riuscita")); }, 10000));
+        QTest::qWait(300);
+        QVERIFY(!log(QStringLiteral("mu.log")).contains(QStringLiteral("index")));
+    }
+    void testFastScrollingOpensOnlyTheLastRow() {
+        MainWindow w(makeConfig(), opts());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        int opened = 0;
+        connect(&w, &MainWindow::messageOpened, this, [&](const QString&) { ++opened; });
+        select(w, 0);
+        select(w, 1);
+        QVERIFY(QTest::qWaitFor([&] { return w.messageView()->toPlainText().contains(QStringLiteral("Corpo due 2222")); }, 10000));
+        QTest::qWait(400);
+        QCOMPARE(opened, 1);
+        QVERIFY(!w.messageView()->toPlainText().contains(QStringLiteral("Corpo uno 1111")));
+    }
+    void testFolderSelectionRunsFolderQuery() {
+        writeFile(dir_ + QStringLiteral("/info.txt"), QStringLiteral("| maildir | %1/mail |\n").arg(dir_).toUtf8());
+        MainWindow w(makeConfig(), opts());
+        w.show();
+        QVERIFY(QTest::qWaitFor([&] { return folderQueries(w).contains(QStringLiteral("maildir:\"/a/INBOX\"")); }, 10000));
+        auto* m = w.folderPane()->itemModel();
+        QStandardItem* inbox = m->item(1)->child(0); // primo account, Posta in arrivo
+        QCOMPARE(inbox->data(Qt::UserRole + 1).toString(), QStringLiteral("maildir:\"/a/INBOX\""));
+        w.folderPane()->setCurrentIndex(inbox->index());
+        QVERIFY(QTest::qWaitFor([&] { return w.model()->query() == QStringLiteral("maildir:\"/a/INBOX\""); }, 10000));
+        QVERIFY(QTest::qWaitFor([&] { return log(QStringLiteral("mu.log")).contains(QStringLiteral("maildir:\"/a/INBOX\"")); }, 10000));
+        // il nodo account non lancia nulla; "Non lette" torna alla vista dei non letti
+        w.folderPane()->setCurrentIndex(m->item(0)->index());
+        QVERIFY(QTest::qWaitFor([&] { return w.model()->query().isEmpty(); }, 10000));
+    }
+    void testShortcuts() {
+        MainWindow w(makeConfig(), opts());
+        w.show();
+        QVERIFY(QTest::qWaitForWindowActive(&w));
+        QVERIFY(waitRows(w, 2));
+        select(w, 1);
+        QVERIFY(QTest::qWaitFor([&] { return w.replyButton()->isEnabled(); }, 10000));
+        auto composers = [&] { return w.composers().size(); };
+        // le finestre di scrittura rubano il fuoco: la finestra principale deve essere attiva
+        auto key = [&](Qt::Key k, Qt::KeyboardModifiers m = Qt::NoModifier) {
+            w.activateWindow();
+            QVERIFY(QTest::qWaitForWindowActive(&w));
+            w.listView()->setFocus();
+            QTest::keyClick(w.listView(), k, m);
+        };
+        key(Qt::Key_R);
+        QTRY_COMPARE(composers(), 1);
+        QCOMPARE(firstComposer(w)->subjectEdit()->text(), QStringLiteral("Re: Oggetto due"));
+        qDeleteAll(w.composers());
+        key(Qt::Key_R, Qt::ShiftModifier);
+        QTRY_COMPARE(composers(), 1);
+        qDeleteAll(w.composers());
+        key(Qt::Key_F);
+        QTRY_COMPARE(composers(), 1);
+        QCOMPARE(firstComposer(w)->subjectEdit()->text(), QStringLiteral("Fwd: Oggetto due"));
+        qDeleteAll(w.composers());
+        key(Qt::Key_N, Qt::ControlModifier);
+        QTRY_COMPARE(composers(), 1);
+        qDeleteAll(w.composers());
+        key(Qt::Key_F, Qt::ControlModifier);
+        QTRY_VERIFY(w.searchEdit()->hasFocus());
+        key(Qt::Key_F5);
+        QTRY_VERIFY(log(QStringLiteral("mbsync.log")).contains(QStringLiteral("-V")));
+        key(Qt::Key_Delete);
+        QTRY_VERIFY(log(QStringLiteral("mu.log")).contains(QStringLiteral("/a/Trash")));
+    }
+    void testReplyBuilderSanitisesAndCaps() {
+        const Config cfg = makeConfig();
+        ParsedMessage m;
+        m.subject = QStringLiteral("Ciao\r\nBcc: spia@x.test");
+        m.from = QStringLiteral("Eve\r\nX: y <eve@x.test>");
+        m.to = QStringLiteral("alice@example.test");
+        m.plainText = QString(400 * 1024, QLatin1Char('x'));
+        const OutgoingMessage r = buildReply(m, QStringLiteral("a"), cfg, ReplyMode::Reply);
+        QVERIFY(!r.subject.contains(QLatin1Char('\n')) && !r.subject.contains(QLatin1Char('\r')));
+        QCOMPARE(r.subject, QStringLiteral("Re: Ciao Bcc: spia@x.test"));
+        for (const QString& a : r.to) QVERIFY(!a.contains(QLatin1Char('\n')));
+        QVERIFY(r.plainText.contains(QStringLiteral("[citazione troncata]")));
+        QVERIFY(r.plainText.size() < 300 * 1024);
+        const OutgoingMessage f = buildReply(m, QStringLiteral("a"), cfg, ReplyMode::Forward);
+        QVERIFY(!f.subject.contains(QLatin1Char('\n')));
+        QVERIFY(f.plainText.contains(QStringLiteral("[citazione troncata]")));
+        // allegati: nota visibile nell'inoltro
+        ParsedMessage a;
+        a.subject = QStringLiteral("x");
+        a.plainText = QStringLiteral("corpo");
+        a.attachments << Attachment() << Attachment();
+        QVERIFY(buildReply(a, QStringLiteral("a"), cfg, ReplyMode::Forward).plainText.contains(QStringLiteral("allegati originali non inclusi: 2")));
+        QVERIFY(!buildReply(a, QStringLiteral("a"), cfg, ReplyMode::Reply).plainText.contains(QStringLiteral("allegati originali")));
+    }
+    void testDeleteRefusedWhenAccountOutsideMuRoot() {
+        MainWindowOptions o = opts();
+        o.muRoot = dir_ + QStringLiteral("/mail/b"); // il messaggio e' dell'account a
+        MainWindow w(makeConfig(), o);
+        Noticed n;
+        w.setNoticeCallback([&](const QString& t, const QString& x) { n.titles << t; n.texts << x; });
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        select(w, 1);
+        QVERIFY(QTest::qWaitFor([&] { return w.messageView()->toPlainText().contains(QStringLiteral("Corpo due 2222")); }, 10000));
+        w.deleteButton()->click();
+        QVERIFY(QTest::qWaitFor([&] { return !n.texts.isEmpty(); }, 10000));
+        QVERIFY(n.texts.first().contains(QStringLiteral("radice di mu")));
+        QVERIFY(!log(QStringLiteral("mu.log")).contains(QStringLiteral("Trash")));
+        QVERIFY(w.deleteButton()->isEnabled()); // di nuovo utilizzabile
+        QCOMPARE(w.model()->rowCount(), 2);
     }
     void testStartsWithoutNetworkAndShowsOfflineState() {
         MainWindowOptions o = opts();
@@ -306,7 +563,6 @@ private slots:
         QVERIFY2(t.elapsed() < 3000, "avvio bloccante");
         QVERIFY(QTest::qWaitFor([&] { return w.statusLabel()->text().contains(QStringLiteral("ffline")); }, 10000));
         QVERIFY(waitRows(w, 2)); // l'elenco c'e' comunque
-        Noticed n;
         QVERIFY(w.statusBar()->isVisibleTo(&w));
     }
     void testStartsWithEmptyConfigShowsSetupHelp() {

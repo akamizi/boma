@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QHBoxLayout>
 #include <QMessageBox>
+#include <QScrollBar>
 #include <QShortcut>
 #include <QSplitter>
 #include <QStandardPaths>
@@ -87,7 +88,7 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     top->addLayout(searchRow);
 
     auto* split = new QSplitter(central);
-    folders_ = new FolderPane(config_, opts_.muRoot, split);
+    folders_ = new FolderPane(config_, split);
     list_ = new QListView(split);
     list_->setModel(model_);
     list_->setUniformItemSizes(true);
@@ -156,6 +157,13 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
         searchTimer_->stop();
         applyQuery(q);
     });
+    openTimer_ = new QTimer(this);
+    openTimer_->setSingleShot(true);
+    openTimer_->setInterval(100);
+    connect(openTimer_, &QTimer::timeout, this, [this] {
+        if (pendingToken_ == selToken_) startLoad(pendingToken_, pendingSummary_);
+    });
+    connect(model_, &MessageListModel::pageLoaded, this, &MainWindow::onPageLoaded);
     connect(list_->selectionModel(), &QItemSelectionModel::currentChanged, this,
             [this](const QModelIndex& cur) { onCurrentChanged(cur); });
     connect(view_, &MessageView::decryptRequested, this, &MainWindow::onDecryptRequested);
@@ -190,6 +198,7 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     sc(QKeySequence(Qt::Key_F5), &MainWindow::syncNow);
 
     // ---- avvio: nessun lavoro sincrono ----
+    resolveMuRoot();
     if (config_.isEmpty()) {
         help_->setHtml(tr("<h2>Benvenuto in Boma</h2><p>Nessun account configurato.</p>"
                           "<p>Crea il file <b>%1</b> con almeno un account e una identit&agrave;, ad esempio:</p>"
@@ -225,7 +234,7 @@ void MainWindow::setHaveMessage(bool on) {
     replyBtn_->setEnabled(on);
     replyAllBtn_->setEnabled(on);
     fwdBtn_->setEnabled(on);
-    delBtn_->setEnabled(on);
+    delBtn_->setEnabled(on && !deleting_);
 }
 
 void MainWindow::focusSearch() {
@@ -256,13 +265,60 @@ void MainWindow::showNotice(const QString& title, const QString& text) {
 // ---- elenco e ricerca ----
 
 void MainWindow::applyQuery(const QString& query) {
+    keepPending_ = false;
     model_->setQuery(query); // generazione: i risultati della query precedente sono scartati
     if (model_->canFetchMore({})) model_->fetchMore({});
 }
 
+// Dopo la sincronizzazione: l'elenco viene riletto ma la selezione (e lo scorrimento)
+// restano. La selezione non emette segnali durante il reset: il messaggio aperto non
+// viene riletto ne' richiuso; se dopo la prima pagina non c'e' piu', il visore si svuota.
 void MainWindow::refreshList() {
-    model_->reset();
+    keepPending_ = haveMsg_ && !curSummary_.path.isEmpty();
+    keepPath_ = curSummary_.path;
+    keepScroll_ = list_->verticalScrollBar()->value();
+    {
+        QSignalBlocker b(list_->selectionModel());
+        model_->reset();
+    }
     if (model_->canFetchMore({})) model_->fetchMore({});
+}
+
+void MainWindow::onPageLoaded(int, const QString& error) {
+    if (!keepPending_) return;
+    keepPending_ = false;
+    if (!error.isEmpty()) return; // elenco non aggiornato: nulla cambia
+    const int row = rowForPath(keepPath_);
+    if (row < 0) {
+        clearViewer();
+        return;
+    }
+    {
+        QSignalBlocker b(list_->selectionModel());
+        list_->selectionModel()->setCurrentIndex(model_->index(row, 0), QItemSelectionModel::ClearAndSelect);
+    }
+    list_->verticalScrollBar()->setValue(keepScroll_);
+    curSummary_ = model_->summary(row);
+}
+
+void MainWindow::clearViewer() {
+    ++selToken_;
+    openTimer_->stop();
+    decrypted_ = haveInner_ = false;
+    setHaveMessage(false);
+    view_->show(ParsedMessage());
+}
+
+void MainWindow::reindexAndRefresh() {
+    // nuova posta: aggiorna l'indice di mu (asincrono) e poi l'elenco
+    QPointer<MainWindow> self(this);
+    index_->reindex(QString(), [self](bool ok, QString err) {
+        if (!self) return;
+        if (!ok)
+            self->statusBar()->showMessage(tr("Aggiornamento dell'indice non riuscito: %1").arg(err), 10000);
+        else
+            self->refreshList();
+    });
 }
 
 // ---- lettura ----
@@ -272,8 +328,15 @@ void MainWindow::onCurrentChanged(const QModelIndex& cur) {
     decrypted_ = haveInner_ = false;
     innerStatus_ = SignatureStatus::None;
     setHaveMessage(false);
+    openTimer_->stop();
     if (!cur.isValid() || cur.row() >= model_->rowCount()) return;
-    const MessageSummary s = model_->summary(cur.row());
+    // Debounce: scorrendo velocemente si analizza solo la riga su cui ci si ferma.
+    pendingSummary_ = model_->summary(cur.row());
+    pendingToken_ = token;
+    openTimer_->start();
+}
+
+void MainWindow::startLoad(quint64 token, const MessageSummary& s) {
     // Scelta: lettura e analisi del singolo messaggio nel pool di thread (il file
     // puo' arrivare a 64 MiB): la GUI non attende mai il disco ne' GMime.
     offThread<Loaded>(
@@ -353,12 +416,22 @@ void MainWindow::startVerify(quint64 token, const ParsedMessage& pm) {
 
 void MainWindow::onDecryptRequested() {
     if (!haveMsg_ || !curParsed_.encryptedPgp) return;
+    if (decrypting_) {
+        statusBar()->showMessage(tr("Decifratura gia' in corso"), 5000);
+        return;
+    }
+    decrypting_ = true; // un solo gpg --decrypt alla volta
     const quint64 token = selToken_;
     QPointer<MainWindow> self(this);
     sender_->gpg().decrypt(
         view_->encryptedData(),
         [self, token](bool ok, QByteArray plain, QString error) {
-            if (!self || token != self->selToken_) return;
+            if (!self) return;
+            if (!ok) self->decrypting_ = false;
+            if (token != self->selToken_) {
+                self->decrypting_ = false;
+                return;
+            }
             if (!ok) {
                 self->view_->showDecryptError(error);
                 return;
@@ -372,6 +445,7 @@ void MainWindow::onDecryptRequested() {
                     return l;
                 },
                 [self, token](Loaded l) {
+                    self->decrypting_ = false;
                     if (token != self->selToken_) return;
                     if (!l.error.isEmpty()) {
                         self->view_->showDecryptError(tr("Contenuto decifrato non interpretabile: %1").arg(l.error));
@@ -407,22 +481,34 @@ void MainWindow::onDecryptRequested() {
 // ---- azioni ----
 
 void MainWindow::deleteSelected() {
-    if (!haveMsg_) return;
+    if (!haveMsg_ || deleting_) return; // un solo spostamento alla volta
     const MessageSummary s = curSummary_;
     const Account acc = accountFor(s.accountId);
     if (acc.id.isEmpty()) {
         showNotice(tr("Elimina"), tr("Account del messaggio non riconosciuto: non viene spostato nulla."));
         return;
     }
+    deleting_ = true;
+    delBtn_->setEnabled(false);
     QPointer<MainWindow> self(this);
     actions_->moveToTrash(s.path, acc, [self, s](bool ok, QString err) {
         if (!self) return;
+        self->deleting_ = false;
+        self->delBtn_->setEnabled(self->haveMsg_);
         if (!ok) {
             self->showNotice(tr("Elimina"), tr("Impossibile spostare nel cestino: %1").arg(err));
             return;
         }
         const int row = self->rowForPath(s.path);
-        if (row >= 0) self->model_->removeAt(row);
+        if (row >= 0) {
+            // la riga vicina NON deve aprirsi (e risultare letta) da sola
+            {
+                QSignalBlocker b(self->list_->selectionModel());
+                self->model_->removeAt(row);
+                self->list_->selectionModel()->clear();
+            }
+            if (self->curSummary_.path == s.path) self->clearViewer();
+        }
         self->statusBar()->showMessage(tr("Spostato nel cestino"), 5000);
     });
 }
@@ -448,18 +534,12 @@ void MainWindow::onSyncState(SyncService::State st, const QString& accountId, co
         syncLabel_->setText(tr("Sincronizzato alle %1").arg(lastSync_.toString(QStringLiteral("HH:mm"))));
         if (syncWasRunning_) {
             syncWasRunning_ = false;
-            // nuova posta: aggiorna l'indice di mu (asincrono) e poi l'elenco
-            QPointer<MainWindow> self(this);
-            index_->reindex(QString(), [self](bool ok, QString err) {
-                if (!self) return;
-                if (!ok)
-                    self->statusBar()->showMessage(tr("Aggiornamento dell'indice non riuscito: %1").arg(err), 10000);
-                else
-                    self->refreshList();
-            });
+            reindexAndRefresh();
         }
         break;
     case SyncService::Failed:
+        // un account fallito non deve nascondere la posta scaricata dagli altri
+        if (syncWasRunning_ && sync_->anySynced()) reindexAndRefresh();
         syncWasRunning_ = false;
         progress_->hide();
         // senza rete mbsync esce con errore: nessun messaggio ripetuto, solo lo stato
@@ -514,6 +594,9 @@ void MainWindow::startSend(QPointer<ComposeWindow> c, const OutgoingMessage& msg
 
 void MainWindow::onSendResult(QPointer<ComposeWindow> c, const OutgoingMessage& msg, bool sign, bool encrypt, const SendResult& r) {
     const bool keepLocked = r.kind == SendResult::NeedsConfirmationUnsigned;
+    // Se la finestra di scrittura e' stata chiusa durante l'invio il messaggio non e'
+    // piu' "nella finestra": il testo dell'avviso lo dice.
+    const QString closedNote = tr("\n\nLa finestra di scrittura e' stata chiusa durante l'invio: il messaggio non e' piu' disponibile qui.");
     if (c && !keepLocked) {
         c->setProperty("bomaSending", false);
         if (r.kind != SendResult::Sent) {
@@ -559,13 +642,15 @@ void MainWindow::onSendResult(QPointer<ComposeWindow> c, const OutgoingMessage& 
     case SendResult::MissingKeys:
         statusBar()->clearMessage();
         showNotice(tr("Chiavi mancanti"),
-                   tr("Nulla e' stato inviato: manca una chiave pubblica utilizzabile per:\n\n%1").arg(r.missing.join(QLatin1Char('\n'))));
+                   tr("Nulla e' stato inviato: manca una chiave pubblica utilizzabile per:\n\n%1").arg(r.missing.join(QLatin1Char('\n'))) +
+                       (c ? QString() : closedNote));
         break;
     case SendResult::SmtpFailed:
         statusBar()->clearMessage();
         showNotice(tr("Invio non riuscito"),
-                   r.message + tr("\n\nIl messaggio resta nella finestra di scrittura e non viene ripetuto automaticamente. "
-                                  "Se l'esito e' incerto controlla la cartella Inviata prima di riprovare."));
+                   r.message + (c ? tr("\n\nIl messaggio resta nella finestra di scrittura e non viene ripetuto automaticamente. "
+                                       "Se l'esito e' incerto controlla la cartella Inviata prima di riprovare.")
+                                  : tr("\n\nNon viene ripetuto automaticamente. Se l'esito e' incerto controlla la cartella Inviata.") + closedNote));
         break;
     case SendResult::SignFailed:
     case SendResult::EncryptFailed:
@@ -574,9 +659,58 @@ void MainWindow::onSendResult(QPointer<ComposeWindow> c, const OutgoingMessage& 
         statusBar()->clearMessage();
         showNotice(r.kind == SendResult::Busy ? tr("Invio in corso") : tr("Invio non riuscito"),
                    r.kind == SendResult::Busy ? tr("Un altro invio e' in corso: riprova tra poco. Nulla e' stato inviato.")
-                                              : r.message + tr("\n\nNulla e' stato inviato; il messaggio resta nella finestra di scrittura."));
+                                              : r.message + (c ? tr("\n\nNulla e' stato inviato; il messaggio resta nella finestra di scrittura.")
+                                                             : tr("\n\nNulla e' stato inviato.") + closedNote));
         break;
     }
+}
+
+} // namespace boma
+
+namespace boma {
+
+// Le cartelle di mu sono relative alla sua radice Maildir, non a quella di un
+// account: priorita' opzione > [general] muRoot > `mu info store` > (con avviso)
+// il genitore comune delle Maildir degli account.
+void MainWindow::resolveMuRoot()
+{
+    if (config_.isEmpty()) return;
+    if (!opts_.muRoot.isEmpty()) return applyMuRoot(opts_.muRoot, QString());
+    if (!config_.muRoot().isEmpty()) return applyMuRoot(config_.muRoot(), QString());
+    QPointer<MainWindow> self(this);
+    index_->storeRoot([self](QString root, QString err) {
+        if (!self) return;
+        if (!root.isEmpty()) return self->applyMuRoot(root, QString());
+        self->applyMuRoot(QString(), err);
+    });
+}
+
+void MainWindow::applyMuRoot(QString root, const QString& error)
+{
+    QString warning;
+    if (root.isEmpty()) {
+        QStringList common;
+        bool first = true;
+        for (const Account& a : config_.accounts()) {
+            QStringList parts = QDir::cleanPath(a.maildirRoot).split(QLatin1Char('/'), Qt::SkipEmptyParts);
+            if (!parts.isEmpty()) parts.removeLast(); // genitore della Maildir
+            if (first) {
+                common = parts;
+                first = false;
+                continue;
+            }
+            int n = 0;
+            while (n < common.size() && n < parts.size() && common[n] == parts[n]) ++n;
+            common = common.mid(0, n);
+        }
+        root = QLatin1Char('/') + common.join(QLatin1Char('/'));
+        warning = tr("Radice Maildir di mu non determinata (%1): uso %2. Impostare [general] muRoot nella configurazione.")
+                      .arg(error, root);
+    }
+    muRoot_ = root;
+    actions_->setMuRoot(root);
+    folders_->setMuRoot(root);
+    if (!warning.isEmpty()) statusBar()->showMessage(warning);
 }
 
 } // namespace boma

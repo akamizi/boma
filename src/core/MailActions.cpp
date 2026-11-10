@@ -53,8 +53,21 @@ void MailActions::moveToTrash(const QString& path, const Account& account, Callb
     const QStringList parts = trimmed.split(QLatin1Char('/'), Qt::SkipEmptyParts);
     if (parts.isEmpty() || parts.contains(QStringLiteral("..")) || parts.contains(QStringLiteral(".")))
         return refuse(QStringLiteral("Cartella cestino non valida: '%1'").arg(account.trashFolder));
-    // mu vuole la cartella relativa alla radice Maildir, con '/' iniziale.
-    runMu({QStringLiteral("move"), path, QLatin1Char('/') + parts.join(QLatin1Char('/'))}, std::move(cb));
+    // mu vuole la cartella relativa alla radice Maildir di mu, con '/' iniziale.
+    QString prefix;
+    if (!m_muRoot.isEmpty()) {
+        const QString mroot = QDir::cleanPath(m_muRoot);
+        if (root == mroot) {
+            // account = radice di mu
+        } else if (root.startsWith(mroot.endsWith(QLatin1Char('/')) ? mroot : mroot + QLatin1Char('/'))) {
+            prefix = root.mid(mroot.size());
+            if (!prefix.startsWith(QLatin1Char('/'))) prefix.prepend(QLatin1Char('/'));
+        } else {
+            return refuse(QStringLiteral("La Maildir dell'account (%1) non e' sotto la radice di mu (%2): spostamento rifiutato")
+                              .arg(account.maildirRoot, m_muRoot));
+        }
+    }
+    runMu({QStringLiteral("move"), path, prefix + QLatin1Char('/') + parts.join(QLatin1Char('/'))}, std::move(cb));
 }
 
 } // namespace boma

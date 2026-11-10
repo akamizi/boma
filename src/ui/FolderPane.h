@@ -10,20 +10,24 @@ namespace boma {
 // nodo "Non lette" (tutti gli account). La selezione emette la query mu da
 // eseguire (asincrona, a cura del chiamante); i nodi account non emettono nulla.
 // Nessun conteggio dei non letti: richiederebbe una query mu per cartella.
+// Finche' la radice di mu non e' nota (setMuRoot) esiste solo "Non lette" e gli
+// account senza cartelle: le query di cartella sarebbero sbagliate.
 class FolderPane : public QTreeView {
     Q_OBJECT
 public:
-    // muRoot: radice Maildir di mu; se vuota si assume la radice dell'account
-    // (come MailActions). Le cartelle sono "maildir:/<percorso relativo a muRoot>".
-    explicit FolderPane(const Config& config, const QString& muRoot = {}, QWidget* parent = nullptr);
+    explicit FolderPane(const Config& config, QWidget* parent = nullptr);
+    // (Ri)costruisce le cartelle con la radice di mu data.
+    void setMuRoot(const QString& muRoot);
     QStandardItemModel* itemModel() const { return model_; }
-    // Query di una cartella (vuota per "Non lette"); esposta per i test.
+    // Query di una cartella "maildir:\"/<rel>\"", relativa alla radice di mu.
+    // Vuota se la Maildir dell'account non e' sotto la radice.
     static QString folderQuery(const QString& muRoot, const QString& maildirRoot, const QString& folder);
 
 signals:
     void querySelected(const QString& query);
 
 private:
+    Config config_;
     QStandardItemModel* model_;
 };
 

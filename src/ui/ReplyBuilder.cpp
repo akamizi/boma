@@ -28,15 +28,46 @@ QString withPrefix(const QString& subject, const QString& prefix, const QRegular
     return prefix + s;
 }
 
-QString bodyText(const ParsedMessage& m) {
-    if (!m.plainText.isEmpty() || m.html.isEmpty()) return m.plainText;
-    return QTextDocumentFragment::fromHtml(m.html).toPlainText();
+constexpr int kMaxQuoteBytes = 256 * 1024;
+
+// Intestazioni copiate nel nuovo messaggio: mai a capo (CR/LF) dentro un valore.
+QString oneLine(QString s) {
+    s.replace(QRegularExpression(QStringLiteral("[\\r\\n]+")), QStringLiteral(" "));
+    return s.trimmed();
+}
+
+// Testo da citare/inoltrare; la conversione HTML->testo e' limitata (QTextDocument
+// su un HTML enorme bloccherebbe la GUI). *truncated indica il taglio.
+QString bodyText(const ParsedMessage& m, bool* truncated) {
+    *truncated = false;
+    QString t;
+    if (!m.plainText.isEmpty() || m.html.isEmpty()) {
+        t = m.plainText;
+    } else {
+        QString h = m.html;
+        if (h.size() > kMaxQuoteBytes) {
+            h.truncate(kMaxQuoteBytes);
+            *truncated = true;
+        }
+        t = QTextDocumentFragment::fromHtml(h).toPlainText();
+    }
+    if (t.size() > kMaxQuoteBytes) {
+        t.truncate(kMaxQuoteBytes);
+        *truncated = true;
+    }
+    return t;
 }
 
 } // namespace
 
-OutgoingMessage buildReply(const ParsedMessage& m, const QString& accountId, const Config& config, ReplyMode mode) {
+OutgoingMessage buildReply(const ParsedMessage& orig, const QString& accountId, const Config& config, ReplyMode mode) {
     OutgoingMessage out;
+    ParsedMessage m = orig;
+    m.subject = oneLine(m.subject);
+    m.from = oneLine(m.from);
+    m.to = oneLine(m.to);
+    m.cc = oneLine(m.cc);
+    m.replyTo = oneLine(m.replyTo);
 
     QSet<QString> own;
     QList<Identity> all;
@@ -69,13 +100,19 @@ OutgoingMessage buildReply(const ParsedMessage& m, const QString& accountId, con
     static const QRegularExpression reRe(QStringLiteral("^(re|r|aw|sv)\\s*(\\[\\d+\\])?\\s*:\\s*"), QRegularExpression::CaseInsensitiveOption);
     static const QRegularExpression fwRe(QStringLiteral("^(fwd?|i|inol|wg)\\s*:\\s*"), QRegularExpression::CaseInsensitiveOption);
 
-    const QString body = bodyText(m);
+    bool truncated = false;
+    const QString body = bodyText(m, &truncated);
+    const QString truncNote = truncated ? QStringLiteral("\n[citazione troncata]") : QString();
     const QString dateText = m.date.isValid() ? QLocale().toString(m.date, QLocale::LongFormat) : QString();
 
     if (mode == ReplyMode::Forward) {
         out.subject = withPrefix(m.subject, QStringLiteral("Fwd: "), fwRe);
-        out.plainText = QStringLiteral("\n\n-------- Messaggio inoltrato --------\nDa: %1\nA: %2\n%3Data: %4\nOggetto: %5\n\n%6\n")
-                            .arg(m.from, m.to, m.cc.isEmpty() ? QString() : QStringLiteral("Cc: %1\n").arg(m.cc), dateText, m.subject, body);
+        const QString attNote = m.attachments.isEmpty()
+                                    ? QString()
+                                    : QStringLiteral("(allegati originali non inclusi: %1)\n").arg(m.attachments.size());
+        out.plainText = QStringLiteral("\n\n-------- Messaggio inoltrato --------\nDa: %1\nA: %2\n%3Data: %4\nOggetto: %5\n%6\n%7\n%8")
+                            .arg(m.from, m.to, m.cc.isEmpty() ? QString() : QStringLiteral("Cc: %1\n").arg(m.cc), dateText, m.subject,
+                                 attNote, body, truncNote);
         return out;
     }
 
@@ -114,8 +151,8 @@ OutgoingMessage buildReply(const ParsedMessage& m, const QString& accountId, con
     QString quoted;
     for (const QString& line : body.trimmed().split(QLatin1Char('\n')))
         quoted += QStringLiteral("> ") + QString(line).remove(QLatin1Char('\r')) + QLatin1Char('\n');
-    out.plainText = QStringLiteral("\n%1 ha scritto:\n%2\n").arg(
-        dateText.isEmpty() ? m.from : QStringLiteral("Il %1, %2").arg(dateText, m.from), quoted);
+    out.plainText = QStringLiteral("\n%1 ha scritto:\n%2%3\n").arg(
+        dateText.isEmpty() ? m.from : QStringLiteral("Il %1, %2").arg(dateText, m.from), quoted, truncNote);
     return out;
 }
 

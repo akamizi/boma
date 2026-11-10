@@ -30,6 +30,9 @@ public:
     void syncAll();
     void syncAccount(const QString& id);
     State state() const { return m_state; }
+    // Almeno un account ha completato la sincronizzazione nel giro corrente/ultimo
+    // (anche se un account successivo e' fallito): la posta nuova va indicizzata.
+    bool anySynced() const { return m_anySynced; }
 
     // Percorso del programma (iniettabile nei test con uno script finto).
     void setMbsyncProgram(const QString& program) { m_program = program; }
@@ -69,6 +72,7 @@ private:
     QByteArray m_lineBuf;
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
     QString m_failedId, m_failedMsg;
+    bool m_anySynced = false;
 };
 
 } // namespace boma

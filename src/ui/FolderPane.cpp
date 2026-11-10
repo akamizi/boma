@@ -6,34 +6,47 @@ namespace boma {
 
 QString FolderPane::folderQuery(const QString& muRoot, const QString& maildirRoot, const QString& folder) {
     QString rel = QDir::cleanPath(QStringLiteral("/") + folder);
-    if (!muRoot.isEmpty()) {
-        const QString root = QDir::cleanPath(muRoot);
-        const QString acc = QDir::cleanPath(maildirRoot);
-        if (acc.startsWith(root + QLatin1Char('/')))
-            rel = acc.mid(root.size()) + rel;
+    const QString root = QDir::cleanPath(muRoot);
+    const QString acc = QDir::cleanPath(maildirRoot);
+    if (acc == root) {
+        // account = radice di mu
+    } else if (acc.startsWith(root + QLatin1Char('/'))) {
+        rel = acc.mid(root.size()) + rel;
+    } else {
+        return {};
     }
     rel.replace(QLatin1Char('\\'), QStringLiteral("\\\\")).replace(QLatin1Char('"'), QStringLiteral("\\\""));
     return QStringLiteral("maildir:\"%1\"").arg(rel);
 }
 
-FolderPane::FolderPane(const Config& config, const QString& muRoot, QWidget* parent) : QTreeView(parent) {
+FolderPane::FolderPane(const Config& config, QWidget* parent) : QTreeView(parent), config_(config) {
     model_ = new QStandardItemModel(this);
     setHeaderHidden(true);
     setEditTriggers(NoEditTriggers);
     setModel(model_);
+    connect(selectionModel(), &QItemSelectionModel::currentChanged, this, [this](const QModelIndex& cur) {
+        if (cur.isValid() && cur.data(Qt::UserRole + 2).toBool()) emit querySelected(cur.data(Qt::UserRole + 1).toString());
+    });
+    setMuRoot(QString());
+}
 
+void FolderPane::setMuRoot(const QString& muRoot) {
     const int QueryRole = Qt::UserRole + 1, FolderRole = Qt::UserRole + 2;
+    QSignalBlocker b(selectionModel());
+    model_->clear();
     auto* unread = new QStandardItem(tr("Non lette"));
     unread->setData(QString(), QueryRole);
     unread->setData(true, FolderRole);
     model_->appendRow(unread);
-    for (const Account& a : config.accounts()) {
+    for (const Account& a : config_.accounts()) {
         auto* top = new QStandardItem(a.name.isEmpty() ? a.id : a.name);
         top->setData(a.id, Qt::UserRole + 3);
         auto add = [&](const QString& label, const QString& folder) {
-            if (folder.trimmed().isEmpty()) return;
+            if (muRoot.isEmpty() || folder.trimmed().isEmpty()) return;
+            const QString q = folderQuery(muRoot, a.maildirRoot, folder);
+            if (q.isEmpty()) return;
             auto* it = new QStandardItem(label);
-            it->setData(folderQuery(muRoot, a.maildirRoot, folder), QueryRole);
+            it->setData(q, QueryRole);
             it->setData(true, FolderRole);
             top->appendRow(it);
         };
@@ -44,9 +57,6 @@ FolderPane::FolderPane(const Config& config, const QString& muRoot, QWidget* par
         model_->appendRow(top);
     }
     expandAll();
-    connect(selectionModel(), &QItemSelectionModel::currentChanged, this, [this, FolderRole, QueryRole](const QModelIndex& cur) {
-        if (cur.isValid() && cur.data(FolderRole).toBool()) emit querySelected(cur.data(QueryRole).toString());
-    });
 }
 
 } // namespace boma

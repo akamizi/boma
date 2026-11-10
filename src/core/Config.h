@@ -46,10 +46,13 @@ public:
     // Confronto case-insensitive; id vuoto se non trovata.
     Identity identityForAddress(const QString& address) const;
     bool isEmpty() const { return m_accounts.isEmpty(); }
+    // [general] muRoot=...  radice Maildir di mu (opzionale; "~" espanso). Vuota = da `mu info store`.
+    QString muRoot() const { return m_muRoot; }
 
 private:
     QList<Account> m_accounts;
     QList<Identity> m_identities;
+    QString m_muRoot;
 };
 
 } // namespace boma

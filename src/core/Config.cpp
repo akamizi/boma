@@ -27,6 +27,12 @@ Config Config::load(const QString& path, QString* error) {
     QStringList errors;
     const QStringList groups = s.childGroups();
 
+    // QSettings mappa la sezione [general] sulle chiavi di primo livello.
+    {
+        QVariant v = s.value("muRoot");
+        if (!v.isValid()) v = s.value("general/muRoot");
+        c.m_muRoot = expandHome(v.toString());
+    }
     for (const QString& g : groups) {
         if (!g.startsWith("account:")) continue;
         s.beginGroup(g);

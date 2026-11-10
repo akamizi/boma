@@ -31,7 +31,7 @@ namespace boma {
 struct MainWindowOptions {
     QString muProgram = QStringLiteral("mu");
     QString muHome;       // vuoto = predefinito di mu
-    QString muRoot;       // radice Maildir di mu (vuoto: radice dell'account)
+    QString muRoot;       // radice Maildir di mu (vuoto: [general] muRoot, poi `mu info store`)
     QString mbsyncProgram = QStringLiteral("mbsync");
     QString msmtpProgram = QStringLiteral("msmtp");
     QString gpgProgram;   // vuoto = "gpg"
@@ -48,6 +48,8 @@ struct MainWindowOptions {
 // azioni sui messaggi passano da MailActions (mu move). Mai cancellazione
 // definitiva: "Elimina" sposta nel cestino dell'account, senza conferma (come da
 // specifica) ma con pulsante rosso, distinto dalle azioni sicure.
+// Limite noto (rinvio del registro): la bozza salvata in Drafts durante la
+// scrittura resta in Drafts anche dopo l'invio riuscito.
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
@@ -55,6 +57,7 @@ public:
     ~MainWindow() override;
 
     MessageListModel* model() const { return model_; }
+    QString muRoot() const { return muRoot_; }
     QListView* listView() const { return list_; }
     QLineEdit* searchEdit() const { return search_; }
     FolderPane* folderPane() const { return folders_; }
@@ -91,6 +94,9 @@ signals:
     void messageOpened(const QString& path);
 
 private:
+    void resolveMuRoot();
+    void applyMuRoot(QString root, const QString& error);
+    QString muRoot_;
     void onCurrentChanged(const QModelIndex& cur);
     void onLoaded(quint64 token, const MessageSummary& s, const ParsedMessage& pm, const QString& error);
     void markReadAfterOpen(const MessageSummary& s);
@@ -98,6 +104,10 @@ private:
     void onDecryptRequested();
     void applyQuery(const QString& query);
     void refreshList();
+    void onPageLoaded(int added, const QString& error);
+    void clearViewer();
+    void startLoad(quint64 token, const MessageSummary& s);
+    void reindexAndRefresh();
     void onSyncState(SyncService::State st, const QString& accountId, const QString& message);
     void compose(ReplyMode mode);
     ComposeWindow* openCompose(const OutgoingMessage* prefill);
@@ -128,6 +138,16 @@ private:
     QProgressBar* progress_;
 
     quint64 selToken_ = 0;
+    // apertura con debounce (M10): scorrendo l'elenco si analizza solo la riga su cui ci si ferma
+    QTimer* openTimer_ = nullptr;
+    MessageSummary pendingSummary_;
+    quint64 pendingToken_ = 0;
+    // azioni in corso (M4)
+    bool deleting_ = false, decrypting_ = false;
+    // aggiornamento dopo la sincronizzazione (M3): percorso da riselezionare
+    QString keepPath_;
+    int keepScroll_ = 0;
+    bool keepPending_ = false;
     bool haveMsg_ = false;
     MessageSummary curSummary_;
     ParsedMessage curParsed_;

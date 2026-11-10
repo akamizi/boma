@@ -50,6 +50,10 @@ public:
     void search(const QString& query, int offset, int limit, SearchCallback cb);
     void unread(int offset, int limit, SearchCallback cb);
     void reindex(const QString& accountId, Callback cb);
+    // Radice Maildir di mu (`mu info store`, riga "maildir"). Le cartelle di mu
+    // ("/a/INBOX") sono relative a questa radice, non a quella di un account.
+    void storeRoot(std::function<void(QString root, QString error)> cb);
+    static QString parseStoreRoot(const QByteArray& infoStoreOutput);
 
     // Esposto per i test.
     QList<MessageSummary> parse(const QByteArray& json, QString* error) const;

@@ -66,6 +66,7 @@ void SyncService::begin(const QList<Account>& accounts)
         m_queue.enqueue(a);
     m_failedId.clear();
     m_failedMsg.clear();
+    m_anySynced = false;
     setState(Running);
     next();
 }
@@ -94,6 +95,8 @@ void SyncService::next()
                                           : tr("mbsync ha restituito %1: %2")
                                                 .arg(r.exitCode).arg(detail);
                 m_queue.clear(); // al primo errore ci si ferma
+            } else {
+                m_anySynced = true;
             }
             next();
         },

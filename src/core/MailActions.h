@@ -28,6 +28,10 @@ public:
     void setMuProgram(const QString& p) { m_mu = p; }
     // Se non vuota, passata a mu come --muhome (stessa base dati di MailIndex).
     void setMuHome(const QString& h) { m_muHome = h; }
+    // Radice Maildir di mu: le cartelle di mu sono relative a questa ("/a/Trash").
+    // moveToTrash rifiuta gli account che non stanno sotto la radice. Vuota =
+    // si assume la radice dell'account (solo uso legacy).
+    void setMuRoot(const QString& r) { m_muRoot = r; }
 
     // Aggiunge la bandiera S (letto) e toglie N (nuovo).
     void markRead(const QString& path, Callback cb);
@@ -36,7 +40,7 @@ public:
 
 private:
     void runMu(const QStringList& args, Callback cb);
-    QString m_mu, m_muHome;
+    QString m_mu, m_muHome, m_muRoot;
     ProcessRunner m_runner;
 };
 
