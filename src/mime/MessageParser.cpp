@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace boma {
@@ -84,15 +85,75 @@ QString mimeTypeOf(GMimeObject* obj) {
 
 bool isMultipart(GMimeObject* o) { return GMIME_IS_MULTIPART(o); }
 
-QByteArray serialize(GMimeObject* obj, bool crlf) {
-    GRef<GMimeStream> out(g_mime_stream_mem_new());
-    GMimeFormatOptions* opts = g_mime_format_options_new();
-    g_mime_format_options_set_newline_format(opts, crlf ? GMIME_NEWLINE_FORMAT_DOS : GMIME_NEWLINE_FORMAT_UNIX);
-    g_mime_object_write_to_stream(obj, opts, out.get());
-    g_mime_format_options_free(opts);
-    g_mime_stream_flush(out.get());
-    GByteArray* ba = g_mime_stream_mem_get_byte_array(GMIME_STREAM_MEM(out.get()));
-    return ba ? QByteArray(reinterpret_cast<const char*>(ba->data), int(ba->len)) : QByteArray();
+// Byte esatti della prima parte di un multipart come trasmessi (RFC 3156):
+// dopo la riga di delimitatore iniziale (fine riga escluso) fino al fine riga che
+// precede il delimitatore successivo (escluso). Nessuna rielaborazione.
+QByteArray exactFirstPart(const QByteArray& raw, const QByteArray& boundary) {
+    if (boundary.isEmpty()) return {};
+    const QByteArray delim = "--" + boundary;
+    // Se la riga a partire da pos e' un delimitatore, restituisce la fine della
+    // riga (indice dopo l'fine riga) e imposta closing; altrimenti -1.
+    auto delimAt = [&](qsizetype pos, bool* closing, qsizetype* lineStart) -> qsizetype {
+        if (raw.mid(pos, delim.size()) != delim) return -1;
+        qsizetype i = pos + delim.size();
+        *closing = false;
+        if (raw.mid(i, 2) == "--") {
+            *closing = true;
+            i += 2;
+        }
+        while (i < raw.size() && (raw[i] == ' ' || raw[i] == '\t')) ++i;
+        *lineStart = pos;
+        if (i >= raw.size()) return raw.size();
+        if (raw[i] == '\n') return i + 1;
+        if (raw[i] == '\r' && i + 1 < raw.size() && raw[i + 1] == '\n') return i + 2;
+        return -1;
+    };
+    qsizetype pos = 0;
+    qsizetype start = -1;
+    while (pos <= raw.size()) {
+        bool closing = false;
+        qsizetype ls = 0;
+        const qsizetype next = delimAt(pos, &closing, &ls);
+        if (next >= 0) {
+            if (start < 0) {
+                if (closing) return {};
+                start = next;
+            } else {
+                qsizetype end = pos;
+                if (end > start && raw[end - 1] == '\n') {
+                    --end;
+                    if (end > start && raw[end - 1] == '\r') --end;
+                }
+                return raw.mid(start, end - start);
+            }
+        }
+        const qsizetype nl = raw.indexOf('\n', pos);
+        if (nl < 0) break;
+        pos = nl + 1;
+    }
+    return {};
+}
+
+constexpr qsizetype kMaxInput = qsizetype(64) * 1024 * 1024;
+constexpr int kMaxMultipartMarkers = 100;
+
+// Controllo economico prima di GMime (il cui parser e la cui distruzione sono
+// ricorsivi): dimensione massima e numero massimo di "multipart/" nel
+// messaggio, che limita anche la profondita' di annidamento.
+bool tooBigOrDeep(const QByteArray& raw, QString* why) {
+    if (raw.size() > kMaxInput) {
+        if (why) *why = QStringLiteral("messaggio troppo grande");
+        return true;
+    }
+    const QByteArray low = raw.toLower();
+    int n = 0;
+    for (qsizetype i = low.indexOf("multipart/"); i >= 0; i = low.indexOf("multipart/", i + 1)) {
+        if (++n > kMaxMultipartMarkers) {
+            if (why) *why = QStringLiteral("troppi livelli MIME annidati");
+            return true;
+        }
+    }
+    return false;
 }
 
 struct Parsed {
@@ -101,9 +162,10 @@ struct Parsed {
     GRef<GMimeMessage> msg;
 };
 
-bool construct(const QByteArray& raw, Parsed& p) {
+bool construct(const QByteArray& raw, Parsed& p, bool prechecked = false) {
     initGMime();
     if (raw.isEmpty()) return false;
+    if (!prechecked && tooBigOrDeep(raw, nullptr)) return false;
     p.stream.reset(g_mime_stream_mem_new_with_buffer(raw.constData(), raw.size()));
     if (!p.stream) return false;
     p.parser.reset(g_mime_parser_new_with_stream(p.stream.get()));
@@ -115,8 +177,13 @@ bool construct(const QByteArray& raw, Parsed& p) {
 
 constexpr int kMaxDepth = 64; // difesa da annidamenti patologici
 
+QByteArray boundaryOf(GMimeMultipart* mp) {
+    const char* b = g_mime_multipart_get_boundary(mp);
+    return b ? QByteArray(b) : QByteArray();
+}
+
 struct Walker {
-    bool rawCrlf = false;
+    const QByteArray* raw = nullptr;
     ParsedMessage* out = nullptr;
     int nextIndex = 0;
     int wantIndex = -1;
@@ -173,7 +240,7 @@ struct Walker {
         if (out && wantIndex < 0) {
             if (signedPgp && n >= 2 && !out->signedPgp && !out->encryptedPgp) {
                 out->signedPgp = true;
-                out->rawSignedPart = serialize(g_mime_multipart_get_part(mp, 0), rawCrlf);
+                out->rawSignedPart = raw ? exactFirstPart(*raw, boundaryOf(mp)) : QByteArray();
                 GMimeObject* sig = g_mime_multipart_get_part(mp, 1);
                 if (sig) out->rawSignature = partContent(sig);
             } else if (encPgp && n >= 2 && !out->signedPgp && !out->encryptedPgp) {
@@ -204,7 +271,12 @@ bool findPart(const QByteArray& raw, int partIndex, Parsed& p, GMimeObject** par
 ParsedMessage MessageParser::parse(const QByteArray& raw, QString* error) {
     ParsedMessage r;
     Parsed p;
-    if (!construct(raw, p)) {
+    QString why;
+    if (tooBigOrDeep(raw, &why)) {
+        if (error) *error = why;
+        return r;
+    }
+    if (!construct(raw, p, true)) {
         if (error) *error = raw.isEmpty() ? QStringLiteral("messaggio vuoto") : QStringLiteral("messaggio non interpretabile");
         return r;
     }
@@ -220,7 +292,7 @@ ParsedMessage MessageParser::parse(const QByteArray& raw, QString* error) {
     }
     Walker w;
     w.out = &r;
-    w.rawCrlf = raw.contains("\r\n");
+    w.raw = &raw;
     w.walk(g_mime_message_get_mime_part(msg), 0, false);
     if (error) error->clear();
     return r;
@@ -252,11 +324,15 @@ bool MessageParser::saveAttachment(const QByteArray& raw, int partIndex, const Q
     tmp.setAutoRemove(true);
     if (!tmp.open()) return fail(QStringLiteral("impossibile creare il file temporaneo: %1").arg(tmp.errorString()));
     if (tmp.write(data) != data.size() || !tmp.flush()) return fail(QStringLiteral("scrittura non riuscita: %1").arg(tmp.errorString()));
+    // QTemporaryFile crea con 0600: i file salvati rispettano invece la umask.
+    const mode_t um = ::umask(0);
+    ::umask(um);
+    ::fchmod(tmp.handle(), 0666 & ~um);
     ::fsync(tmp.handle());
     const QByteArray src = QFile::encodeName(tmp.fileName());
     // link() non sostituisce mai la destinazione; il file temporaneo viene rimosso dopo.
     if (::link(src.constData(), dest.constData()) == 0) return true;
-    const int e = errno;
+    int e = errno;
     if (e == EEXIST) return fail(QStringLiteral("il file esiste gia': %1").arg(destPath));
     // filesystem senza hard link: renameat2 con RENAME_NOREPLACE
 #ifdef RENAME_NOREPLACE
@@ -264,7 +340,8 @@ bool MessageParser::saveAttachment(const QByteArray& raw, int partIndex, const Q
         tmp.setAutoRemove(false);
         return true;
     }
-    if (errno == EEXIST) return fail(QStringLiteral("il file esiste gia': %1").arg(destPath));
+    e = errno; // errore dell'ultimo tentativo
+    if (e == EEXIST) return fail(QStringLiteral("il file esiste gia': %1").arg(destPath));
 #endif
     return fail(QStringLiteral("salvataggio non riuscito: %1").arg(QString::fromLocal8Bit(std::strerror(e))));
 }
@@ -273,20 +350,37 @@ QString MessageParser::sanitizeFilename(const QString& name) {
     QString s = name;
     const int cut = qMax(s.lastIndexOf(QLatin1Char('/')), s.lastIndexOf(QLatin1Char('\\')));
     if (cut >= 0) s = s.mid(cut + 1);
-    QString out;
-    for (const QChar c : s) {
-        const auto cat = c.category();
+    QList<char32_t> cps;
+    for (const char32_t c : s.toUcs4()) {
+        const auto cat = QChar::category(c);
         if (cat == QChar::Other_Control || cat == QChar::Other_Format || cat == QChar::Other_Surrogate ||
-            cat == QChar::Other_NotAssigned || c == QLatin1Char('"') || c == QLatin1Char('\'') ||
-            c == QLatin1Char('\\') || c == QLatin1Char('/') || c == QChar::LineSeparator ||
-            c == QChar::ParagraphSeparator)
+            cat == QChar::Other_NotAssigned || cat == QChar::Separator_Line || cat == QChar::Separator_Paragraph ||
+            c == U'"' || c == U'\'' || c == U'\\' || c == U'/')
             continue;
-        out.append(c);
+        cps.append(c);
     }
-    out = out.trimmed();
-    while (out.startsWith(QLatin1Char('.'))) out.remove(0, 1);
-    out = out.trimmed();
-    if (out.size() > 200) out = out.left(200).trimmed();
+    auto trimSpace = [&] {
+        while (!cps.isEmpty() && QChar::isSpace(cps.first())) cps.removeFirst();
+        while (!cps.isEmpty() && QChar::isSpace(cps.last())) cps.removeLast();
+    };
+    trimSpace();
+    while (!cps.isEmpty() && cps.first() == U'.') cps.removeFirst();
+    trimSpace();
+    auto bytes = [](const QList<char32_t>& v) { return QString::fromUcs4(v.constData(), v.size()).toUtf8().size(); };
+    constexpr int kMaxBytes = 200;
+    if (bytes(cps) > kMaxBytes) {
+        // conserva l'estensione (se breve), taglia la base su un confine di code point
+        qsizetype dot = -1;
+        for (qsizetype i = cps.size() - 1; i > 0; --i)
+            if (cps[i] == U'.') { dot = i; break; }
+        QList<char32_t> ext = dot > 0 ? cps.mid(dot) : QList<char32_t>();
+        if (bytes(ext) > 20) ext.clear();
+        QList<char32_t> base = dot > 0 && !ext.isEmpty() ? cps.mid(0, dot) : cps;
+        while (!base.isEmpty() && bytes(base) + bytes(ext) > kMaxBytes) base.removeLast();
+        cps = base + ext;
+        trimSpace();
+    }
+    const QString out = QString::fromUcs4(cps.constData(), cps.size());
     return out.isEmpty() ? QStringLiteral("allegato") : out;
 }
 
