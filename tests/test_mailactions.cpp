@@ -40,6 +40,7 @@ private slots:
             "[ \"$1\" = move ] || exit 2\n"
             "mv \"$2\" \"" + e.mail + "$3/cur/\"");
         MailActions a(nullptr, mu);
+        a.setMuRoot(e.mail);
         const int before = countFiles(e.mail);
         bool done = false, ok = false; QString err;
         a.moveToTrash(e.msg, e.acc, [&](bool o, QString m) { ok = o; err = m; done = true; });
@@ -53,6 +54,7 @@ private slots:
         Env e; e.init();
         const QString mu = script(e.td.path(), "mu", "echo boom >&2; exit 1");
         MailActions a(nullptr, mu);
+        a.setMuRoot(e.mail);
         const int before = countFiles(e.mail);
         bool done = false, ok = true; QString err;
         a.moveToTrash(e.msg, e.acc, [&](bool o, QString m) { ok = o; err = m; done = true; });
@@ -64,11 +66,25 @@ private slots:
         QFile f(e.msg); QVERIFY(f.open(QIODevice::ReadOnly));
         QCOMPARE(f.readAll(), QByteArray("Subject: x\n\nhi\n"));
     }
+    void testMoveToTrashRefusesWithoutOrWithSlashMuRoot() {
+        Env e; e.init();
+        const QString mu = script(e.td.path(), "mu", "echo ran >> \"" + e.td.path() + "/ran\"\nexit 0");
+        for (const QString& root : {QString(), QStringLiteral("/")}) {
+            MailActions a(nullptr, mu);
+            if (!root.isEmpty()) a.setMuRoot(root);
+            bool done = false, ok = true;
+            a.moveToTrash(e.msg, e.acc, [&](bool o, QString) { ok = o; done = true; });
+            QTRY_VERIFY_WITH_TIMEOUT(done, 5000);
+            QVERIFY(!ok);
+        }
+        QVERIFY(!QFile::exists(e.td.path() + "/ran")); // nessun mu eseguito
+    }
     void testMarkReadUsesFlagsArgument() {
         Env e; e.init();
         const QString log = e.td.path() + "/args.txt";
         const QString mu = script(e.td.path(), "mu", "echo \"$@\" > \"" + log + "\"");
         MailActions a(nullptr, mu);
+        a.setMuRoot(e.mail);
         bool done = false, ok = false; QString err;
         a.markRead(e.msg, [&](bool o, QString m) { ok = o; err = m; done = true; });
         QTRY_VERIFY_WITH_TIMEOUT(done, 5000);
@@ -82,6 +98,7 @@ private slots:
         const QString log = e.td.path() + "/calls.txt";
         const QString mu = script(e.td.path(), "mu", "echo x >> \"" + log + "\"");
         MailActions a(nullptr, mu);
+        a.setMuRoot(e.mail);
         const QString outside = e.td.path() + "/other/INBOX/cur/m";
         QDir().mkpath(e.td.path() + "/other/INBOX/cur");
         { QFile f(outside); QVERIFY(f.open(QIODevice::WriteOnly)); f.write("x"); }
@@ -106,6 +123,7 @@ private slots:
         const QString log = e.td.path() + "/calls.txt";
         const QString mu = script(e.td.path(), "mu", "echo x >> \"" + log + "\"");
         MailActions a(nullptr, mu);
+        a.setMuRoot(e.mail);
         for (const QString& f : {QString(), QString("  "), QString("/"), QString(".."), QString("../x"),
                                  QString("a/../../b"), QString("/../etc")}) {
             Account acc = e.acc; acc.trashFolder = f;
@@ -120,6 +138,7 @@ private slots:
         const QString log2 = e.td.path() + "/args.txt";
         const QString mu2 = script(e.td.path(), "mu2", "echo \"$@\" > \"" + log2 + "\"");
         MailActions b(nullptr, mu2);
+        b.setMuRoot(e.mail);
         Account acc = e.acc; acc.trashFolder = "//Trash/";
         bool done = false, ok = false;
         b.moveToTrash(e.msg, acc, [&](bool o, QString) { ok = o; done = true; });
@@ -138,6 +157,7 @@ private slots:
             script(e.td.path(), "mu2", "mv \"$2\" \"" + e.mail + "$3/cur/\"")};
         for (const QString& p : programs) {
             MailActions a(nullptr, p);
+            a.setMuRoot(e.mail);
             bool done = false;
             a.markRead(e.msg, [&](bool, QString) { done = true; });
             QTRY_VERIFY_WITH_TIMEOUT(done, 5000);

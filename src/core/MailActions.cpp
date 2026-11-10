@@ -54,18 +54,21 @@ void MailActions::moveToTrash(const QString& path, const Account& account, Callb
     if (parts.isEmpty() || parts.contains(QStringLiteral("..")) || parts.contains(QStringLiteral(".")))
         return refuse(QStringLiteral("Cartella cestino non valida: '%1'").arg(account.trashFolder));
     // mu vuole la cartella relativa alla radice Maildir di mu, con '/' iniziale.
+    // La radice di mu e' OBBLIGATORIA: senza, la cartella di destinazione potrebbe
+    // essere sbagliata e non si sposta nulla. "/" non e' accettata come radice.
+    if (m_muRoot.isEmpty())
+        return refuse(QStringLiteral("Radice Maildir di mu non nota: spostamento rifiutato"));
+    const QString mroot = QDir::cleanPath(m_muRoot);
+    if (mroot == QLatin1String("/") || !QDir::isAbsolutePath(mroot))
+        return refuse(QStringLiteral("Radice Maildir di mu non valida (%1): spostamento rifiutato").arg(m_muRoot));
     QString prefix;
-    if (!m_muRoot.isEmpty()) {
-        const QString mroot = QDir::cleanPath(m_muRoot);
-        if (root == mroot) {
-            // account = radice di mu
-        } else if (root.startsWith(mroot.endsWith(QLatin1Char('/')) ? mroot : mroot + QLatin1Char('/'))) {
-            prefix = root.mid(mroot.size());
-            if (!prefix.startsWith(QLatin1Char('/'))) prefix.prepend(QLatin1Char('/'));
-        } else {
-            return refuse(QStringLiteral("La Maildir dell'account (%1) non e' sotto la radice di mu (%2): spostamento rifiutato")
-                              .arg(account.maildirRoot, m_muRoot));
-        }
+    if (root == mroot) {
+        // account = radice di mu
+    } else if (root.startsWith(mroot + QLatin1Char('/'))) {
+        prefix = root.mid(mroot.size());
+    } else {
+        return refuse(QStringLiteral("La Maildir dell'account (%1) non e' sotto la radice di mu (%2): spostamento rifiutato")
+                          .arg(account.maildirRoot, m_muRoot));
     }
     runMu({QStringLiteral("move"), path, prefix + QLatin1Char('/') + parts.join(QLatin1Char('/'))}, std::move(cb));
 }

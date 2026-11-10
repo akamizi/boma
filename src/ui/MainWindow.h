@@ -96,7 +96,8 @@ signals:
 private:
     void resolveMuRoot();
     void applyMuRoot(QString root, const QString& error);
-    QString muRoot_;
+    QString muRoot_, muRootError_;
+    bool muRootReliable_ = false, muRootDetected_ = false;
     void onCurrentChanged(const QModelIndex& cur);
     void onLoaded(quint64 token, const MessageSummary& s, const ParsedMessage& pm, const QString& error);
     void markReadAfterOpen(const MessageSummary& s);

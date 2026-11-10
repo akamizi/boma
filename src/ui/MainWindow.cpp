@@ -287,7 +287,10 @@ void MainWindow::refreshList() {
 void MainWindow::onPageLoaded(int, const QString& error) {
     if (!keepPending_) return;
     keepPending_ = false;
-    if (!error.isEmpty()) return; // elenco non aggiornato: nulla cambia
+    if (!error.isEmpty()) { // l'elenco e' stato azzerato: il visore non deve restare incoerente
+        clearViewer();
+        return;
+    }
     const int row = rowForPath(keepPath_);
     if (row < 0) {
         clearViewer();
@@ -482,6 +485,17 @@ void MainWindow::onDecryptRequested() {
 
 void MainWindow::deleteSelected() {
     if (!haveMsg_ || deleting_) return; // un solo spostamento alla volta
+    if (!muRootDetected_ && !config_.isEmpty()) {
+        statusBar()->showMessage(tr("Cancella disponibile dopo il rilevamento della radice mu"), 8000);
+        return;
+    }
+    if (!muRootReliable_) {
+        showNotice(tr("Elimina"),
+                   tr("La radice Maildir di mu non e' stata determinata in modo affidabile (%1): per sicurezza nulla viene spostato.\n\n"
+                      "Imposta muRoot= nella sezione [general] della configurazione di Boma "
+                      "(o correggi `mu info store`).").arg(muRootError_.isEmpty() ? tr("errore sconosciuto") : muRootError_));
+        return;
+    }
     const MessageSummary s = curSummary_;
     const Account acc = accountFor(s.accountId);
     if (acc.id.isEmpty()) {
@@ -501,13 +515,19 @@ void MainWindow::deleteSelected() {
         }
         const int row = self->rowForPath(s.path);
         if (row >= 0) {
-            // la riga vicina NON deve aprirsi (e risultare letta) da sola
-            {
-                QSignalBlocker b(self->list_->selectionModel());
+            // Se l'utente ha scelto un'altra riga durante lo spostamento, quella resta.
+            const bool wasCurrent = self->list_->currentIndex().isValid() && self->list_->currentIndex().row() == row;
+            if (wasCurrent) {
+                // la riga vicina NON deve aprirsi (e risultare letta) da sola
+                {
+                    QSignalBlocker b(self->list_->selectionModel());
+                    self->model_->removeAt(row);
+                    self->list_->selectionModel()->clear();
+                }
+                self->clearViewer();
+            } else {
                 self->model_->removeAt(row);
-                self->list_->selectionModel()->clear();
             }
-            if (self->curSummary_.path == s.path) self->clearViewer();
         }
         self->statusBar()->showMessage(tr("Spostato nel cestino"), 5000);
     });
@@ -708,7 +728,11 @@ void MainWindow::applyMuRoot(QString root, const QString& error)
                       .arg(error, root);
     }
     muRoot_ = root;
-    actions_->setMuRoot(root);
+    muRootReliable_ = warning.isEmpty();
+    muRootError_ = error;
+    muRootDetected_ = true;
+    // Elimina solo con radice affidabile; l'euristica serve alle sole viste delle cartelle
+    actions_->setMuRoot(muRootReliable_ ? root : QString());
     folders_->setMuRoot(root);
     if (!warning.isEmpty()) statusBar()->showMessage(warning);
 }
