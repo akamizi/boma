@@ -1,0 +1,4 @@
+# Solo sorgenti, build e README di aiuto sono versionati: tutto il resto è escluso
+docs/superpowers/
+.superpowers/
+build/
