@@ -5,8 +5,11 @@
 
 namespace boma {
 
-void MailActions::runMu(const QStringList& args, Callback cb)
+void MailActions::runMu(const QStringList& argsIn, Callback cb)
 {
+    QStringList args = argsIn;
+    if (!m_muHome.isEmpty() && !args.isEmpty())
+        args.insert(1, QStringLiteral("--muhome=%1").arg(m_muHome));
     m_runner.run(m_mu, args, std::chrono::seconds(30),
                  [cb = std::move(cb)](ProcessResult r) {
                      const bool ok = r.exitCode == 0 && !r.crashed && !r.timedOut;

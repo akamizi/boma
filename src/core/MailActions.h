@@ -26,6 +26,8 @@ public:
     explicit MailActions(QObject* parent = nullptr, QString muProgram = QStringLiteral("mu"))
         : QObject(parent), m_mu(std::move(muProgram)) {}
     void setMuProgram(const QString& p) { m_mu = p; }
+    // Se non vuota, passata a mu come --muhome (stessa base dati di MailIndex).
+    void setMuHome(const QString& h) { m_muHome = h; }
 
     // Aggiunge la bandiera S (letto) e toglie N (nuovo).
     void markRead(const QString& path, Callback cb);
@@ -34,7 +36,7 @@ public:
 
 private:
     void runMu(const QStringList& args, Callback cb);
-    QString m_mu;
+    QString m_mu, m_muHome;
     ProcessRunner m_runner;
 };
 

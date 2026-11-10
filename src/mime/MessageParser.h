@@ -3,6 +3,7 @@
 #include <QDateTime>
 #include <QList>
 #include <QString>
+#include <QStringList>
 
 namespace boma {
 
@@ -15,6 +16,9 @@ struct Attachment {
 
 struct ParsedMessage {
     QString from, to, cc, subject;
+    // Per rispondere: Message-ID (senza <>), catena References (senza <>), Reply-To.
+    QString messageId, replyTo;
+    QStringList references;
     QDateTime date;
     QString plainText, html;
     QList<Attachment> attachments;

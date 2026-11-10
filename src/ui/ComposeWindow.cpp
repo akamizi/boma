@@ -174,6 +174,8 @@ OutgoingMessage ComposeWindow::currentMessage() const {
     m.cc = splitAddresses(cc_->text());
     m.bcc = splitAddresses(bcc_->text());
     m.subject = subject_->text();
+    m.inReplyToMessageId = inReplyTo_;
+    m.referencesIds = references_;
     if (html_->isChecked()) {
         m.plainText = rich_->toPlainText();
         m.html = rich_->toHtml();
@@ -186,6 +188,8 @@ OutgoingMessage ComposeWindow::currentMessage() const {
 
 void ComposeWindow::setPrefill(const OutgoingMessage& m) {
     loading_ = true;
+    inReplyTo_ = m.inReplyToMessageId;
+    references_ = m.referencesIds;
     int idx = -1;
     for (int i = 0; i < identities_.size() && idx < 0; ++i)
         if (!m.identity.id.isEmpty() && identities_[i].id == m.identity.id) idx = i;

@@ -38,6 +38,11 @@ public:
     QString query() const { return m_query; }
     bool isLoading() const { return m_loading; }
     const MessageSummary& summary(int row) const { return m_rows.at(row); }
+    // Aggiornamenti locali dopo un'azione riuscita (senza rileggere da mu):
+    // la riga risulta letta (e col nuovo percorso se il file e' stato spostato)...
+    void markReadLocal(int row, const QString& newPath = {});
+    // ...oppure e' tolta dall'elenco (messaggio spostato nel cestino).
+    void removeAt(int row);
 
     int rowCount(const QModelIndex& parent = {}) const override;
     QVariant data(const QModelIndex& idx, int role) const override;

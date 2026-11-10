@@ -2,6 +2,7 @@
 #include <gmime/gmime.h>
 
 #include "mime/MessageParser.h"
+#include <QRegularExpression>
 
 #undef signals
 #include <QDir>
@@ -308,6 +309,13 @@ ParsedMessage MessageParser::parse(const QByteArray& raw, QString* error) {
     r.from = addresses(msg, GMIME_ADDRESS_TYPE_FROM);
     r.to = addresses(msg, GMIME_ADDRESS_TYPE_TO);
     r.cc = addresses(msg, GMIME_ADDRESS_TYPE_CC);
+    r.replyTo = addresses(msg, GMIME_ADDRESS_TYPE_REPLY_TO);
+    r.messageId = fromG(g_mime_message_get_message_id(msg));
+    if (const char* refs = g_mime_object_get_header(GMIME_OBJECT(msg), "References")) {
+        static const QRegularExpression idRe(QStringLiteral("<([^<>\\s]+)>"));
+        auto it = idRe.globalMatch(QString::fromUtf8(refs));
+        while (it.hasNext() && r.references.size() < 200) r.references << it.next().captured(1);
+    }
     if (GDateTime* d = g_mime_message_get_date(msg)) {
         const qint64 secs = g_date_time_to_unix(d);
         const int off = int(g_date_time_get_utc_offset(d) / G_USEC_PER_SEC);

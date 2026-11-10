@@ -90,6 +90,8 @@ private:
     bool dirty_ = false;
     bool saveFailed_ = false;
     bool loading_ = false;
+    QString inReplyTo_;      // dal prefill (risposte): conservati nel messaggio
+    QStringList references_;
     std::function<bool()> confirm_;
 };
 

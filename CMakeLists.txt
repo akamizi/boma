@@ -18,6 +18,8 @@ add_library(boma_core STATIC
     src/core/MailIndex.cpp
     src/ui/MessageListModel.cpp
     src/ui/MainWindow.cpp
+    src/ui/FolderPane.cpp
+    src/ui/ReplyBuilder.cpp
     src/mime/MessageParser.cpp
     src/mime/MessageBuilder.cpp
     src/pgp/GpgService.cpp

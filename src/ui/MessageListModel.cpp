@@ -24,6 +24,33 @@ void MessageListModel::reset()
     endResetModel();
 }
 
+void MessageListModel::markReadLocal(int row, const QString& newPath)
+{
+    if (row < 0 || row >= m_rows.size())
+        return;
+    m_rows[row].unread = false;
+    if (!newPath.isEmpty() && newPath != m_rows[row].path) {
+        m_seen.remove(m_rows[row].path);
+        m_rows[row].path = newPath;
+        m_seen.insert(newPath);
+    }
+    const QModelIndex i = index(row);
+    emit dataChanged(i, i);
+}
+
+void MessageListModel::removeAt(int row)
+{
+    if (row < 0 || row >= m_rows.size())
+        return;
+    beginRemoveRows({}, row, row);
+    m_seen.remove(m_rows[row].path);
+    m_rows.removeAt(row);
+    endRemoveRows();
+    // le pagine successive si spostano di una riga
+    if (m_offset > 0)
+        --m_offset;
+}
+
 int MessageListModel::rowCount(const QModelIndex& parent) const
 {
     return parent.isValid() ? 0 : int(m_rows.size());
