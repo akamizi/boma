@@ -87,6 +87,39 @@ private slots:
         QVERIFY(w.close());
         QCOMPARE(asked, 2);
     }
+    void testDraftKeepsBccAndHalfTypedAddress() {
+        ComposeWindow w(makeConfig());
+        w.toEdit()->setText("ann");
+        w.bccEdit()->setText("h@y.it");
+        QSignalSpy err(&w, &ComposeWindow::draftError);
+        QVERIFY(w.saveDraft());
+        QCOMPARE(err.count(), 0);
+        const QString d = dir_.path() + "/a/Drafts/cur";
+        QFile f(d + "/" + QDir(d).entryList(QDir::Files).first());
+        QVERIFY(f.open(QIODevice::ReadOnly));
+        const QByteArray raw = f.readAll();
+        QVERIFY(raw.contains("Bcc: h@y.it"));
+        QVERIFY(raw.contains("X-Boma-Raw-To: ann"));
+        QVERIFY(!raw.contains("-- ")); // nessuna firma nella bozza
+        // l'invio resta rigoroso
+        QSignalSpy sp(&w, &ComposeWindow::sendRequested);
+        w.sendButton()->click();
+        QCOMPARE(sp.count(), 0);
+    }
+    void testTogglesAndIdentityMarkDirty() {
+        ComposeWindow w(makeConfig());
+        QVERIFY(!w.isDirty());
+        w.encryptButton()->setChecked(true);
+        QVERIFY(w.isDirty());
+        w.markClean();
+        w.identityCombo()->setCurrentIndex(1);
+        QVERIFY(w.isDirty());
+        w.markClean();
+        OutgoingMessage m;
+        m.identity.id = "a1";
+        w.setPrefill(m); // cambia identita' ma il prefill resta pulito
+        QVERIFY(!w.isDirty());
+    }
     void testCleanWindowClosesWithoutAsking() {
         ComposeWindow w(makeConfig());
         bool asked = false;
@@ -97,7 +130,7 @@ private slots:
     }
     void testBuildErrorEmitsDraftError() {
         ComposeWindow w(makeConfig());
-        w.toEdit()->setText("not an address");
+        w.addAttachment("/nonexistent/zz.bin");
         QSignalSpy err(&w, &ComposeWindow::draftError);
         QVERIFY(!w.saveDraft());
         QCOMPARE(err.count(), 1);

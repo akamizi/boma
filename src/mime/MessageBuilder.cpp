@@ -33,6 +33,9 @@ struct GDeleter {
 };
 template <class T> using GRef = std::unique_ptr<T, GDeleter>;
 
+QString oneLine(QString s);
+QString oneLineRaw(const QString& s) { return oneLine(s); }
+
 bool hasControl(const QString& s) {
     for (const QChar c : s) {
         const char16_t u = c.unicode();
@@ -86,6 +89,15 @@ bool parseList(const QStringList& items, QList<Mailbox>* out, QString* err) {
         out->append(mb);
     }
     return true;
+}
+
+// Modalita' bozza: gli elementi non analizzabili vengono restituiti in *raw.
+void parseListLenient(const QStringList& items, QList<Mailbox>* out, QStringList* raw) {
+    for (const QString& it : items) {
+        Mailbox mb;
+        if (parseMailbox(it, &mb, nullptr)) out->append(mb);
+        else if (!it.trimmed().isEmpty()) raw->append(oneLineRaw(it));
+    }
 }
 
 // Id con o senza <>; vuoto = invalido.
@@ -149,7 +161,8 @@ QString htmlSignature(const QString& sig) {
 
 } // namespace
 
-QByteArray MessageBuilder::build(const OutgoingMessage& m, QString* error) {
+QByteArray MessageBuilder::build(const OutgoingMessage& m, QString* error, BuildMode mode) {
+    const bool draft = mode == BuildMode::Draft;
     initGMime();
     auto fail = [&](const QString& why) {
         if (error) *error = why;
@@ -164,7 +177,14 @@ QByteArray MessageBuilder::build(const OutgoingMessage& m, QString* error) {
     if (!validAddr(from.addr)) return fail(QStringLiteral("Indirizzo del mittente non valido: \"%1\"").arg(from.addr.left(80)));
     QList<Mailbox> to, cc, bcc;
     QString err;
-    if (!parseList(m.to, &to, &err) || !parseList(m.cc, &cc, &err) || !parseList(m.bcc, &bcc, &err)) return fail(err);
+    QStringList rawTo, rawCc, rawBcc;
+    if (draft) {
+        parseListLenient(m.to, &to, &rawTo);
+        parseListLenient(m.cc, &cc, &rawCc);
+        parseListLenient(m.bcc, &bcc, &rawBcc);
+    } else if (!parseList(m.to, &to, &err) || !parseList(m.cc, &cc, &err) || !parseList(m.bcc, &bcc, &err)) {
+        return fail(err);
+    }
 
     // Identificativi di risposta
     QStringList refs;
@@ -209,7 +229,14 @@ QByteArray MessageBuilder::build(const OutgoingMessage& m, QString* error) {
     if (plain.trimmed().isEmpty() && hasHtml) plain = QTextDocumentFragment::fromHtml(html).toPlainText();
     plain = normaliseNewlines(plain);
     const QString sig = normaliseNewlines(m.identity.signature).trimmed();
+    // Gia' firmato: il corpo termina con un blocco "-- " che contiene la firma.
+    bool alreadySigned = false;
     if (!sig.isEmpty()) {
+        const int d = plain.lastIndexOf(QStringLiteral("\n-- \n"));
+        const QString tail = d >= 0 ? plain.mid(d + 5) : (plain.startsWith(QStringLiteral("-- \n")) ? plain.mid(4) : QString());
+        alreadySigned = !tail.isNull() && tail.trimmed() == sig;
+    }
+    if (!draft && !sig.isEmpty() && !alreadySigned) {
         while (plain.endsWith(QLatin1Char('\n'))) plain.chop(1);
         plain += (plain.isEmpty() ? QString() : QStringLiteral("\n\n")) + QStringLiteral("-- \n") + sig + QLatin1Char('\n');
         if (hasHtml) {
@@ -232,7 +259,17 @@ QByteArray MessageBuilder::build(const OutgoingMessage& m, QString* error) {
     };
     addAll(to, GMIME_ADDRESS_TYPE_TO);
     addAll(cc, GMIME_ADDRESS_TYPE_CC);
-    // Nessun Bcc: i destinatari nascosti restano solo nella busta.
+    // Send: nessun Bcc, i destinatari nascosti restano solo nella busta.
+    if (draft) {
+        addAll(bcc, GMIME_ADDRESS_TYPE_BCC);
+        auto raw = [&](const char* h, const QStringList& l) {
+            if (!l.isEmpty())
+                g_mime_object_set_header(GMIME_OBJECT(msg.get()), h, l.join(QStringLiteral(", ")).toUtf8().constData(), "utf-8");
+        };
+        raw("X-Boma-Raw-To", rawTo);
+        raw("X-Boma-Raw-Cc", rawCc);
+        raw("X-Boma-Raw-Bcc", rawBcc);
+    }
 
     g_mime_message_set_subject(msg.get(), oneLine(m.subject).toUtf8().constData(), "utf-8");
 
@@ -280,7 +317,7 @@ QByteArray MessageBuilder::build(const OutgoingMessage& m, QString* error) {
                 g_object_unref(top);
                 return fail(QStringLiteral("Allegato non leggibile: %1").arg(a.path));
             }
-            const QByteArray data = f.readAll();
+            const QByteArray data = f.read(a.size + 1); // lettura limitata: il file puo' crescere
             if (data.size() != a.size || f.error() != QFileDevice::NoError) {
                 g_object_unref(top);
                 return fail(QStringLiteral("Lettura dell'allegato incompleta: %1").arg(a.path));

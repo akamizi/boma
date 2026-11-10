@@ -1,4 +1,5 @@
 #include <QtTest>
+#include <sys/stat.h>
 #include "mime/MessageBuilder.h"
 #include "mime/MessageParser.h"
 using namespace boma;
@@ -149,7 +150,8 @@ private slots:
         QByteArray raw = MessageBuilder::build(m, &err);
         QVERIFY2(!raw.isEmpty(), qPrintable(err));
         QVERIFY(!raw.toLower().contains("\nbcc:"));
-        QVERIFY(!raw.contains("evil@x.it\n") || !headerPart(raw).contains("\nBcc"));
+        for (const QByteArray& line : headerPart(raw).split('\n')) QVERIFY(!line.toLower().startsWith("bcc"));
+        QVERIFY(!headerPart(raw).contains("\nevil")); // nessuna riga iniettata
         QCOMPARE(MessageParser::parse(raw).subject, QString("x Bcc: evil@x.it"));
 
         m = base();
@@ -246,6 +248,99 @@ private slots:
         QString err;
         // senza indirizzo del mittente la costruzione fallisce
         QVERIFY(MessageBuilder::build(m, &err).isEmpty());
+    }
+    void testDraftKeepsBccSendDoesNot() {
+        OutgoingMessage m = base();
+        m.bcc = {"Segreto <hidden@example.net>", "anna@example.com"}; // anche in To
+        QString err;
+        const QByteArray d = MessageBuilder::build(m, &err, BuildMode::Draft);
+        QVERIFY2(!d.isEmpty(), qPrintable(err));
+        QVERIFY(headerPart(d).contains("\nBcc: ") || headerPart(d).startsWith("Bcc: "));
+        QVERIFY(d.contains("hidden@example.net"));
+        QVERIFY(headerPart(d).contains("anna@example.com"));
+        const QByteArray s = MessageBuilder::build(m, &err, BuildMode::Send);
+        QVERIFY(!s.toLower().contains("bcc"));
+        QVERIFY(!s.contains("hidden@example.net"));
+        // la bozza si rilegge: Bcc ricostruibile, ricostruzione Send lo elimina
+        const ParsedMessage p = MessageParser::parse(d);
+        QCOMPARE(p.subject, QString("Ciao"));
+        QVERIFY(p.to.contains("anna@example.com"));
+    }
+    void testDraftHasNoSignatureSendAppendsOnce() {
+        OutgoingMessage m = base();
+        m.identity.signature = "Mario";
+        QString err;
+        QVERIFY(!MessageBuilder::build(m, &err, BuildMode::Draft).contains("-- "));
+        const QString once = MessageParser::parse(MessageBuilder::build(m, &err)).plainText;
+        QCOMPARE(once.count("-- \n"), 1);
+        // testo gia' firmato (bozza riaperta e firma digitata): nessun duplicato
+        m.plainText = once;
+        const QString twice = MessageParser::parse(MessageBuilder::build(m, &err)).plainText;
+        QCOMPARE(twice.count("-- \n"), 1);
+        QCOMPARE(twice.count("Mario"), once.count("Mario"));
+        // firma diversa nel corpo: viene aggiunta quella dell'identita'
+        m.plainText = "x\n-- \nAltro";
+        QCOMPARE(MessageParser::parse(MessageBuilder::build(m, &err)).plainText.count("-- \n"), 2);
+    }
+    void testHtmlSignatureOnceOnly() {
+        OutgoingMessage m = base();
+        m.identity.signature = "Mario";
+        m.html = "<html><body><p>x</p></body></html>";
+        QString err;
+        const ParsedMessage p = MessageParser::parse(MessageBuilder::build(m, &err));
+        QCOMPARE(p.html.count("Mario"), 1);
+        QCOMPARE(p.plainText.count("Mario"), 1);
+        const ParsedMessage dr = MessageParser::parse(MessageBuilder::build(m, &err, BuildMode::Draft));
+        QVERIFY(!dr.html.contains("Mario"));
+    }
+    void testLenientDraftKeepsRawRecipients() {
+        OutgoingMessage m = base();
+        m.to = {"ok@example.com", "mezzo\r\nBcc: evil@x.it"};
+        m.cc = {"a@"};
+        QString err;
+        QVERIFY(MessageBuilder::build(m, &err).isEmpty()); // Send resta rigoroso
+        const QByteArray d = MessageBuilder::build(m, &err, BuildMode::Draft);
+        QVERIFY2(!d.isEmpty(), qPrintable(err));
+        const QByteArray h = headerPart(d);
+        QVERIFY(h.contains("To: ok@example.com"));
+        QVERIFY(h.contains("X-Boma-Raw-To: mezzo Bcc: evil@x.it"));
+        QVERIFY(h.contains("X-Boma-Raw-Cc: a@"));
+        for (const QByteArray& line : h.split('\n')) QVERIFY(!line.toLower().startsWith("bcc"));
+        // allegato mancante: anche la bozza fallisce
+        m.attachmentPaths = {"/nonexistent/q.bin"};
+        QVERIFY(MessageBuilder::build(m, &err, BuildMode::Draft).isEmpty());
+        QVERIFY(err.contains("q.bin"));
+    }
+    void testLongLineIsQuotedPrintable() {
+        OutgoingMessage m = base();
+        m.plainText = QString(998, QLatin1Char('a'));
+        QString err;
+        const QByteArray raw = MessageBuilder::build(m, &err);
+        QVERIFY2(!raw.isEmpty(), qPrintable(err));
+        for (const QByteArray& line : raw.split('\n')) QVERIFY(line.size() <= 998);
+        QVERIFY(MessageParser::parse(raw).plainText.contains(m.plainText));
+    }
+    void testFifoAttachmentRefusedWithoutHanging() {
+        QTemporaryDir d;
+        const QString fifo = d.filePath("f");
+        QCOMPARE(mkfifo(fifo.toLocal8Bit().constData(), 0600), 0);
+        OutgoingMessage m = base();
+        m.attachmentPaths = {fifo};
+        QString err;
+        QVERIFY(MessageBuilder::build(m, &err).isEmpty());
+        QVERIFY(!err.isEmpty());
+    }
+    void testLargeAttachmentRoundTripsExactly() {
+        QTemporaryDir d;
+        QByteArray data(200 * 1024, 0);
+        for (int i = 0; i < data.size(); ++i) data[i] = char((i * 31 + 7) & 0xff);
+        OutgoingMessage m = base();
+        m.attachmentPaths = {tmpFile(d, "grande.bin", data)};
+        QString err;
+        const QByteArray raw = MessageBuilder::build(m, &err);
+        QVERIFY2(!raw.isEmpty(), qPrintable(err));
+        const ParsedMessage p = MessageParser::parse(raw);
+        QCOMPARE(MessageParser::attachmentData(raw, p.attachments[0].partIndex), data);
     }
     void testRoundTripWithParser() {
         QTemporaryDir d;

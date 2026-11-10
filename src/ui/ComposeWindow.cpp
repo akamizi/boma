@@ -97,6 +97,9 @@ ComposeWindow::ComposeWindow(const Config& config, QWidget* parent) : QMainWindo
     connect(close_, &QPushButton::clicked, this, &QWidget::close);
 
     sign_->setChecked(identities_.isEmpty() ? false : identities_.first().signByDefault);
+    connect(sign_, &QPushButton::toggled, this, [this] { if (!loading_) touch(); });
+    connect(encrypt_, &QPushButton::toggled, this, [this] { if (!loading_) touch(); });
+    dirty_ = false;
     resize(720, 560);
 }
 
@@ -107,7 +110,7 @@ Identity ComposeWindow::currentIdentity() const {
 
 void ComposeWindow::onIdentityChanged() {
     sign_->setChecked(currentIdentity().signByDefault);
-    touch();
+    if (!loading_) touch();
 }
 
 void ComposeWindow::onHtmlToggled(bool on) {
@@ -220,7 +223,7 @@ bool ComposeWindow::saveDraft() {
         if (a.id == id.accountId) acc = &a;
     if (!acc) return fail(tr("nessuna identita' o account associato"));
     QString err;
-    const QByteArray raw = MessageBuilder::build(currentMessage(), &err);
+    const QByteArray raw = MessageBuilder::build(currentMessage(), &err, BuildMode::Draft);
     if (raw.isEmpty()) return fail(err);
     const QString folder = acc->maildirRoot + QLatin1Char('/') + acc->draftsFolder;
     const QString path = MaildirWriter::deliver(folder, raw, QStringLiteral("D"), &err);
@@ -239,7 +242,7 @@ void ComposeWindow::onSend() {
         return;
     }
     QString err;
-    if (MessageBuilder::build(m, &err).isEmpty()) { // validazione prima di emettere
+    if (MessageBuilder::build(m, &err, BuildMode::Send).isEmpty()) { // validazione prima di emettere
         status_->setText(tr("Impossibile inviare: %1").arg(err));
         return;
     }
