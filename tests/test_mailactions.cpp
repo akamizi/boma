@@ -77,6 +77,57 @@ private slots:
         QCOMPARE(QString::fromUtf8(f.readAll()).trimmed(), "move " + e.msg + " --flags=-N+S");
         QVERIFY(QFileInfo::exists(e.msg));
     }
+    void testMoveToTrashRefusesPathOutsideMaildirRoot() {
+        Env e; e.init();
+        const QString log = e.td.path() + "/calls.txt";
+        const QString mu = script(e.td.path(), "mu", "echo x >> \"" + log + "\"");
+        MailActions a(nullptr, mu);
+        const QString outside = e.td.path() + "/other/INBOX/cur/m";
+        QDir().mkpath(e.td.path() + "/other/INBOX/cur");
+        { QFile f(outside); QVERIFY(f.open(QIODevice::WriteOnly)); f.write("x"); }
+        for (const QString& p : {outside, e.mail + "/../other/INBOX/cur/m", QString("relativo/m"), QString(e.mail + "-x/m")}) {
+            bool done = false, ok = true; QString err;
+            a.moveToTrash(p, e.acc, [&](bool o, QString m) { ok = o; err = m; done = true; });
+            QTRY_VERIFY_WITH_TIMEOUT(done, 5000);
+            QVERIFY2(!ok, qPrintable(p));
+            QVERIFY(!err.isEmpty());
+        }
+        QVERIFY(!QFileInfo::exists(log));
+        QVERIFY(QFileInfo::exists(outside));
+        // markRead richiede percorso assoluto
+        bool done = false, ok = true;
+        a.markRead("-rf", [&](bool o, QString) { ok = o; done = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(done, 5000);
+        QVERIFY(!ok);
+        QVERIFY(!QFileInfo::exists(log));
+    }
+    void testMoveToTrashRefusesEmptyOrDotDotTrashFolder() {
+        Env e; e.init();
+        const QString log = e.td.path() + "/calls.txt";
+        const QString mu = script(e.td.path(), "mu", "echo x >> \"" + log + "\"");
+        MailActions a(nullptr, mu);
+        for (const QString& f : {QString(), QString("  "), QString("/"), QString(".."), QString("../x"),
+                                 QString("a/../../b"), QString("/../etc")}) {
+            Account acc = e.acc; acc.trashFolder = f;
+            bool done = false, ok = true; QString err;
+            a.moveToTrash(e.msg, acc, [&](bool o, QString m) { ok = o; err = m; done = true; });
+            QTRY_VERIFY_WITH_TIMEOUT(done, 5000);
+            QVERIFY2(!ok, qPrintable(f));
+            QVERIFY(!err.isEmpty());
+        }
+        QVERIFY(!QFileInfo::exists(log));
+        // forma valida con slash superflui: accettata e normalizzata
+        const QString log2 = e.td.path() + "/args.txt";
+        const QString mu2 = script(e.td.path(), "mu2", "echo \"$@\" > \"" + log2 + "\"");
+        MailActions b(nullptr, mu2);
+        Account acc = e.acc; acc.trashFolder = "//Trash/";
+        bool done = false, ok = false;
+        b.moveToTrash(e.msg, acc, [&](bool o, QString) { ok = o; done = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(done, 5000);
+        QVERIFY(ok);
+        QFile lf(log2); QVERIFY(lf.open(QIODevice::ReadOnly));
+        QCOMPARE(QString::fromUtf8(lf.readAll()).trimmed(), "move " + e.msg + " /Trash");
+    }
     void testNoActionEverDeletesFiles() {
         Env e; e.init();
         const int before = countFiles(e.mail);

@@ -9,6 +9,15 @@ namespace boma {
 
 using Callback = std::function<void(bool ok, QString error)>;
 
+// Note:
+// - mu scarta la bandiera S quando sposta nel cestino: un messaggio letto puo'
+//   risultare non letto nel Cestino.
+// - markRead su un messaggio in new/ sposta il file in cur/ e la callback non
+//   restituisce il nuovo percorso: chi concatena azioni deve ririsolvere il
+//   percorso tramite mu.
+// - Si assume che la radice di mu coincida con account.maildirRoot (da
+//   verificare all'avvio, in un task successivo); moveToTrash rifiuta comunque
+//   i messaggi fuori da maildirRoot. I percorsi devono essere assoluti.
 // Azioni sui messaggi esistenti: SEMPRE tramite `mu move`. Boma non rinomina,
 // non cancella e non tocca mai direttamente i file della Maildir.
 class MailActions : public QObject {

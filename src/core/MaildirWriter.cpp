@@ -27,8 +27,16 @@ void fsyncDir(const QByteArray& dir)
     }
 }
 
+std::function<QString()>& generator()
+{
+    static std::function<QString()> g;
+    return g;
+}
+
 QString uniqueBase()
 {
+    if (generator())
+        return generator()();
     static quint64 counter = 0;
     char hn[256] = {};
     ::gethostname(hn, sizeof hn - 1);
@@ -45,6 +53,8 @@ QString uniqueBase()
 }
 } // namespace
 
+void MaildirWriter::setNameGeneratorForTest(std::function<QString()> gen) { generator() = std::move(gen); }
+
 QString MaildirWriter::deliver(const QString& maildirFolder, const QByteArray& message,
                                QString flags, QString* error)
 {
@@ -58,7 +68,15 @@ QString MaildirWriter::deliver(const QString& maildirFolder, const QByteArray& m
         }
     }
 
+    for (const QChar c : std::as_const(flags)) {
+        const ushort u = c.unicode();
+        if (!((u >= 'A' && u <= 'Z') || (u >= 'a' && u <= 'z'))) {
+            setError(error, QStringLiteral("Bandiere Maildir non valide: %1").arg(flags));
+            return {};
+        }
+    }
     std::sort(flags.begin(), flags.end());
+    flags.erase(std::unique(flags.begin(), flags.end()), flags.end());
     const QString suffix = QStringLiteral(":2,") + flags;
 
     // File unico in tmp/ (O_EXCL: non sovrascrive mai).
