@@ -17,7 +17,9 @@ namespace boma {
 //
 //   [identity:<id>]
 //   accountId=<id account>   obbligatorio: ogni identita' appartiene a un solo account
-//   address=...  displayName=...  signature=...
+//   address=...  displayName=...
+//   signature=...       testo; le virgole sono ammesse, la sequenza di due
+//                       caratteri \n diventa un a-capo (firme su piu' righe)
 //   pgpKeyId=...  msmtpAccount=...
 //   signByDefault=true
 //

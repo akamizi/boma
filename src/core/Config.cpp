@@ -50,7 +50,14 @@ Config Config::load(const QString& path, QString* error) {
         i.accountId = s.value("accountId").toString();
         i.address = s.value("address").toString();
         i.displayName = s.value("displayName").toString();
-        i.signature = s.value("signature").toString();
+        {
+            // QSettings restituisce una QStringList se il valore contiene virgole
+            const QVariant v = s.value("signature");
+            QString sig = v.metaType().id() == QMetaType::QStringList
+                              ? v.toStringList().join(", ")
+                              : v.toString();
+            i.signature = sig.replace("\\n", "\n");
+        }
         i.pgpKeyId = s.value("pgpKeyId").toString();
         i.msmtpAccount = s.value("msmtpAccount").toString();
         i.signByDefault = s.value("signByDefault", true).toBool();
