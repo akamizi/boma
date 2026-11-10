@@ -14,3 +14,5 @@ target_compile_definitions(test_messageparser PRIVATE BOMA_FIXTURES_DIR="${CMAKE
 target_link_libraries(test_messageparser PRIVATE Qt6::Network)
 boma_add_test(test_gpgservice test_gpgservice.cpp)
 boma_add_test(test_messageview_pgp test_messageview_pgp.cpp)
+boma_add_test(test_messagebuilder test_messagebuilder.cpp)
+boma_add_test(test_composewindow test_composewindow.cpp)
