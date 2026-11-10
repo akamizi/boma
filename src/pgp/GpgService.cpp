@@ -5,6 +5,7 @@
 #include <QTimer>
 #include <QFile>
 #include <QDir>
+#include <QElapsedTimer>
 #include <memory>
 
 namespace boma {
@@ -248,6 +249,241 @@ void GpgService::decrypt(const QByteArray& encrypted, std::function<void(bool, Q
         else msg = QObject::tr("Decifrazione non riuscita (chiave segreta mancante, password errata o dati alterati).");
         done(false, QByteArray(), msg); // mai testo parziale
     });
+}
+
+namespace {
+
+constexpr int kSignTimeoutMs = 5 * 60 * 1000; // include l'attesa di pinentry
+constexpr int kListKeysTimeoutMs = 30'000;
+
+QString micalgFor(int hashAlgo) {
+    switch (hashAlgo) {
+    case 1: return QStringLiteral("pgp-md5");
+    case 2: return QStringLiteral("pgp-sha1");
+    case 3: return QStringLiteral("pgp-ripemd160");
+    case 8: return QStringLiteral("pgp-sha256");
+    case 9: return QStringLiteral("pgp-sha384");
+    case 10: return QStringLiteral("pgp-sha512");
+    case 11: return QStringLiteral("pgp-sha224");
+    default: return QString();
+    }
+}
+
+bool statusCancelled(const QList<StatusLine>& st) {
+    for (const StatusLine& l : st) {
+        if (l.keyword != "ERROR") continue;
+        const QList<QByteArray> p = l.rest.split(' ');
+        bool ok = false;
+        const uint code = p.size() >= 2 ? p.at(1).trimmed().toUInt(&ok) : 0;
+        if (ok && (code & 0xFFFF) == 99) return true;
+    }
+    return false;
+}
+
+QString startProblem(const GpgService*, bool startFailed, const QString& startError, bool timedOut, bool overflow,
+                     const QString& what) {
+    if (startFailed) return QObject::tr("Impossibile avviare gpg: %1").arg(startError);
+    if (timedOut) return QObject::tr("Tempo scaduto durante %1.").arg(what);
+    if (overflow) return QObject::tr("Risposta di gpg troppo grande.");
+    return QString();
+}
+
+// uid "Nome <a@b>" (con escape \xNN di --with-colons) -> "a@b" minuscolo
+QString emailOfUid(const QByteArray& raw) {
+    QByteArray b;
+    for (int i = 0; i < raw.size(); ++i) {
+        if (raw[i] == '\\' && i + 3 < raw.size() && raw[i + 1] == 'x') {
+            bool ok = false;
+            const int v = raw.mid(i + 2, 2).toInt(&ok, 16);
+            if (ok) { b.append(char(v)); i += 3; continue; }
+        }
+        b.append(raw[i]);
+    }
+    const QString dec = QString::fromUtf8(b);
+    const int lt = dec.lastIndexOf(QLatin1Char('<')), gt = dec.lastIndexOf(QLatin1Char('>'));
+    QString addr;
+    if (lt >= 0 && gt > lt) addr = dec.mid(lt + 1, gt - lt - 1);
+    else if (dec.contains(QLatin1Char('@')) && !dec.contains(QLatin1Char(' '))) addr = dec;
+    return addr.trimmed().toLower();
+}
+
+} // namespace
+
+bool GpgService::isSafeAddress(const QString& a) {
+    if (a.isEmpty() || a.size() > 320 || a.startsWith(QLatin1Char('-'))) return false;
+    for (const QChar c : a) {
+        const ushort u = c.unicode();
+        if (u <= 0x20 || u >= 0x7f) return false;
+        if (c == QLatin1Char('<') || c == QLatin1Char('>') || c == QLatin1Char('"') || c == QLatin1Char('\\') ||
+            c == QLatin1Char(','))
+            return false;
+    }
+    return a.count(QLatin1Char('@')) == 1 && !a.startsWith(QLatin1Char('@')) && !a.endsWith(QLatin1Char('@'));
+}
+
+bool GpgService::isSafeKeyId(const QString& k) {
+    if (k.isEmpty() || k.size() > 320 || !(k.at(0).isLetterOrNumber() && k.at(0).unicode() < 0x7f)) return false;
+    for (const QChar c : k) {
+        const ushort u = c.unicode();
+        const bool ok = (u >= '0' && u <= '9') || (u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z') || c == QLatin1Char('@') ||
+                        c == QLatin1Char('.') || c == QLatin1Char('_') || c == QLatin1Char('+') || c == QLatin1Char('-') ||
+                        c == QLatin1Char('<') || c == QLatin1Char('>');
+        if (!ok) return false;
+    }
+    return true;
+}
+
+void GpgService::sign(const QByteArray& mimeBody, const QString& keyId,
+                      std::function<void(bool, QByteArray, QString, QString)> done) {
+    if (!isSafeKeyId(keyId)) {
+        QTimer::singleShot(0, this, [done]() { if (done) done(false, {}, {}, QObject::tr("Identificativo della chiave di firma non valido.")); });
+        return;
+    }
+    const QStringList args{QStringLiteral("--batch"), QStringLiteral("--no-tty"), QStringLiteral("--status-fd"),
+                           QStringLiteral("2"), QStringLiteral("--armor"), QStringLiteral("--digest-algo"),
+                           QStringLiteral("SHA256"), QStringLiteral("--local-user"), keyId,
+                           QStringLiteral("--detach-sign")};
+    start(args, mimeBody, kSignTimeoutMs, [this, done](Result r) {
+        if (!done) return;
+        const QString prob = startProblem(this, r.startFailed, r.startError, r.timedOut, r.overflow, QObject::tr("la firma"));
+        if (!prob.isEmpty()) { done(false, {}, {}, prob); return; }
+        const QList<StatusLine> st = parseStatus(r.err);
+        QString micalg;
+        bool created = false;
+        for (const StatusLine& l : st)
+            if (l.keyword == "SIG_CREATED") {
+                // "<tipo> <algo chiave> <algo hash> <classe> <tempo> <fpr>"
+                const QList<QByteArray> f = l.rest.split(' ');
+                bool ok = false;
+                const int h = f.size() >= 3 ? f.at(2).toInt(&ok) : 0;
+                if (ok) { micalg = micalgFor(h); created = !micalg.isEmpty(); }
+            }
+        if (r.code == 0 && created && r.out.contains("BEGIN PGP SIGNATURE")) {
+            done(true, r.out, micalg, QString());
+            return;
+        }
+        done(false, {}, {},
+             statusCancelled(st) ? QObject::tr("Firma annullata.")
+                                 : QObject::tr("Firma non riuscita (chiave segreta mancante, agent non disponibile o password errata)."));
+    });
+}
+
+void GpgService::encrypt(const QByteArray& mimeBody, const QStringList& recipients, const QString& signKeyId,
+                         std::function<void(bool, QByteArray, QString)> done) {
+    auto fail = [this, done](const QString& m) {
+        QTimer::singleShot(0, this, [done, m]() { if (done) done(false, {}, m); });
+    };
+    if (recipients.isEmpty()) return fail(QObject::tr("Nessun destinatario per la cifratura."));
+    const bool signToo = !signKeyId.isEmpty();
+    if (signToo && !isSafeKeyId(signKeyId)) return fail(QObject::tr("Identificativo della chiave di firma non valido."));
+    QStringList args{QStringLiteral("--batch"), QStringLiteral("--no-tty"), QStringLiteral("--status-fd"),
+                     QStringLiteral("2"), QStringLiteral("--armor"), QStringLiteral("--trust-model"),
+                     QStringLiteral("always"), QStringLiteral("--throw-keyids"),
+                     QStringLiteral("--no-auto-key-locate"), QStringLiteral("--no-auto-key-retrieve")};
+    if (signToo)
+        args << QStringLiteral("--digest-algo") << QStringLiteral("SHA256") << QStringLiteral("--local-user") << signKeyId
+             << QStringLiteral("--encrypt-to") << signKeyId << QStringLiteral("--sign");
+    args << QStringLiteral("--encrypt");
+    for (const QString& r : recipients) {
+        if (!isSafeAddress(r)) return fail(QObject::tr("Destinatario non valido per la cifratura: %1").arg(r.left(80)));
+        args << QStringLiteral("--recipient") << QLatin1Char('<') + r + QLatin1Char('>');
+    }
+    start(args, mimeBody, kSignTimeoutMs, [this, done, signToo](Result r) {
+        if (!done) return;
+        const QString prob = startProblem(this, r.startFailed, r.startError, r.timedOut, r.overflow, QObject::tr("la cifratura"));
+        if (!prob.isEmpty()) { done(false, {}, prob); return; }
+        const QList<StatusLine> st = parseStatus(r.err);
+        bool begin = false, end = false, created = false, invalid = false;
+        for (const StatusLine& l : st) {
+            if (l.keyword == "BEGIN_ENCRYPTION") begin = true;
+            else if (l.keyword == "END_ENCRYPTION") end = true;
+            else if (l.keyword == "SIG_CREATED") created = true;
+            else if (l.keyword == "INV_RECP" || l.keyword == "NO_RECP") invalid = true;
+        }
+        if (r.code == 0 && begin && end && !invalid && (!signToo || created) && r.out.contains("BEGIN PGP MESSAGE")) {
+            done(true, r.out, QString());
+            return;
+        }
+        done(false, {},
+             statusCancelled(st) ? QObject::tr("Cifratura annullata.")
+             : invalid           ? QObject::tr("Chiave del destinatario non utilizzabile.")
+                                 : QObject::tr("Cifratura non riuscita."));
+    });
+}
+
+QSet<QString> GpgService::usableKeyAddresses(const QByteArray& colons) {
+    QSet<QString> out;
+    bool inKey = false, pubOk = false, encOk = false;
+    QStringList uids;
+    auto bad = [](const QByteArray& v) { return v == "e" || v == "r" || v == "i" || v == "d" || v == "n"; };
+    auto flush = [&]() {
+        if (inKey && pubOk && encOk)
+            for (const QString& a : std::as_const(uids)) out.insert(a);
+        uids.clear();
+        inKey = pubOk = encOk = false;
+    };
+    for (const QByteArray& line : colons.split('\n')) {
+        const QList<QByteArray> f = line.split(':');
+        if (f.size() < 2) continue;
+        const QByteArray& t = f.at(0);
+        const QByteArray st = f.at(1).left(1);
+        const QByteArray caps = f.size() > 11 ? f.at(11) : QByteArray();
+        if (t == "pub") {
+            flush();
+            inKey = true;
+            pubOk = !bad(st) && !caps.contains('D');
+            encOk = caps.contains('e');
+        } else if (t == "sub" && inKey) {
+            if (!bad(st) && caps.contains('e')) encOk = true;
+        } else if (t == "uid" && inKey) {
+            if (st != "r" && st != "e" && st != "i" && st != "n" && f.size() > 9) {
+                const QString a = emailOfUid(f.at(9));
+                if (!a.isEmpty()) uids << a;
+            }
+        }
+    }
+    flush();
+    return out;
+}
+
+QStringList GpgService::missingKeys(const QStringList& addresses) {
+    QStringList missing;
+    QSet<QString> usable;
+    bool ok = false;
+    {
+        QProcess p;
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
+        env.remove(QStringLiteral("LANGUAGE"));
+        if (!home_.isEmpty()) env.insert(QStringLiteral("GNUPGHOME"), home_);
+        p.setProcessEnvironment(env);
+        p.start(gpg_, {QStringLiteral("--batch"), QStringLiteral("--no-tty"), QStringLiteral("--no-auto-key-locate"),
+                       QStringLiteral("--with-colons"), QStringLiteral("--list-keys")});
+        QByteArray out;
+        QElapsedTimer t;
+        t.start();
+        bool tooBig = false;
+        p.closeWriteChannel();
+        while (p.state() != QProcess::NotRunning && t.elapsed() < kListKeysTimeoutMs) {
+            p.waitForReadyRead(100);
+            out += p.readAllStandardOutput();
+            p.readAllStandardError();
+            if (out.size() > maxPlain_) { tooBig = true; break; }
+        }
+        if (p.state() != QProcess::NotRunning) {
+            p.kill();
+            p.waitForFinished(2000);
+        } else {
+            out += p.readAllStandardOutput();
+            ok = !tooBig && out.size() <= maxPlain_ && p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0;
+        }
+        if (ok) usable = usableKeyAddresses(out);
+    }
+    for (const QString& a : addresses) {
+        const QString k = a.trimmed().toLower();
+        if (!ok || !isSafeAddress(k) || !usable.contains(k)) missing << a.trimmed();
+    }
+    return missing;
 }
 
 GpgAgentInfo GpgService::parseGpgconfOptions(const QByteArray& out) {

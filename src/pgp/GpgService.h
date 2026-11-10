@@ -4,6 +4,8 @@
 #include <QList>
 #include <QObject>
 #include <QProcess>
+#include <QSet>
+#include <QStringList>
 #include <QString>
 #include <functional>
 
@@ -61,6 +63,46 @@ public:
     void decrypt(const QByteArray& encrypted,
                  std::function<void(bool ok, QByteArray plain, QString error)> done,
                  std::function<void(SignatureStatus, QString signer)> innerSignature = nullptr);
+
+    // ---- Parte di scrittura (task 9) ----
+    // sign: firma staccata ASCII-armored (PGP/MIME, RFC 3156) dei byte ESATTI
+    // passati (il chiamante li ha gia' canonicalizzati con CRLF). micalg e'
+    // ricavato dalla riga di stato SIG_CREATED (es. "pgp-sha256"). ok=true solo
+    // con uscita 0, SIG_CREATED e firma non vuota; altrimenti ok=false, firma
+    // vuota e errore (agent assente, pinentry annullato, chiave mancante,
+    // timeout...). La password la chiede gpg-agent (pinentry): Boma non la vede.
+    // keyId: validato (niente '-' iniziale ne' caratteri strani).
+    void sign(const QByteArray& mimeBody, const QString& keyId,
+              std::function<void(bool ok, QByteArray signature, QString micalg, QString error)> done);
+    // encrypt: cifra (e, se signKeyId non e' vuoto, firma nella stessa
+    // esecuzione di gpg: --encrypt --sign) i byte passati verso i destinatari
+    // (indirizzi nudi, confrontati esattamente come "<indirizzo>"). Output
+    // ASCII-armored. Se signKeyId e' indicato ma gpg non produce SIG_CREATED
+    // l'esito e' un errore (mai un messaggio cifrato ma non firmato in silenzio).
+    // Scelte di sicurezza:
+    // - --trust-model always: gpg in modalita' batch non puo' chiedere conferme
+    //   sulla fiducia; e' accettabile SOLO perche' il chiamante ha appena
+    //   verificato con missingKeys() che per ogni indirizzo esiste una chiave
+    //   utilizzabile (non scaduta/revocata/disabilitata). Senza chiave utilizzabile
+    //   gpg non cifra comunque (nessun invio in chiaro).
+    // - --throw-keyids: gli id delle chiavi destinatarie non compaiono nel
+    //   pacchetto (altrimenti i destinatari in Bcc sarebbero rivelati).
+    // - --no-auto-key-locate / --no-auto-key-retrieve: nessuna rete.
+    // - Con signKeyId anche --encrypt-to: la copia in Inviata resta leggibile.
+    void encrypt(const QByteArray& mimeBody, const QStringList& recipients, const QString& signKeyId,
+                 std::function<void(bool ok, QByteArray armored, QString error)> done);
+    // Indirizzi (nudi) per i quali NON esiste una chiave pubblica utilizzabile
+    // per la cifratura. BLOCCANTE (un solo `gpg --list-keys --with-colons`, timeout
+    // 30 s): se gpg non parte o fallisce, TUTTI gli indirizzi risultano mancanti.
+    // Nessun indirizzo e' passato a gpg (nessuna iniezione di opzioni).
+    QStringList missingKeys(const QStringList& addresses);
+    // Interpreta l'output --with-colons: indirizzi (minuscoli) con una chiave
+    // utilizzabile: chiave non scaduta/revocata/disabilitata/mai fidata, uid non
+    // revocato/scaduto, con una (sotto)chiave di cifratura valida.
+    static QSet<QString> usableKeyAddresses(const QByteArray& colons);
+    // Solo ASCII stampabile, niente spazi/<>/virgolette, niente '-' iniziale.
+    static bool isSafeAddress(const QString& a);
+    static bool isSafeKeyId(const QString& k);
 
     // Bloccante (timeout breve): da chiamare di rado, non nel percorso di lettura.
     static GpgAgentInfo checkAgentCache();

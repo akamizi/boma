@@ -21,6 +21,7 @@ add_library(boma_core STATIC
     src/mime/MessageParser.cpp
     src/mime/MessageBuilder.cpp
     src/pgp/GpgService.cpp
+    src/send/Sender.cpp
     src/ui/MessageView.cpp
     src/ui/ComposeWindow.cpp
 )
