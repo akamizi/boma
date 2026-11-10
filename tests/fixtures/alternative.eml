@@ -1,0 +1,17 @@
+From: Mario Rossi <mario@example.invalid>
+To: Anna Bianchi <anna@example.invalid>
+Date: Tue, 10 Nov 2026 10:00:00 +0100
+Message-ID: <m@example.invalid>
+MIME-Version: 1.0
+Subject: Alternativa
+Content-Type: multipart/alternative; boundary="alt"
+
+--alt
+Content-Type: text/plain; charset=utf-8
+
+Testo semplice
+--alt
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>Testo <b>HTML</b></p></body></html>
+--alt--

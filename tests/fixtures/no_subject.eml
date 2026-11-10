@@ -1,0 +1,4 @@
+From: solo@example.invalid
+To: anna@example.invalid
+
+Corpo senza Content-Type e senza oggetto.
