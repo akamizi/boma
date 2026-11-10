@@ -77,20 +77,24 @@ void MessageListModel::fetchMore(const QModelIndex& parent)
     }
     m_loading = true;
     const quint64 gen = m_generation;
+    // Ultima pagina della finestra: una riga di sonda per sapere se altre
+    // righe restano nascoste (truncated() solo se davvero vero).
+    const int probe = (m_offset + want >= m_maxWindow) ? 1 : 0;
     QPointer<MessageListModel> self(this);
-    auto cb = [self, gen, want](QList<MessageSummary> list, QString error) {
+    auto cb = [self, gen, want, probe](QList<MessageSummary> list, QString error) {
         if (!self || gen != self->m_generation)
             return; // modello distrutto o risultato di una query superata
-        self->applyPage(std::move(list), error, want);
+        self->applyPage(std::move(list), error, want, probe);
     };
     if (m_query.trimmed().isEmpty())
-        m_index->unread(m_offset, want, cb);
+        m_index->unread(m_offset, want + probe, cb);
     else
-        m_index->search(m_query, m_offset, want, cb);
+        m_index->search(m_query, m_offset, want + probe, cb);
 }
 
-void MessageListModel::applyPage(QList<MessageSummary> list, const QString& error, int want)
+void MessageListModel::applyPage(QList<MessageSummary> list, const QString& error, int want, int probe)
 {
+    ++s_applied;
     {
         m_loading = false;
         if (!error.isEmpty()) {
@@ -98,12 +102,17 @@ void MessageListModel::applyPage(QList<MessageSummary> list, const QString& erro
             emit pageLoaded(0, error);
             return;
         }
+        bool hidden = false;
+        if (probe && list.size() > want) {
+            hidden = true;
+            list = list.mid(0, want);
+        }
         m_offset += int(list.size());
-        if (list.size() < want) {
-            m_exhausted = true;
-        } else if (m_offset >= m_maxWindow) {
+        if (hidden) {
             m_exhausted = true;
             m_truncated = true;
+        } else if (list.size() < want || m_offset >= m_maxWindow) {
+            m_exhausted = true;
         }
         QList<MessageSummary> fresh;
         for (const MessageSummary& s : list) {

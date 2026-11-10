@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QDebug>
 #include <chrono>
 
 namespace boma {
@@ -100,12 +101,12 @@ void MailIndex::search(const QString& query, int offset, int limit, SearchCallba
                              err = r.timedOut ? QStringLiteral("mu: tempo scaduto")
                                               : QStringLiteral("mu: non eseguibile");
                      } else if (r.exitCode == 2) {
-                         // "no matches for search expression" (anche su stderr):
-                         // risultato vuoto. Qualsiasi altro testo su stderr con
-                         // codice 2 e' un errore vero (es. query non valida).
+                         // codice 2 = nessuna corrispondenza: SEMPRE risultato vuoto
+                         // (nessun confronto di testi dipendenti dalla lingua).
+                         // Eventuale stderr: avviso non fatale.
                          const QString e = QString::fromUtf8(r.err).trimmed();
-                         if (!e.isEmpty() && !e.contains(QLatin1String("no matches"), Qt::CaseInsensitive))
-                             err = e;
+                         if (!e.isEmpty())
+                             qWarning().noquote() << "mu find (codice 2):" << e;
                      } else if (r.exitCode != 0) {
                          err = QString::fromUtf8(r.err).trimmed();
                          if (err.isEmpty())

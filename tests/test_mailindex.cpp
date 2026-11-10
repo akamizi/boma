@@ -96,11 +96,18 @@ private slots:
             auto r = runSearch(*idx, q, 0, 10);
             QVERIFY(r.done);
         }
-        // una query che sembra un'opzione non deve essere letta come opzione
-        // (non limita il numero di risultati): al massimo e' una ricerca di testo
-        auto opt = runSearch(*idx, "--maxnum=1", 0, 10);
-        QVERIFY(opt.done);
-        QVERIFY(opt.list.size() != 1 || opt.list.size() == 0 || opt.error.isEmpty());
+        // una query che sembra un'opzione arriva a mu dopo "--", come elemento unico
+        const QString argvFile = td.path() + "/argv.txt";
+        MailIndex rec(nullptr, fakeMu("murec", "printf '%s\\n' \"$@\" > '" + argvFile + "'; echo '[]'"), muhome);
+        auto opt = runSearch(rec, "--maxnum=1", 0, 10);
+        QVERIFY(opt.error.isEmpty());
+        QFile af(argvFile); QVERIFY(af.open(QIODevice::ReadOnly));
+        const QStringList argv = QString::fromUtf8(af.readAll()).split('\n', Qt::SkipEmptyParts);
+        QCOMPARE(argv.count("--maxnum=1"), 1);
+        const int qi = argv.indexOf("--maxnum=1");
+        QVERIFY(qi > 0);
+        QCOMPARE(argv[qi - 1], QString("--"));
+        QCOMPARE(qi, argv.size() - 1);
         auto normal = runSearch(*idx, "date:2000..", 0, 10);
         QCOMPARE(normal.list.size(), 10);
         // database inesistente: errore riportato
@@ -170,21 +177,29 @@ private slots:
         MailIndex empty(nullptr, fakeMu("mu2a", "exit 2"), muhome);
         auto a = runSearch(empty, "x", 0, 10);
         QVERIFY(a.error.isEmpty()); QVERIFY(a.list.isEmpty());
-        MailIndex nomatch(nullptr, fakeMu("mu2b", "echo 'no matches for search expression' >&2; exit 2"), muhome);
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression("nessuna"));
+        MailIndex nomatch(nullptr, fakeMu("mu2b", "echo 'nessuna corrispondenza' >&2; exit 2"), muhome);
         auto b = runSearch(nomatch, "x", 0, 10);
         QVERIFY(b.error.isEmpty()); QVERIFY(b.list.isEmpty());
+        // stderr con codice 2: sempre vuoto, avviso non fatale
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression("parse error: boom"));
         MailIndex perr(nullptr, fakeMu("mu2c", "echo 'parse error: boom' >&2; exit 2"), muhome);
         auto c = runSearch(perr, "x", 0, 10);
-        QVERIFY(c.error.contains("parse error")); QVERIFY(c.list.isEmpty());
+        QVERIFY(c.error.isEmpty()); QVERIFY(c.list.isEmpty());
     }
     void testModelDestroyedWhileQueryInFlight() {
-        MailIndex slow(nullptr, fakeMu("mus", "sleep 1; echo '[]'"), muhome);
+        const QString marker = td.path() + "/slow-done";
+        QFile::remove(marker);
+        MailIndex slow(nullptr, fakeMu("mus", "sleep 1; touch '" + marker + "'; echo '[]'"), muhome);
         auto* m = new MessageListModel(&slow);
         m->setQuery("x");
         m->fetchMore({});
+        const int before = MessageListModel::s_applied;
         delete m;
-        QTest::qWait(1800); // il risultato tardivo arriva a modello distrutto
-        QVERIFY(true);
+        // il processo finisce e la callback tardiva arriva a modello distrutto
+        QVERIFY(QTest::qWaitFor([&] { return QFile::exists(marker); }, 10000));
+        QTest::qWait(500);
+        QCOMPARE(MessageListModel::s_applied, before); // nessuna scrittura nel modello distrutto
     }
     void testMaxWindowTruncates() {
         MessageListModel m(idx);
@@ -203,6 +218,29 @@ private slots:
         small.fetchMore({});
         QVERIFY(spy.wait(60000));
         QVERIFY(!small.truncated());
+    }
+    void testTruncatedOnlyWhenRowsHidden() {
+        // subject:argomento5 ha esattamente 154 risultati su 2000
+        MessageListModel exact(idx);
+        exact.setMaxWindow(154);
+        exact.setQuery("subject:argomento5");
+        while (exact.canFetchMore({})) {
+            QSignalSpy spy(&exact, &MessageListModel::pageLoaded);
+            exact.fetchMore({});
+            QVERIFY(spy.wait(60000));
+        }
+        QCOMPARE(exact.rowCount(), 154);
+        QVERIFY(!exact.truncated());
+        MessageListModel cut(idx);
+        cut.setMaxWindow(153);
+        cut.setQuery("subject:argomento5");
+        while (cut.canFetchMore({})) {
+            QSignalSpy spy(&cut, &MessageListModel::pageLoaded);
+            cut.fetchMore({});
+            QVERIFY(spy.wait(60000));
+        }
+        QCOMPARE(cut.rowCount(), 153);
+        QVERIFY(cut.truncated());
     }
     void testModelErrorAllowsRetry() {
         MailIndex bad(nullptr, "mu", td.path() + "/nessuno");

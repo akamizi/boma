@@ -50,7 +50,7 @@ signals:
     void pageLoaded(int added, const QString& error);
 
 private:
-    void applyPage(QList<MessageSummary> list, const QString& error, int want);
+    void applyPage(QList<MessageSummary> list, const QString& error, int want, int probe);
     QPointer<MailIndex> m_index;
     QString m_query;
     QList<MessageSummary> m_rows;
@@ -59,6 +59,9 @@ private:
     bool m_exhausted = false, m_loading = false, m_truncated = false;
     int m_maxWindow = kMaxWindow;
     quint64 m_generation = 0;
+public:
+    // Solo per i test: numero di pagine applicate.
+    static inline int s_applied = 0;
 };
 
 } // namespace boma

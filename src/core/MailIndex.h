@@ -30,7 +30,9 @@ using SearchCallback = std::function<void(QList<MessageSummary>, QString error)>
 //   (kMaxWindow) e segnala truncated(). Se l'indice cambia tra due pagine gli
 //   offset si spostano: azzerare il modello dopo reindex/azioni.
 // - "nessuna corrispondenza" (mu esce con codice 2 e scrive "no matches" su
-//   stderr) e' un risultato vuoto; codice 2 con altro stderr e' un errore. mu e' tollerante con le query malformate: spesso le tratta come
+//   stderr) e' SEMPRE un risultato vuoto; l'eventuale stderr va in un qWarning
+//   (non fatale). ProcessRunner non permette di impostare LC_ALL=C: nessun
+//   confronto di testi localizzati. mu e' tollerante con le query malformate: spesso le tratta come
 //   ricerca senza risultati.
 // - mu index lavora sull'intera radice configurata: accountId in reindex()
 //   serve solo al chiamante.
