@@ -1,0 +1,4 @@
+boma_add_test(test_smoke test_smoke.cpp)
+boma_add_test(test_config test_config.cpp)
+boma_add_test(test_processrunner test_processrunner.cpp)
+boma_add_test(test_syncservice test_syncservice.cpp)
