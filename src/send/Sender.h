@@ -54,7 +54,13 @@ struct SendResult {
 //   comunque, la UI richiama send() con sign=false in modo esplicito.
 // - Copia in Inviata SOLO se msmtp esce 0, nella cartella Inviata dell'account
 //   dell'identita'; se la copia fallisce l'esito e' Sent con un avviso in
-//   message (mai un secondo invio). Poi `mu index`; un suo errore e' un avviso.
+//   message (mai un secondo invio). Il callback arriva subito dopo la consegna;
+//   `mu index` parte dopo, a "fuoco e dimentica" su un MailIndex figlio di
+//   QCoreApplication (sopravvive al Sender); l'esito e' nel segnale
+//   reindexFinished (se il Sender e' vivo) o in un qWarning.
+// - Chiave PGP: l'identita' (indirizzo o impronta) e' risolta UNA volta in impronta
+//   (GpgService::resolveSecretKey); ambigua/non trovata = SignFailed, mai a caso.
+//   Il msmtp "esito incerto" (timeout, crash, kill) non scrive mai la copia.
 //   La copia non contiene Bcc (come cio' che e' stato inviato).
 // - Un solo invio alla volta per Sender: un send() durante un invio (anche
 //   dentro il callback finale) riceve Busy e non invia nulla. Lo stato "occupato"
@@ -75,9 +81,10 @@ public:
 
     void setAccounts(const QList<Account>& a) { accounts_ = a; }
     void setMsmtpProgram(const QString& p) { msmtp_ = p; }
-    void setMsmtpTimeoutMs(int ms) { msmtpTimeoutMs_ = ms; } // per i test
-    void setMuProgram(const QString& p) { index_.setMuProgram(p); }
-    void setMuHome(const QString& h) { index_.setMuHome(h); }
+    // Base del timeout di msmtp; il timeout effettivo e' base + 1 s per MiB di messaggio (allegati grandi).
+    void setMsmtpTimeoutMs(int ms) { msmtpTimeoutMs_ = ms; }
+    void setMuProgram(const QString& p) { muProgram_ = p; }
+    void setMuHome(const QString& h) { muHome_ = h; }
     GpgService& gpg() { return gpg_; }
     bool busy() const { return busy_; }
 
@@ -86,6 +93,11 @@ public:
 
     // Argomenti esatti di msmtp (testabili).
     static QStringList msmtpArguments(const QString& msmtpAccount, const QStringList& recipients);
+
+signals:
+    // Esito della reindicizzazione (a "fuoco e dimentica", dopo il callback di send()). Emesso solo
+    // se il Sender e' ancora vivo.
+    void reindexFinished(bool ok, QString error);
 
 private:
     void finish(SendResult r);
@@ -96,7 +108,7 @@ private:
     QString msmtp_ = QStringLiteral("msmtp");
     int msmtpTimeoutMs_ = 120'000;
     GpgService gpg_;
-    MailIndex index_;
+    QString muProgram_ = QStringLiteral("mu"), muHome_;
     ProcessRunner runner_;
     bool busy_ = false;
     Account account_;

@@ -2,7 +2,9 @@
 
 #include "core/MaildirWriter.h"
 
+#include <QCoreApplication>
 #include <QDir>
+#include <QDebug>
 #include <QRandomGenerator>
 #include <QTimer>
 #include <memory>
@@ -110,7 +112,7 @@ bool safeMsmtpAccount(const QString& a) {
 
 } // namespace
 
-Sender::Sender(QObject* parent) : QObject(parent), gpg_(this), index_(this) {}
+Sender::Sender(QObject* parent) : QObject(parent), gpg_(this) {}
 Sender::~Sender() = default;
 
 QStringList Sender::msmtpArguments(const QString& msmtpAccount, const QStringList& recipients) {
@@ -120,9 +122,9 @@ QStringList Sender::msmtpArguments(const QString& msmtpAccount, const QStringLis
 }
 
 void Sender::finish(SendResult r) {
-    QTimer::singleShot(0, this, [this, r = std::move(r), cb = std::move(done_)]() {
+    QTimer::singleShot(0, this, [self = QPointer<Sender>(this), r = std::move(r), cb = std::move(done_)]() {
         if (cb) cb(r);
-        busy_ = false; // dopo il ritorno del callback: un send() rientrante riceve Busy
+        if (self) self->busy_ = false; // dopo il ritorno del callback (che puo' aver distrutto il Sender)
     });
     done_ = nullptr;
 }
@@ -189,6 +191,15 @@ void Sender::send(const OutgoingMessage& msg, bool sign, bool encrypt, std::func
                         missing);
     }
 
+    // Chiave dell'identita' risolta in impronta (una volta). Firma: obbligatoria. Solo cifratura:
+    // se non risolvibile si rinuncia alla copia leggibile (--encrypt-to), senza indovinare.
+    QString fpr;
+    if (sign || (encrypt && !keyId.isEmpty())) {
+        QString kerr;
+        fpr = gpg_.resolveSecretKey(keyId, &kerr);
+        if (fpr.isEmpty() && sign) return fail(SendResult::SignFailed, kerr);
+    }
+
     QPointer<Sender> self(this);
     if (!sign && !encrypt) {
         runMsmtp(built, rcpts);
@@ -199,20 +210,21 @@ void Sender::send(const OutgoingMessage& msg, bool sign, bool encrypt, std::func
     if (part.endsWith("\r\n")) part.chop(2);
 
     if (encrypt) {
-        gpg_.encrypt(sp.inner, rcpts, sign ? keyId : QString(), [self, sp, rcpts, sign](bool ok, QByteArray armored, QString e) {
-            if (!self) return;
-            if (!ok) {
-                SendResult r;
-                r.kind = sign ? SendResult::SignFailed : SendResult::EncryptFailed;
-                r.message = e;
-                self->finish(std::move(r));
-                return;
-            }
-            self->runMsmtp(assembleEncrypted(sp, armored, newBoundary(armored)), rcpts);
-        });
+        gpg_.encrypt(sp.inner, rcpts, sign ? fpr : QString(), fpr,
+                     [self, sp, rcpts](bool ok, QByteArray armored, QString e, GpgService::EncryptFailure kind) {
+                         if (!self) return;
+                         if (!ok) {
+                             SendResult r;
+                             r.kind = kind == GpgService::EncryptFailure::Sign ? SendResult::SignFailed : SendResult::EncryptFailed;
+                             r.message = e;
+                             self->finish(std::move(r));
+                             return;
+                         }
+                         self->runMsmtp(assembleEncrypted(sp, armored, newBoundary(armored)), rcpts);
+                     });
         return;
     }
-    gpg_.sign(part, keyId, [self, sp, part, rcpts](bool ok, QByteArray sig, QString micalg, QString e) {
+    gpg_.sign(part, fpr, [self, sp, part, rcpts](bool ok, QByteArray sig, QString micalg, QString e) {
         if (!self) return;
         if (!ok) {
             SendResult r;
@@ -230,7 +242,8 @@ void Sender::runMsmtp(const QByteArray& message, const QStringList& recipients) 
     auto seen = std::make_shared<qint64>(0);
     auto procPtr = std::make_shared<QPointer<QProcess>>();
     QProcess* p = runner_.run(
-        msmtp_, msmtpArguments(msmtpAccount_, recipients), std::chrono::milliseconds(msmtpTimeoutMs_),
+        msmtp_, msmtpArguments(msmtpAccount_, recipients),
+        std::chrono::milliseconds(msmtpTimeoutMs_ + (message.size() / (1024 * 1024)) * 1000),
         [self, message](ProcessResult r) {
             if (!self) return;
             if (r.exitCode == 0 && !r.crashed && !r.timedOut) {
@@ -239,9 +252,9 @@ void Sender::runMsmtp(const QByteArray& message, const QStringList& recipients) 
             }
             SendResult res;
             res.kind = SendResult::SmtpFailed;
-            if (r.timedOut)
-                res.message = tr("msmtp non ha risposto in tempo: l'esito e' incerto, il messaggio potrebbe essere stato inviato. "
-                                 "Verificare prima di reinviare.");
+            if (r.timedOut || r.crashed) // anche kill per output eccessivo: esito incerto
+                res.message = tr("msmtp e' stato interrotto (tempo scaduto o terminazione anomala): l'esito e' incerto, "
+                                 "il messaggio potrebbe essere stato inviato. Verificare prima di reinviare.");
             else {
                 res.message = QString::fromUtf8(r.err).trimmed().left(500);
                 if (res.message.isEmpty()) res.message = tr("msmtp ha restituito l'errore %1.").arg(r.exitCode);
@@ -260,26 +273,25 @@ void Sender::runMsmtp(const QByteArray& message, const QStringList& recipients) 
 }
 
 void Sender::storeCopyAndFinish(const QByteArray& message) {
-    QString warning;
     const QString folder = QDir(account_.maildirRoot).filePath(account_.sentFolder);
     QString e;
     const QString path = MaildirWriter::deliver(folder, message, QStringLiteral("S"), &e);
+    SendResult r;
+    r.kind = SendResult::Sent;
     if (path.isEmpty()) {
-        warning = tr("Messaggio inviato, ma la copia in Inviata non e' stata salvata: %1").arg(e);
-        SendResult r;
-        r.kind = SendResult::Sent;
-        r.message = warning;
+        r.message = tr("Messaggio inviato, ma la copia in Inviata non e' stata salvata: %1").arg(e);
         finish(std::move(r));
         return;
     }
+    // Reindicizzazione a "fuoco e dimentica": non trattiene il risultato e sopravvive al Sender.
+    auto* idx = new MailIndex(QCoreApplication::instance(), muProgram_, muHome_);
     QPointer<Sender> self(this);
-    index_.reindex(account_.id, [self](bool ok, QString err) {
-        if (!self) return;
-        SendResult r;
-        r.kind = SendResult::Sent;
-        if (!ok) r.message = tr("Messaggio inviato, ma la reindicizzazione non e' riuscita: %1").arg(err);
-        self->finish(std::move(r));
+    idx->reindex(account_.id, [idx, self](bool ok, QString err) {
+        if (!ok) qWarning().noquote() << "mu index dopo l'invio:" << err;
+        if (self) emit self->reindexFinished(ok, err);
+        idx->deleteLater();
     });
+    finish(std::move(r));
 }
 
 } // namespace boma

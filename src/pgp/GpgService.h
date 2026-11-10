@@ -91,6 +91,18 @@ public:
     // - Con signKeyId anche --encrypt-to: la copia in Inviata resta leggibile.
     void encrypt(const QByteArray& mimeBody, const QStringList& recipients, const QString& signKeyId,
                  std::function<void(bool ok, QByteArray armored, QString error)> done);
+    // Variante: encryptToKey (anche senza firma) e' aggiunta con --encrypt-to
+    // (copia leggibile dal mittente). L'esito distingue i problemi di firma da quelli di cifratura.
+    enum class EncryptFailure { None, Sign, Encrypt };
+    void encrypt(const QByteArray& mimeBody, const QStringList& recipients, const QString& signKeyId,
+                 const QString& encryptToKey,
+                 std::function<void(bool ok, QByteArray armored, QString error, EncryptFailure kind)> done);
+    // Risolve l'identita' della chiave di firma in un'impronta, UNA volta, senza ambiguita':
+    // impronta/id lungo esadecimale = cosi' com'e'; indirizzo (anche "<a@b>") = impronta dell'unica
+    // chiave segreta utilizzabile (non scaduta/revocata/disabilitata, capace di firmare) con un uid
+    // esattamente uguale (case-insensitive). Zero o piu' corrispondenze: stringa vuota e *error. Bloccante.
+    QString resolveSecretKey(const QString& keyId, QString* error);
+    static QStringList secretFingerprintsForAddress(const QByteArray& colons, const QString& address);
     // Indirizzi (nudi) per i quali NON esiste una chiave pubblica utilizzabile
     // per la cifratura. BLOCCANTE (un solo `gpg --list-keys --with-colons`, timeout
     // 30 s): se gpg non parte o fallisce, TUTTI gli indirizzi risultano mancanti.
@@ -122,6 +134,7 @@ private:
     };
     void start(const QStringList& args, const QByteArray& stdinData, int timeoutMs, std::function<void(Result)> done);
 
+    bool runList(const QStringList& extra, QByteArray* result);
     QString gpg_ = QStringLiteral("gpg");
     QString home_;
     qint64 maxPlain_ = 128LL * 1024 * 1024;

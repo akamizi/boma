@@ -142,14 +142,26 @@ GMimeObject* makeText(const QByteArray& data, const char* subtype) {
         run = (c == '\n') ? 0 : run + 1;
         if (run > 900) longLine = true;
     }
+    // RFC 3156 par. 3: la parte firmata non deve avere spazi finali ne' righe che iniziano con "From "
+    // (un MTA potrebbe alterarli e invalidare la firma): in quel caso quoted-printable.
+    // GMime non codifica "From " in QP: in quel caso si usa base64.
+    bool fragile = false, fromLine = data.startsWith("From ");
+    for (const QByteArray& line : data.split('\n')) {
+        QByteArray l = line;
+        if (l.endsWith('\r')) l.chop(1);
+        if (l.endsWith(' ') || l.endsWith('\t')) fragile = true;
+        if (l.startsWith("From ")) fromLine = true;
+    }
+    if (fragile) ascii = false;
     GMimeTextPart* tp = g_mime_text_part_new_with_subtype(subtype);
     GMimePart* part = GMIME_PART(tp);
     g_mime_object_set_content_type_parameter(GMIME_OBJECT(part), "charset", "utf-8");
     GRef<GMimeStream> st(g_mime_stream_mem_new_with_buffer(data.constData(), size_t(data.size())));
     GRef<GMimeDataWrapper> dw(g_mime_data_wrapper_new_with_stream(st.get(), GMIME_CONTENT_ENCODING_DEFAULT));
     g_mime_part_set_content(part, dw.get());
-    g_mime_part_set_content_encoding(part, (ascii && !longLine) ? GMIME_CONTENT_ENCODING_7BIT
-                                                                : GMIME_CONTENT_ENCODING_QUOTEDPRINTABLE);
+    g_mime_part_set_content_encoding(part, fromLine ? GMIME_CONTENT_ENCODING_BASE64
+                                                    : (ascii && !longLine) ? GMIME_CONTENT_ENCODING_7BIT
+                                                                           : GMIME_CONTENT_ENCODING_QUOTEDPRINTABLE);
     return GMIME_OBJECT(tp);
 }
 

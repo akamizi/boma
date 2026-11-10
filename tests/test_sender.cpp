@@ -2,10 +2,14 @@
 #include "pgp/GpgService.h"
 #include "send/Sender.h"
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QTemporaryDir>
+#include <QPointer>
+#include <QRegularExpression>
+#include <QSignalSpy>
 #include <QTest>
 #include <sys/stat.h>
 
@@ -73,7 +77,7 @@ constexpr const char* kBody = "Corpo di prova riservato 7731";
 class T : public QObject {
     Q_OBJECT
     QTemporaryDir root_{QDir::currentPath() + QStringLiteral("/sndt-XXXXXX")};
-    QString home_, homePw_, bin_, wrapper_, failGpg_;
+    QString home_, homePw_, homeAmb_, bin_, wrapper_, failGpg_;
     QList<Account> accounts_;
     Identity idA_, idB_, idNoKey_, idPia_;
     int n_ = 0;
@@ -156,8 +160,15 @@ private slots:
         home_ = newHome(QStringLiteral("h"));
         gen(home_, QStringLiteral("Alice Test <alice@example.test>"));
         gen(home_, QStringLiteral("Bob Test <bob@example.test>"));
+        gen(home_, QStringLiteral("Malice Decoy <malice@example.test>"));
+        gen(home_, QStringLiteral("Alice Evil <alice@example.test.evil>"));
         gen(home_, QStringLiteral("Edna Expired <edna@example.test>"), QStringLiteral("1d"),
             {QStringLiteral("--faked-system-time"), QStringLiteral("20200101T000000")});
+
+        homeAmb_ = newHome(QStringLiteral("amb"));
+        gen(homeAmb_, QStringLiteral("Alice Uno <alice@example.test>"));
+        gen(homeAmb_, QStringLiteral("Alice Due <alice@example.test>"));
+        gen(homeAmb_, QStringLiteral("Bob Test <bob@example.test>"));
 
         // chiave protetta da password, pinentry che fallisce (annullamento)
         homePw_ = newHome(QStringLiteral("p"));
@@ -190,6 +201,7 @@ private slots:
     void cleanupTestCase() {
         killAgent(home_);
         killAgent(homePw_);
+        killAgent(homeAmb_);
     }
 
     // ---- GpgService (parte di scrittura) ----
@@ -320,6 +332,7 @@ private slots:
         QVERIFY(files(sentDir("b")).isEmpty());
         QVERIFY(files(sentDir("a")).first().endsWith(QStringLiteral(":2,S")));
         QCOMPARE(readFile(sentDir("a") + QLatin1Char('/') + files(sentDir("a")).first()), readFile(e.dir + QStringLiteral("/stdin")));
+        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(e.dir + QStringLiteral("/mu.log")), 10000);
         QVERIFY(readFile(e.dir + QStringLiteral("/mu.log")).startsWith("index"));
         QVERIFY(QTest::qWaitFor([&] { return !s->busy(); }, 1000));
         r = doSend(*s, msgFor(idB_, {QStringLiteral("bob@example.test")}), false, false);
@@ -441,6 +454,9 @@ private slots:
             QVERIFY(plain.startsWith("Content-Type: text/plain"));
             QVERIFY(plain.contains(kBody));
             QVERIFY(plain.contains("\r\n"));
+            QVERIFY(!plain.toLower().contains("bcc"));
+            QVERIFY(readFile(e.dir + QStringLiteral("/gpg.log")).contains("--throw-keyids"));
+            QCOMPARE(readFile(sentDir("a") + QLatin1Char('/') + files(sentDir("a")).first()), sent);
             if (sign) {
                 QCOMPARE(inner, SignatureStatus::Valid);
                 QVERIFY(who.contains(QStringLiteral("alice@example.test")));
@@ -498,14 +514,163 @@ private slots:
         QVERIFY(!r.message.isEmpty());
         QCOMPARE(readFile(e.dir + QStringLiteral("/count")).count("run"), 1); // mai un secondo invio
     }
-    void testReindexFailureIsOnlyAWarning() {
+    void testReindexFailureDoesNotDelayOrChangeResult() {
         const Env e = newEnv();
         auto s = makeSender(e, home_);
-        s->setMuProgram(writeScript(QDir(e.dir), QStringLiteral("mufail"), "#!/bin/sh\necho boom >&2\nexit 1\n"));
+        s->setMuProgram(writeScript(QDir(e.dir), QStringLiteral("mufail"), "#!/bin/sh\nsleep 1\necho boom >&2\nexit 1\n"));
+        QSignalSpy spy(s.get(), &Sender::reindexFinished);
+        QElapsedTimer t;
+        t.start();
+        const SendResult r = doSend(*s, msgFor(idA_, {QStringLiteral("bob@example.test")}), false, false);
+        QVERIFY2(t.elapsed() < 900, "il callback non deve attendere mu index");
+        QCOMPARE(r.kind, SendResult::Sent);
+        QVERIFY(r.message.isEmpty());
+        QCOMPARE(files(sentDir("a")).size(), 1);
+        QVERIFY(spy.wait(10000));
+        QCOMPARE(spy.at(0).at(0).toBool(), false);
+        QVERIFY(spy.at(0).at(1).toString().contains(QStringLiteral("boom")));
+    }
+    void testDestroyDuringReindexKeepsCopyAndNoCrash() {
+        const Env e = newEnv();
+        const QString slowMu = writeScript(QDir(e.dir), QStringLiteral("muslow"), "#!/bin/sh\nsleep 1\necho done >> \"$(dirname \"$0\")/mu.done\"\n");
+        std::unique_ptr<Sender> s = makeSender(e, home_);
+        s->setMuProgram(slowMu);
         const SendResult r = doSend(*s, msgFor(idA_, {QStringLiteral("bob@example.test")}), false, false);
         QCOMPARE(r.kind, SendResult::Sent);
-        QVERIFY(r.message.contains(QStringLiteral("boom")));
+        s.reset(); // Sender distrutto mentre mu index gira
         QCOMPARE(files(sentDir("a")).size(), 1);
+        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(e.dir + QStringLiteral("/mu.done")), 10000); // la reindicizzazione prosegue
+    }
+    void testCallbackMayDeleteSender() {
+        const Env e = newEnv();
+        std::unique_ptr<Sender> s = makeSender(e, home_);
+        bool called = false;
+        Sender* raw = s.get();
+        raw->send(msgFor(idA_, {QStringLiteral("bob@example.test")}), false, false, [&](SendResult r) {
+            called = true;
+            QCOMPARE(r.kind, SendResult::Sent);
+            s.reset(); // delete diretto nel callback
+        });
+        QTRY_VERIFY_WITH_TIMEOUT(called, 60000);
+        QTest::qWait(300); // nessun use-after-free
+        QVERIFY(!s);
+    }
+    void testDestroyDuringGpgPhaseNeverCallsBack() {
+        const Env e = newEnv();
+        bool called = false;
+        {
+            auto s = makeSender(e, home_);
+            // la risoluzione della chiave usa gpg vero, la firma si blocca
+            s->gpg().setGpgProgram(writeScript(QDir(e.dir), QStringLiteral("gpgslow"),
+                                               "#!/bin/sh\ncase \"$*\" in *--detach-sign*) exec sleep 30;; *) exec gpg \"$@\";; esac\n"));
+            s->send(msgFor(idA_, {QStringLiteral("bob@example.test")}), true, false, [&](SendResult) { called = true; });
+            QTest::qWait(500);
+        }
+        QTest::qWait(300);
+        QVERIFY(!called);
+        QVERIFY(!QFile::exists(e.dir + QStringLiteral("/count")));
+    }
+    void testKeyIdResolvedToFingerprintNotDecoy() {
+        const Env e = newEnv();
+        auto s = makeSender(e, home_);
+        QCOMPARE(doSend(*s, msgFor(idA_, {QStringLiteral("bob@example.test")}), true, true).kind, SendResult::Sent);
+        const QString log = QString::fromUtf8(readFile(e.dir + QStringLiteral("/gpg.log")));
+        static const QRegularExpression lu(QStringLiteral("--local-user ([0-9A-F]{40}) "));
+        static const QRegularExpression et(QStringLiteral("--encrypt-to ([0-9A-F]{40}) "));
+        const auto m1 = lu.match(log), m2 = et.match(log);
+        QVERIFY2(m1.hasMatch() && m2.hasMatch(), qPrintable(log));
+        QCOMPARE(m1.captured(1), m2.captured(1));
+        QVERIFY(!log.contains(QStringLiteral("malice")));
+        QVERIFY(!log.contains(QStringLiteral("--local-user alice")));
+        // l'impronta e' quella di Alice (non delle chiavi civetta)
+        GpgService g;
+        g.setGnupgHome(home_);
+        QString err;
+        QCOMPARE(g.resolveSecretKey(QStringLiteral("alice@example.test"), &err), m1.captured(1));
+        QCOMPARE(g.resolveSecretKey(QStringLiteral("<ALICE@example.test>"), &err), m1.captured(1));
+        QVERIFY(g.resolveSecretKey(QStringLiteral("alice@example.test.evil"), &err) != m1.captured(1));
+        QVERIFY(g.resolveSecretKey(QStringLiteral("alice"), &err).isEmpty()); // niente corrispondenze parziali
+        QVERIFY(g.resolveSecretKey(QStringLiteral("--homedir=/tmp"), &err).isEmpty());
+        QCOMPARE(g.resolveSecretKey(m1.captured(1), &err), m1.captured(1));
+    }
+    void testAmbiguousKeyIdFailsNeverGuesses() {
+        const Env e = newEnv();
+        auto s = makeSender(e, homeAmb_);
+        const SendResult r = doSend(*s, msgFor(idA_, {QStringLiteral("bob@example.test")}), true, false);
+        QCOMPARE(r.kind, SendResult::SignFailed);
+        QVERIFY(r.message.contains(QStringLiteral("Piu' chiavi")));
+        QVERIFY(!QFile::exists(e.dir + QStringLiteral("/count")));
+        QVERIFY(!readFile(e.dir + QStringLiteral("/gpg.log")).contains("--detach-sign"));
+    }
+    void testSecretFingerprintParsing() {
+        const QByteArray c =
+            "sec:u:255:22:AAAA:1:::u:::scESC:::+::ed25519:::0:\nfpr:::::::::1111111111111111111111111111111111111111:\n"
+            "uid:u::::1::H::Uno <uno@example.test>::::::::::0:\nssb:u:255:18:BBBB:1::::::e:::+::cv25519::\n"
+            "fpr:::::::::2222222222222222222222222222222222222222:\n"
+            "sec:e:255:22:CCCC:1:::u:::scESC:::+::ed25519:::0:\nfpr:::::::::3333333333333333333333333333333333333333:\n"
+            "uid:e::::1::H::Uno <uno@example.test>::::::::::0:\n"
+            "sec:u:255:22:DDDD:1:::u:::cE:::+::ed25519:::0:\nfpr:::::::::4444444444444444444444444444444444444444:\n"
+            "uid:u::::1::H::Uno <uno@example.test>::::::::::0:\n";
+        QCOMPARE(GpgService::secretFingerprintsForAddress(c, QStringLiteral("UNO@example.test")),
+                 QStringList{QStringLiteral("1111111111111111111111111111111111111111")});
+        QVERIFY(GpgService::secretFingerprintsForAddress(c, QStringLiteral("un@example.test")).isEmpty());
+    }
+    void testSignedWithSignatureHasNoFragileLines() {
+        const Env e = newEnv();
+        auto s = makeSender(e, home_);
+        OutgoingMessage m = msgFor(idA_, {QStringLiteral("bob@example.test")});
+        m.identity.signature = QStringLiteral("Alice");
+        m.plainText = QStringLiteral("riga con spazio  \nFrom qui\nfine");
+        m.html = QStringLiteral("<p>html </p>");
+        QCOMPARE(doSend(*s, m, true, false).kind, SendResult::Sent);
+        const QByteArray sent = readFile(e.dir + QStringLiteral("/stdin"));
+        const ParsedMessage pm = MessageParser::parse(sent);
+        QVERIFY(pm.signedPgp);
+        for (const QByteArray& l : pm.rawSignedPart.split('\n')) {
+            QByteArray x = l;
+            QVERIFY2(x.endsWith('\r') || l == pm.rawSignedPart.split('\n').last(), "riga senza CRLF");
+            if (x.endsWith('\r')) x.chop(1);
+            QVERIFY2(!x.endsWith(' ') && !x.endsWith('\t'), x.constData());
+            QVERIFY2(!x.startsWith("From "), x.constData());
+        }
+        GpgService g;
+        g.setGnupgHome(home_);
+        SignatureStatus st = SignatureStatus::None;
+        bool done = false;
+        g.verify(pm.rawSignedPart, pm.rawSignature, [&](SignatureStatus x, QString) { st = x; done = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(done, 60000);
+        QCOMPARE(st, SignatureStatus::Valid);
+        // copia in Inviata == byte inviati
+        QCOMPARE(readFile(sentDir("a") + QLatin1Char('/') + files(sentDir("a")).first()), sent);
+    }
+    void testEncryptOnlyAlsoEncryptsToOwnKeyAndFailureKinds() {
+        const Env e = newEnv();
+        auto s = makeSender(e, home_);
+        QCOMPARE(doSend(*s, msgFor(idA_, {QStringLiteral("bob@example.test")}), false, true).kind, SendResult::Sent);
+        const QByteArray log = readFile(e.dir + QStringLiteral("/gpg.log"));
+        QVERIFY(log.contains("--encrypt-to "));
+        QVERIFY(!log.contains("--local-user"));
+        QVERIFY(log.contains("--throw-keyids"));
+        const QByteArray sent = readFile(e.dir + QStringLiteral("/stdin"));
+        const QByteArray copy = readFile(sentDir("a") + QLatin1Char('/') + files(sentDir("a")).first());
+        QCOMPARE(copy, sent);
+        QVERIFY(copy.contains("BEGIN PGP MESSAGE"));
+        QVERIFY(!copy.contains(kBody));
+        QVERIFY(QTest::qWaitFor([&] { return !s->busy(); }, 1000));
+        // gpg che fallisce con INV_RECP: EncryptFailed, anche se la firma era richiesta
+        const QString fk = writeScript(QDir(e.dir), QStringLiteral("gpginv"),
+                                       "#!/bin/sh\ncase \"$*\" in *--encrypt\\ *) echo '[GNUPG:] INV_RECP 1 x' >&2; exit 2;; *) exec gpg \"$@\";; esac\n");
+        s->gpg().setGpgProgram(fk);
+        QCOMPARE(doSend(*s, msgFor(idA_, {QStringLiteral("bob@example.test")}), true, true).kind, SendResult::EncryptFailed);
+    }
+    void testMsmtpCrashIsUncertain() {
+        const Env e = newEnv();
+        auto s = makeSender(e, home_);
+        s->setMsmtpProgram(writeScript(QDir(e.dir), QStringLiteral("msmtpcrash"), "#!/bin/sh\ncat >/dev/null\nkill -9 $$\n"));
+        const SendResult r = doSend(*s, msgFor(idA_, {QStringLiteral("bob@example.test")}), false, false);
+        QCOMPARE(r.kind, SendResult::SmtpFailed);
+        QVERIFY(r.message.contains(QStringLiteral("incerto")));
+        QVERIFY(files(sentDir("a")).isEmpty());
     }
     void testHostileRecipientsRejected() {
         const Env e = newEnv();
