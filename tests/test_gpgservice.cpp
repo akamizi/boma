@@ -84,7 +84,7 @@ DecOut doDecrypt(GpgService& s, const QByteArray& enc) {
 class T : public QObject {
     Q_OBJECT
     QTemporaryDir root_{QDir::currentPath() + QStringLiteral("/gpgt-XXXXXX")};
-    QString home_, homeEmpty_, homePw_;
+    QString home_, homeEmpty_, homePw_, homeR_;
     QStringList homes_;
     QByteArray data_ = "Content-Type: text/plain\r\n\r\nCiao mondo \r\n  riga con spazi finali   \r\n";
     QByteArray sigGood_, sigExpired_, sigRevoked_;
@@ -331,6 +331,7 @@ private slots:
                                          "cat > '" + stdinFile.toUtf8() + "'\n"
                                          "echo '[GNUPG:] GOODSIG AA Fake' >&2\n"
                                          "echo '[GNUPG:] DECRYPTION_OKAY' >&2\n"
+                                         "echo '[GNUPG:] END_DECRYPTION' >&2\n"
                                          "exit 0\n");
         GpgService s(fake);
         const auto v = doVerify(s, data_, sigGood_);
@@ -419,9 +420,181 @@ private slots:
         }
     }
     void testCheckAgentCacheDoesNotCrash() {
-        // usa la configurazione reale in sola lettura (nessun agent viene avviato da gpgconf --list-options)
+        // mai la configurazione reale dell'utente: GNUPGHOME temporaneo
+        const QString h = newHome(QStringLiteral("c"));
+        const QByteArray old = qgetenv("GNUPGHOME");
+        const bool had = qEnvironmentVariableIsSet("GNUPGHOME");
+        qputenv("GNUPGHOME", h.toLocal8Bit());
         const GpgAgentInfo i = GpgService::checkAgentCache();
-        if (i.available) QVERIFY(i.defaultCacheTtl >= 0 && i.maxCacheTtl >= 0);
+        if (had) qputenv("GNUPGHOME", old); else qunsetenv("GNUPGHOME");
+        if (i.available) {
+            QVERIFY(i.defaultCacheTtl >= 0 && i.maxCacheTtl >= 0);
+            QCOMPARE(i.defaultCacheTtl, 600); // nessuna configurazione: predefiniti
+            QCOMPARE(i.maxCacheTtl, 7200);
+        }
+    }
+
+    void testSignedAndEncryptedFromUnknownSignerIsReadable() {
+        // destinatario con chiave propria; Alice (non importata dal destinatario) firma e cifra
+        homeR_ = newHome(QStringLiteral("r"));
+        gen(homeR_, QStringLiteral("Ron Recipient <ron@example.test>"));
+        const GpgRun pub = runGpg(homeR_, {QStringLiteral("--export"), QStringLiteral("ron@example.test")});
+        QVERIFY(!pub.out.isEmpty());
+        QCOMPARE(runGpg(home_, {QStringLiteral("--batch"), QStringLiteral("--import")}, pub.out).code, 0);
+        const QByteArray plain = "Oggetto: firmato e cifrato\r\n\r\ncorpo\r\n";
+        const GpgRun e = runGpg(home_, {QStringLiteral("--batch"), QStringLiteral("--trust-model"), QStringLiteral("always"),
+                                        QStringLiteral("-u"), QStringLiteral("alice@example.test"), QStringLiteral("-r"),
+                                        QStringLiteral("ron@example.test"), QStringLiteral("--sign"), QStringLiteral("--encrypt")},
+                                plain);
+        QCOMPARE(e.code, 0);
+
+        GpgService s;
+        s.setGnupgHome(homeR_);
+        DecOut o;
+        VerifyOut inner;
+        s.decrypt(e.out, [&o](bool ok, QByteArray p, QString er) { o = {true, ok, p, er}; },
+                  [&inner](SignatureStatus st, QString who) { inner = {true, st, who}; });
+        QTest::qWaitFor([&o] { return o.done; }, 60000);
+        QVERIFY2(o.ok, qPrintable(o.err));
+        QCOMPARE(o.plain, plain);
+        QVERIFY(inner.done);
+        QCOMPARE(inner.st, SignatureStatus::UnknownKey); // mai Valid
+
+        // dopo l'importazione della chiave di Alice la firma interna e' Valid
+        const GpgRun apub = runGpg(home_, {QStringLiteral("--export"), QStringLiteral("alice@example.test")});
+        QCOMPARE(runGpg(homeR_, {QStringLiteral("--batch"), QStringLiteral("--import")}, apub.out).code, 0);
+        o = {};
+        inner = {};
+        s.decrypt(e.out, [&o](bool ok, QByteArray p, QString er) { o = {true, ok, p, er}; },
+                  [&inner](SignatureStatus st, QString who) { inner = {true, st, who}; });
+        QTest::qWaitFor([&o] { return o.done; }, 60000);
+        QVERIFY2(o.ok, qPrintable(o.err));
+        QCOMPARE(inner.st, SignatureStatus::Valid);
+
+        // testo cifrato alterato: errore, nessun testo
+        for (int pos : {e.out.size() / 2, e.out.size() - 3}) {
+            QByteArray bad = e.out;
+            bad[pos] = static_cast<char>(bad[pos] ^ 0x40);
+            const auto t = doDecrypt(s, bad);
+            QVERIFY(!t.ok);
+            QVERIFY(t.plain.isEmpty());
+            QVERIFY(!t.err.isEmpty());
+        }
+        // troncato
+        const auto tr = doDecrypt(s, e.out.left(e.out.size() - 20));
+        QVERIFY(!tr.ok);
+        QVERIFY(tr.plain.isEmpty());
+    }
+
+    void testDecryptStatusRule_data() {
+        QTest::addColumn<QString>("status");
+        QTest::addColumn<int>("code");
+        QTest::addColumn<bool>("ok");
+        const QString core = QStringLiteral("[GNUPG:] DECRYPTION_OKAY\n[GNUPG:] END_DECRYPTION\n");
+        QTest::newRow("clean") << core << 0 << true;
+        QTest::newRow("errsig exit 2") << core + QStringLiteral("[GNUPG:] ERRSIG A 1 8 00 1 9 X\n[GNUPG:] NO_PUBKEY A\n") << 2 << true;
+        QTest::newRow("badsig exit 1") << core + QStringLiteral("[GNUPG:] BADSIG A x\n") << 1 << true;
+        QTest::newRow("expkeysig exit 1") << core + QStringLiteral("[GNUPG:] EXPKEYSIG A x\n") << 1 << true;
+        QTest::newRow("revkeysig exit 1") << core + QStringLiteral("[GNUPG:] REVKEYSIG A x\n") << 1 << true;
+        QTest::newRow("other error exit 2") << core + QStringLiteral("[GNUPG:] ERROR something 17\n") << 2 << false;
+        QTest::newRow("sig plus other error") << core + QStringLiteral("[GNUPG:] ERRSIG A 1 8 00 1 9 X\n[GNUPG:] ERROR foo 5\n") << 2 << false;
+        QTest::newRow("exit 2 no status reason") << core << 2 << false;
+        QTest::newRow("no end_decryption") << QStringLiteral("[GNUPG:] DECRYPTION_OKAY\n") << 0 << false;
+        QTest::newRow("no okay") << QStringLiteral("[GNUPG:] END_DECRYPTION\n") << 0 << false;
+        QTest::newRow("failed") << core + QStringLiteral("[GNUPG:] DECRYPTION_FAILED\n") << 0 << false;
+        QTest::newRow("badmdc") << core + QStringLiteral("[GNUPG:] BADMDC\n") << 0 << false;
+        QTest::newRow("nodata with sig") << core + QStringLiteral("[GNUPG:] NODATA 1\n[GNUPG:] ERRSIG A 1 8 00 1 9 X\n") << 2 << false;
+        QTest::newRow("cancel") << core + QStringLiteral("[GNUPG:] ERROR pkdecrypt_failed 83886179\n") << 2 << false;
+    }
+    void testDecryptStatusRule() {
+        QFETCH(QString, status);
+        QFETCH(int, code);
+        QFETCH(bool, ok);
+        QTemporaryDir d(QDir::currentPath() + QStringLiteral("/fk-XXXXXX"));
+        QVERIFY(d.isValid());
+        QByteArray body = "#!/bin/sh\ncat >/dev/null\nprintf 'PLAIN'\n";
+        for (const QString& l : status.split(QLatin1Char('\n'), Qt::SkipEmptyParts))
+            body += "echo '" + l.toUtf8() + "' >&2\n";
+        body += "exit " + QByteArray::number(code) + "\n";
+        GpgService s(writeScript(QDir(d.path()), QStringLiteral("gpg"), body));
+        const auto o = doDecrypt(s, "x");
+        QCOMPARE(o.ok, ok);
+        if (ok) QCOMPARE(o.plain, QByteArray("PLAIN"));
+        else {
+            QVERIFY(o.plain.isEmpty());
+            QVERIFY(!o.err.isEmpty());
+        }
+    }
+
+    void testPlaintextOverflowKillsGpgAndFails() {
+        QTemporaryDir d(QDir::currentPath() + QStringLiteral("/fk-XXXXXX"));
+        const QString pidFile = d.filePath(QStringLiteral("pid"));
+        const QString fake = writeScript(QDir(d.path()), QStringLiteral("gpg"),
+                                         "#!/bin/sh\necho $$ > '" + pidFile.toUtf8() + "'\n"
+                                         "head -c 100000 /dev/zero\nexec sleep 30\n");
+        GpgService s(fake);
+        s.setMaxPlaintextBytes(1000);
+        const auto o = doDecrypt(s, "x");
+        QVERIFY(!o.ok);
+        QVERIFY(o.plain.isEmpty());
+        QCOMPARE(o.err, QStringLiteral("Messaggio decifrato troppo grande"));
+        QFile f(pidFile);
+        QVERIFY(f.open(QIODevice::ReadOnly));
+        const pid_t pid = f.readAll().trimmed().toInt();
+        QTest::qWait(100);
+        QVERIFY(::kill(pid, 0) == -1 && errno == ESRCH);
+    }
+    void testStatusOverflowFails() {
+        QTemporaryDir d(QDir::currentPath() + QStringLiteral("/fk-XXXXXX"));
+        const QString fake = writeScript(QDir(d.path()), QStringLiteral("gpg"),
+                                         "#!/bin/sh\ncat >/dev/null\nprintf 'ok'\n"
+                                         "head -c 100000 /dev/zero | tr '\\0' 'a' >&2\n"
+                                         "echo '[GNUPG:] DECRYPTION_OKAY' >&2\necho '[GNUPG:] END_DECRYPTION' >&2\n");
+        GpgService s(fake);
+        s.setMaxStatusBytes(1000);
+        const auto o = doDecrypt(s, "x");
+        QVERIFY(!o.ok);
+        QVERIFY(o.plain.isEmpty());
+        QVERIFY(!o.err.isEmpty());
+        // verify: stdout enorme -> Invalid
+        const auto v = doVerify(s, "d", "s");
+        QCOMPARE(v.st, SignatureStatus::Invalid);
+    }
+
+    void testStartFailureMessageAndQueuedCallback() {
+        GpgService s(QStringLiteral("/nonexistent/gpg"));
+        bool called = false, inside = true;
+        DecOut o;
+        s.decrypt("x", [&](bool ok, QByteArray p, QString e) { called = true; o = {true, ok, p, e}; });
+        inside = called; // il callback non gira dentro decrypt()
+        QVERIFY(!inside);
+        QTRY_VERIFY(called);
+        QVERIFY(!o.ok);
+        QVERIFY2(o.err.contains(QStringLiteral("No such file")), qPrintable(o.err));
+    }
+
+    void testInlineSignedMessageAsDetachedSignatureIsNotValid() {
+        const GpgRun r = runGpg(home_, {QStringLiteral("--batch"), QStringLiteral("-u"), QStringLiteral("alice@example.test"),
+                                        QStringLiteral("--sign")},
+                                data_);
+        QCOMPARE(r.code, 0);
+        GpgService s;
+        s.setGnupgHome(home_);
+        QVERIFY(doVerify(s, data_, r.out).st != SignatureStatus::Valid);
+        QVERIFY(doVerify(s, "altro contenuto", r.out).st != SignatureStatus::Valid);
+    }
+
+    void testMultipleSignaturesWorstWins() {
+        QTemporaryDir d(QDir::currentPath() + QStringLiteral("/fk-XXXXXX"));
+        auto run = [&](const QByteArray& lines, int code) {
+            GpgService s(writeScript(QDir(d.path()), QStringLiteral("gpg"),
+                                     "#!/bin/sh\ncat >/dev/null\n" + lines + "exit " + QByteArray::number(code) + "\n"));
+            return doVerify(s, "d", "s").st;
+        };
+        QCOMPARE(run("echo '[GNUPG:] GOODSIG A Uno' >&2\necho '[GNUPG:] BADSIG B Due' >&2\n", 1), SignatureStatus::Invalid);
+        QCOMPARE(run("echo '[GNUPG:] GOODSIG A Uno' >&2\necho '[GNUPG:] ERRSIG B 1 8 00 1 9 X' >&2\n", 2),
+                 SignatureStatus::UnknownKey);
+        QCOMPARE(run("echo '[GNUPG:] GOODSIG A Uno' >&2\necho '[GNUPG:] GOODSIG B Due' >&2\n", 0), SignatureStatus::Valid);
     }
 };
 

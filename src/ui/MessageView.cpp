@@ -2,6 +2,7 @@
 
 #include <QImage>
 #include <QHBoxLayout>
+#include <QVBoxLayout>
 #include <QLabel>
 #include <QLocale>
 #include <QMessageBox>
@@ -176,11 +177,29 @@ MessageView::MessageView(QWidget* parent) : QTextBrowser(parent) {
     connect(this, &QTextBrowser::anchorClicked, this, &MessageView::linkActivated);
 
     bar_ = new QWidget(this);
-    auto* lay = new QHBoxLayout(bar_);
+    auto* lay = new QVBoxLayout(bar_);
     lay->setContentsMargins(4, 2, 4, 2);
-    lay->addWidget(new QLabel(tr("Messaggio cifrato"), bar_), 1);
-    decryptButton_ = new QPushButton(tr("Decifra"), bar_);
-    lay->addWidget(decryptButton_);
+    lay->setSpacing(2);
+    badge_ = new QLabel(bar_);
+    badge_->setTextFormat(Qt::PlainText); // il firmatario e' testo, mai HTML
+    badge_->setWordWrap(true);
+    badge_->hide();
+    lay->addWidget(badge_);
+    encRow_ = new QWidget(bar_);
+    auto* row = new QHBoxLayout(encRow_);
+    row->setContentsMargins(0, 0, 0, 0);
+    auto* encLabel = new QLabel(tr("Messaggio cifrato"), encRow_);
+    row->addWidget(encLabel, 1);
+    decryptButton_ = new QPushButton(tr("Decifra"), encRow_);
+    row->addWidget(decryptButton_);
+    encRow_->hide();
+    lay->addWidget(encRow_);
+    errLabel_ = new QLabel(bar_);
+    errLabel_->setTextFormat(Qt::PlainText);
+    errLabel_->setWordWrap(true);
+    errLabel_->setStyleSheet(QStringLiteral("color:#c62828"));
+    errLabel_->hide();
+    lay->addWidget(errLabel_);
     bar_->hide();
     connect(decryptButton_, &QPushButton::clicked, this, &MessageView::onDecryptClicked);
 }
@@ -191,10 +210,20 @@ void MessageView::resizeEvent(QResizeEvent* e) {
 }
 
 void MessageView::layoutBar() {
-    const int h = encryptedShown_ ? bar_->sizeHint().height() : 0;
+    updateBadge();
+    errLabel_->setText(decryptError_);
+    errLabel_->setVisible(!decryptError_.isEmpty());
+    encRow_->setVisible(encryptedShown_);
+    const bool any = encryptedShown_ || badge_->isVisibleTo(bar_) || errLabel_->isVisibleTo(bar_);
+    int h = 0;
+    if (any) {
+        bar_->layout()->activate();
+        h = bar_->layout()->hasHeightForWidth() ? bar_->layout()->totalHeightForWidth(width())
+                                                : bar_->sizeHint().height();
+    }
     setViewportMargins(0, h, 0, 0);
     bar_->setGeometry(0, 0, width(), h);
-    bar_->setVisible(encryptedShown_);
+    bar_->setVisible(any);
 }
 
 void MessageView::onDecryptClicked() {
@@ -210,7 +239,7 @@ void MessageView::onDecryptClicked() {
 void MessageView::setSignatureResult(SignatureStatus status, const QString& signer) {
     sigStatus_ = status;
     signer_ = signer;
-    render();
+    layoutBar();
 }
 
 void MessageView::showDecrypted(const ParsedMessage& m) {
@@ -230,29 +259,39 @@ void MessageView::showDecryptError(const QString& error) {
     decryptError_ = error.isEmpty() ? tr("Decifrazione non riuscita.") : error;
     decryptButton_->setEnabled(true);
     render(); // nessun testo parziale: si mostra solo l'errore
+    layoutBar();
 }
 
-QString MessageView::badgeHtml() const {
+void MessageView::updateBadge() {
+    const char* green = "color:#1a7f37;font-weight:bold"; // solo per Valid
+    QString text, style;
     switch (sigStatus_) {
     case SignatureStatus::None:
-        return {};
+        break;
     case SignatureStatus::Valid:
-        // concatenazione, non arg(): un signer con "%1" non deve essere riespanso
-        return QStringLiteral("<span style=\"color:#1a7f37\"><b>&#10003; ") + tr("Firma valida: ").toHtmlEscaped() +
-               esc(signer_) + QStringLiteral("</b></span><br>");
+        text = QStringLiteral("\u2713 ") + tr("Firma valida: ") + signer_;
+        style = QString::fromLatin1(green);
+        break;
     case SignatureStatus::Invalid:
-        return QStringLiteral("<span style=\"color:#c62828\"><b>&#10007; %1</b></span><br>").arg(tr("Firma non valida"));
+        text = QStringLiteral("\u2717 ") + tr("Firma non valida");
+        style = QStringLiteral("color:#c62828;font-weight:bold");
+        break;
     case SignatureStatus::UnknownKey:
-        return QStringLiteral("<span style=\"color:#b26a00\"><b>? %1</b></span><br>")
-            .arg(tr("Firma di una chiave sconosciuta"));
+        text = QStringLiteral("? ") + tr("Firma di una chiave sconosciuta");
+        style = QStringLiteral("color:#b26a00;font-weight:bold");
+        break;
     case SignatureStatus::ExpiredKey:
-        return QStringLiteral("<span style=\"color:#b26a00\"><b>&#9888; %1</b></span><br>")
-            .arg(tr("Chiave del firmatario scaduta"));
+        text = QStringLiteral("\u26A0 ") + tr("Chiave del firmatario scaduta");
+        style = QStringLiteral("color:#b26a00;font-weight:bold");
+        break;
     case SignatureStatus::RevokedKey:
-        return QStringLiteral("<span style=\"color:#c62828\"><b>&#9888; %1</b></span><br>")
-            .arg(tr("Chiave del firmatario revocata"));
+        text = QStringLiteral("\u26A0 ") + tr("Chiave del firmatario revocata");
+        style = QStringLiteral("color:#c62828;font-weight:bold");
+        break;
     }
-    return {};
+    badge_->setText(text);
+    badge_->setStyleSheet(style);
+    badge_->setVisible(!text.isEmpty());
 }
 
 // Scansione in un solo passaggio (tempo lineare: ogni ricerca avanza sempre).
@@ -364,12 +403,6 @@ void MessageView::render() {
         QStringList names;
         for (const auto& a : m.attachments) names << a.filename;
         line(tr("Allegati"), names.join(QStringLiteral(", ")));
-    }
-    h += badgeHtml();
-    if (encryptedShown_) {
-        h += QStringLiteral("<b>&#128274; %1</b><br>").arg(tr("Messaggio cifrato"));
-        if (!decryptError_.isEmpty())
-            h += QStringLiteral("<span style=\"color:#c62828\">%1</span><br>").arg(esc(decryptError_));
     }
     h += QStringLiteral("</div><hr>");
     // Limite di visualizzazione (il layout di QTextDocument non regge corpi enormi).

@@ -25,6 +25,19 @@ struct GpgAgentInfo {
 // pinentry: Boma non la vede e non la passa mai (nessuna opzione --passphrase*,
 // nessun --pinentry-mode loopback). --batch non impedisce a gpg-agent di
 // chiamare pinentry (verificato nei test con un pinentry finto).
+// Note di progetto:
+// - Il timeout di decrypt (5 min) comprende il tempo in cui pinentry attende la password.
+// - GOODSIG di una chiave non fidata e' Valid per scelta: non si richiede fiducia (trust).
+// - ERRSIG con rc diverso da 9 (non solo "chiave mancante") e' riportato come UnknownKey (mai verde).
+// - Piu' firme: vince il caso peggiore (una BADSIG rende tutto Invalid, anche con un'altra GOODSIG).
+// - I callback sono sempre consegnati in coda al ciclo eventi, mai dentro verify()/decrypt().
+// - Limiti: 128 MiB di testo in chiaro e 1 MiB di stato/stderr; oltre, gpg e' terminato e
+//   l'esito e' un errore (nessun dato parziale).
+// - Decifrazione riuscita (ok=true) se: DECRYPTION_OKAY e END_DECRYPTION, nessun DECRYPTION_FAILED
+//   o BADMDC, e uscita 0 oppure uscita diversa da 0 dovuta solo a stati di firma (ERRSIG,
+//   NO_PUBKEY, BADSIG, EXPKEYSIG, EXPSIG, REVKEYSIG): un messaggio firmato e cifrato resta
+//   leggibile anche se la firma interna non e' valida. L'esito della firma interna e'
+//   esposto dal secondo callback (opzionale) e non e' mai verde se non Valid.
 // Il testo in chiaro vive solo in memoria. Distruggere il servizio mentre gpg
 // e' in esecuzione termina i processi figli e non richiama alcun callback.
 class GpgService : public QObject {
@@ -37,13 +50,17 @@ public:
     void setGpgProgram(const QString& program) { gpg_ = program; }
     // Se non vuoto, impostato come GNUPGHOME dei processi (per i test).
     void setGnupgHome(const QString& dir) { home_ = dir; }
+    // Limiti (per i test): byte di stdout (testo in chiaro) e di stato/stderr.
+    void setMaxPlaintextBytes(qint64 n) { maxPlain_ = n; }
+    void setMaxStatusBytes(qint64 n) { maxStatus_ = n; }
 
     // signedPart: byte esatti della parte firmata, passati a gpg senza modifiche.
     void verify(const QByteArray& signedPart, const QByteArray& signature,
                 std::function<void(SignatureStatus, QString signer)> done);
     // In caso di errore o annullamento: ok=false, plain vuoto, error non vuoto.
     void decrypt(const QByteArray& encrypted,
-                 std::function<void(bool ok, QByteArray plain, QString error)> done);
+                 std::function<void(bool ok, QByteArray plain, QString error)> done,
+                 std::function<void(SignatureStatus, QString signer)> innerSignature = nullptr);
 
     // Bloccante (timeout breve): da chiamare di rado, non nel percorso di lettura.
     static GpgAgentInfo checkAgentCache();
@@ -55,12 +72,18 @@ public:
                                                 QString* signer = nullptr);
 
 private:
-    struct Job;
-    void start(const QStringList& args, const QByteArray& stdinData, int timeoutMs,
-               std::function<void(int exitCode, bool timedOut, bool startFailed, QByteArray out, QByteArray err)> done);
+    struct Result {
+        int code = -1;
+        bool timedOut = false, startFailed = false, overflow = false;
+        QString startError;
+        QByteArray out, err;
+    };
+    void start(const QStringList& args, const QByteArray& stdinData, int timeoutMs, std::function<void(Result)> done);
 
     QString gpg_ = QStringLiteral("gpg");
     QString home_;
+    qint64 maxPlain_ = 128LL * 1024 * 1024;
+    qint64 maxStatus_ = 1024 * 1024;
     QList<QProcess*> procs_;
 };
 

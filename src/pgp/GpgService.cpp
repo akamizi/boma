@@ -72,7 +72,7 @@ GpgService::~GpgService() {
 }
 
 void GpgService::start(const QStringList& args, const QByteArray& stdinData, int timeoutMs,
-                       std::function<void(int, bool, bool, QByteArray, QByteArray)> done) {
+                       std::function<void(Result)> done) {
     auto* proc = new QProcess(this);
     procs_.append(proc);
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
@@ -81,34 +81,58 @@ void GpgService::start(const QStringList& args, const QByteArray& stdinData, int
     if (!home_.isEmpty()) env.insert(QStringLiteral("GNUPGHOME"), home_);
     proc->setProcessEnvironment(env);
 
-    struct State {
-        QByteArray out, err;
-        bool timedOut = false, finished = false;
-    };
-    auto st = std::make_shared<State>();
-    auto finish = [this, proc, st, done = std::move(done)](int code, bool startFailed) {
-        if (st->finished) return;
-        st->finished = true;
-        st->out += proc->readAllStandardOutput();
-        st->err += proc->readAllStandardError();
+    auto res = std::make_shared<Result>();
+    auto finished = std::make_shared<bool>(false);
+    const qint64 maxOut = maxPlain_, maxErr = maxStatus_;
+    auto finish = [this, proc, res, finished, done = std::move(done)](int code) {
+        if (*finished) return;
+        *finished = true;
+        res->code = code;
+        if (!res->overflow) {
+            res->out += proc->readAllStandardOutput();
+            res->err += proc->readAllStandardError();
+        }
         procs_.removeOne(proc);
         proc->disconnect();
         proc->deleteLater();
-        if (done) done(code, st->timedOut, startFailed, st->out, st->err);
+        // consegna in coda: mai dentro verify()/decrypt(); annullata se il servizio muore
+        QTimer::singleShot(0, this, [done, r = *res]() mutable {
+            if (done) done(std::move(r));
+        });
     };
-    connect(proc, &QProcess::readyReadStandardOutput, this, [proc, st]() { st->out += proc->readAllStandardOutput(); });
-    connect(proc, &QProcess::readyReadStandardError, this, [proc, st]() { st->err += proc->readAllStandardError(); });
-    connect(proc, &QProcess::errorOccurred, this, [finish, st](QProcess::ProcessError e) {
-        if (e == QProcess::FailedToStart) finish(-1, true);
+    auto overflow = [proc, res]() {
+        res->overflow = true;
+        res->out.clear();
+        res->err.clear();
+        proc->kill();
+    };
+    connect(proc, &QProcess::readyReadStandardOutput, this, [proc, res, maxOut, overflow]() {
+        const QByteArray d = proc->readAllStandardOutput();
+        if (res->overflow) return;
+        res->out += d;
+        if (res->out.size() > maxOut) overflow();
     });
-    connect(proc, &QProcess::finished, this, [finish, proc](int code, QProcess::ExitStatus s) {
-        finish(s == QProcess::CrashExit ? -1 : code, false);
+    connect(proc, &QProcess::readyReadStandardError, this, [proc, res, maxErr, overflow]() {
+        const QByteArray d = proc->readAllStandardError();
+        if (res->overflow) return;
+        res->err += d;
+        if (res->err.size() > maxErr) overflow();
+    });
+    connect(proc, &QProcess::errorOccurred, this, [proc, res, finish](QProcess::ProcessError e) {
+        if (e == QProcess::FailedToStart) {
+            res->startFailed = true;
+            res->startError = proc->errorString();
+            finish(-1);
+        }
+    });
+    connect(proc, &QProcess::finished, this, [finish](int code, QProcess::ExitStatus s) {
+        finish(s == QProcess::CrashExit ? -1 : code);
     });
     auto* t = new QTimer(proc);
     t->setSingleShot(true);
-    connect(t, &QTimer::timeout, proc, [proc, st]() {
+    connect(t, &QTimer::timeout, proc, [proc, res]() {
         if (proc->state() != QProcess::NotRunning) {
-            st->timedOut = true;
+            res->timedOut = true;
             proc->kill();
         }
     });
@@ -160,54 +184,70 @@ void GpgService::verify(const QByteArray& signedPart, const QByteArray& signatur
     }
     const QStringList args{QStringLiteral("--batch"), QStringLiteral("--no-tty"), QStringLiteral("--status-fd"),
                            QStringLiteral("2"), QStringLiteral("--verify"), sigPath, QStringLiteral("-")};
-    start(args, signedPart, kVerifyTimeoutMs,
-          [dir, done](int code, bool timedOut, bool startFailed, QByteArray, QByteArray err) {
-              QString who;
-              SignatureStatus s = (timedOut || startFailed) ? SignatureStatus::Invalid
-                                                            : classifyVerifyStatus(err, code, &who);
-              if (s == SignatureStatus::Invalid && (timedOut || startFailed)) who.clear();
-              if (done) done(s, who);
-          });
+    start(args, signedPart, kVerifyTimeoutMs, [dir, done](Result r) {
+        QString who;
+        SignatureStatus s = SignatureStatus::Invalid;
+        if (!r.timedOut && !r.startFailed && !r.overflow) s = classifyVerifyStatus(r.err, r.code, &who);
+        if (done) done(s, who);
+    });
 }
 
-void GpgService::decrypt(const QByteArray& encrypted,
-                         std::function<void(bool, QByteArray, QString)> done) {
+void GpgService::decrypt(const QByteArray& encrypted, std::function<void(bool, QByteArray, QString)> done,
+                         std::function<void(SignatureStatus, QString)> innerSignature) {
     const QStringList args{QStringLiteral("--batch"), QStringLiteral("--no-tty"), QStringLiteral("--status-fd"),
                            QStringLiteral("2"), QStringLiteral("--decrypt")};
-    start(args, encrypted, kDecryptTimeoutMs,
-          [done](int code, bool timedOut, bool startFailed, QByteArray out, QByteArray err) {
-              if (!done) return;
-              if (startFailed) {
-                  done(false, {}, QObject::tr("Impossibile avviare gpg: %1").arg(QString::fromUtf8(err)));
-                  return;
-              }
-              if (timedOut) {
-                  done(false, {}, QObject::tr("Tempo scaduto durante la decifrazione."));
-                  return;
-              }
-              bool okay = false, failed = false, cancelled = false, noData = false;
-              for (const StatusLine& l : parseStatus(err)) {
-                  if (l.keyword == "DECRYPTION_OKAY") okay = true;
-                  else if (l.keyword == "DECRYPTION_FAILED") failed = true;
-                  else if (l.keyword == "NODATA") noData = true;
-                  else if (l.keyword == "ERROR") {
-                      // "ERROR <location> <code>": 83886179 = operazione annullata
-                      const QList<QByteArray> p = l.rest.split(' ');
-                      bool numOk = false;
-                      const uint code = p.size() >= 2 ? p.at(1).trimmed().toUInt(&numOk) : 0;
-                      if (numOk && (code & 0xFFFF) == 99) cancelled = true; // GPG_ERR_CANCELED
-                  }
-              }
-              if (okay && !failed && code == 0) {
-                  done(true, out, QString());
-                  return;
-              }
-              QString msg;
-              if (cancelled) msg = QObject::tr("Decifrazione annullata.");
-              else if (noData) msg = QObject::tr("Il messaggio non contiene dati OpenPGP validi.");
-              else msg = QObject::tr("Decifrazione non riuscita (chiave segreta mancante, password errata o dati alterati).");
-              done(false, QByteArray(), msg); // mai testo parziale
-          });
+    start(args, encrypted, kDecryptTimeoutMs, [done, innerSignature](Result r) {
+        if (!done) return;
+        if (r.startFailed) {
+            done(false, {}, QObject::tr("Impossibile avviare gpg: %1").arg(r.startError));
+            return;
+        }
+        if (r.timedOut) {
+            done(false, {}, QObject::tr("Tempo scaduto durante la decifrazione."));
+            return;
+        }
+        if (r.overflow) {
+            done(false, {}, QObject::tr("Messaggio decifrato troppo grande"));
+            return;
+        }
+        bool okay = false, endDec = false, failed = false, cancelled = false, noData = false, otherError = false,
+             sigClass = false;
+        for (const StatusLine& l : parseStatus(r.err)) {
+            const QByteArray& k = l.keyword;
+            if (k == "DECRYPTION_OKAY") okay = true;
+            else if (k == "END_DECRYPTION") endDec = true;
+            else if (k == "DECRYPTION_FAILED" || k == "BADMDC") failed = true;
+            else if (k == "NODATA") noData = true;
+            else if (k == "ERRSIG" || k == "NO_PUBKEY" || k == "BADSIG" || k == "EXPKEYSIG" || k == "EXPSIG" ||
+                     k == "REVKEYSIG")
+                sigClass = true;
+            else if (k == "ERROR") {
+                otherError = true;
+                // "ERROR <location> <code>": codice & 0xFFFF == 99: GPG_ERR_CANCELED
+                const QList<QByteArray> p = l.rest.split(' ');
+                bool numOk = false;
+                const uint code = p.size() >= 2 ? p.at(1).trimmed().toUInt(&numOk) : 0;
+                if (numOk && (code & 0xFFFF) == 99) cancelled = true;
+            }
+        }
+        const bool exitOk = r.code == 0 || (sigClass && !otherError && !noData);
+        if (okay && endDec && !failed && exitOk) {
+            if (innerSignature) {
+                QString who;
+                const SignatureStatus s = sigClass || r.err.contains("GOODSIG") || r.err.contains("VALIDSIG")
+                                              ? classifyVerifyStatus(r.err, r.code, &who)
+                                              : SignatureStatus::None;
+                innerSignature(s, who);
+            }
+            done(true, r.out, QString());
+            return;
+        }
+        QString msg;
+        if (cancelled) msg = QObject::tr("Decifrazione annullata.");
+        else if (noData) msg = QObject::tr("Il messaggio non contiene dati OpenPGP validi.");
+        else msg = QObject::tr("Decifrazione non riuscita (chiave segreta mancante, password errata o dati alterati).");
+        done(false, QByteArray(), msg); // mai testo parziale
+    });
 }
 
 GpgAgentInfo GpgService::parseGpgconfOptions(const QByteArray& out) {

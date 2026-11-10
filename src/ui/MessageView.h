@@ -1,6 +1,7 @@
 #pragma once
 #include "mime/MessageParser.h"
 #include "pgp/GpgService.h"
+#include <QLabel>
 #include <QPushButton>
 #include <functional>
 #include <QTextBrowser>
@@ -23,6 +24,10 @@ public:
     void showDecrypted(const ParsedMessage& m);
     void showDecryptError(const QString& error);
     QPushButton* decryptButton() const { return decryptButton_; }
+    // Badge e avvisi sono widget FUORI dal QTextDocument: l'HTML del mittente
+    // non puo' disegnarli ne' imitarli.
+    QLabel* signatureBadge() const { return badge_; }
+    QLabel* decryptErrorLabel() const { return errLabel_; }
     const QByteArray& encryptedData() const { return encrypted_; }
     // Sostituibile nei test (default: QMessageBox::question).
     void setConfirmCallback(std::function<bool()> cb) { confirm_ = std::move(cb); }
@@ -41,7 +46,7 @@ private:
     void render();
     void layoutBar();
     void onDecryptClicked();
-    QString badgeHtml() const;
+    void updateBadge();
 
     ParsedMessage msg_;
     SignatureStatus sigStatus_ = SignatureStatus::None;
@@ -49,6 +54,8 @@ private:
     QByteArray encrypted_;
     bool encryptedShown_ = false;
     QWidget* bar_ = nullptr;
+    QLabel *badge_ = nullptr, *errLabel_ = nullptr;
+    QWidget* encRow_ = nullptr;
     QPushButton* decryptButton_ = nullptr;
     std::function<bool()> confirm_;
 };

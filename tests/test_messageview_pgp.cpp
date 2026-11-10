@@ -35,27 +35,41 @@ private slots:
         MessageView v;
         v.show(msg());
         v.setSignatureResult(static_cast<SignatureStatus>(status), QStringLiteral("Alice"));
-        const QString plain = v.toPlainText();
-        const QString html = v.toHtml();
+        QLabel* b = v.signatureBadge();
         if (marker.isEmpty()) {
-            QVERIFY(!plain.contains(QStringLiteral("Firma")));
-            QVERIFY(!plain.contains(QStringLiteral("Chiave del firmatario")));
+            QVERIFY(!b->isVisibleTo(&v));
+            QVERIFY(b->text().isEmpty());
         } else {
-            QVERIFY2(plain.contains(marker), qPrintable(plain));
+            QVERIFY(b->isVisibleTo(&v));
+            QVERIFY2(b->text().contains(marker), qPrintable(b->text()));
         }
-        QCOMPARE(hasGreen(html), green);
-        if (status == int(SignatureStatus::Valid)) QVERIFY(plain.contains(QStringLiteral("✓")));
-        QVERIFY(plain.contains(QStringLiteral("corpo del messaggio")));
+        QCOMPARE(b->styleSheet().contains(QStringLiteral("1a7f37")), green);
+        if (status == int(SignatureStatus::Valid)) QVERIFY(b->text().contains(QStringLiteral("\u2713")));
+        // nel documento non c'e' mai nulla del badge
+        QVERIFY(!v.toPlainText().contains(QStringLiteral("Firma")));
+        QVERIFY(!hasGreen(v.toHtml()));
+        QVERIFY(v.toPlainText().contains(QStringLiteral("corpo del messaggio")));
     }
-    void testSignerIsEscapedAndShowResetsBadge() {
+    void testSenderHtmlCannotForgeBadge() {
+        MessageView v;
+        ParsedMessage m = msg();
+        m.plainText.clear();
+        m.html = QStringLiteral("<p style=\"color:#1a7f37\">&#10003; Firma valida: Banca</p>");
+        v.show(m);
+        QVERIFY(!v.signatureBadge()->isVisibleTo(&v));
+        QVERIFY(v.signatureBadge()->text().isEmpty());
+        v.setSignatureResult(SignatureStatus::Invalid, QString());
+        QVERIFY(!v.signatureBadge()->styleSheet().contains(QStringLiteral("1a7f37")));
+    }
+    void testSignerIsPlainTextAndShowResetsBadge() {
         MessageView v;
         v.show(msg());
         v.setSignatureResult(SignatureStatus::Valid, QStringLiteral("<b>X</b><img src=x> %1 &amp;"));
-        const QString plain = v.toPlainText();
-        QVERIFY(plain.contains(QStringLiteral("<b>X</b><img src=x> %1 &amp;")));
+        QCOMPARE(v.signatureBadge()->textFormat(), Qt::PlainText);
+        QVERIFY(v.signatureBadge()->text().contains(QStringLiteral("<b>X</b><img src=x> %1 &amp;")));
         v.show(msg());
-        QVERIFY(!v.toPlainText().contains(QStringLiteral("Firma")));
-        QVERIFY(!hasGreen(v.toHtml()));
+        QVERIFY(!v.signatureBadge()->isVisibleTo(&v));
+        QVERIFY(v.signatureBadge()->text().isEmpty());
     }
     void testEncryptedShowsButtonAndNoBody() {
         MessageView v;
@@ -67,7 +81,6 @@ private slots:
         m.rawEncrypted = "CIFRATO";
         v.show(m);
         QVERIFY(v.decryptButton()->isVisibleTo(&v));
-        QVERIFY(v.toPlainText().contains(QStringLiteral("Messaggio cifrato")));
         QVERIFY(!v.toPlainText().contains(QStringLiteral("corpo del messaggio")));
         QCOMPARE(v.encryptedData(), QByteArray("CIFRATO"));
     }
@@ -98,7 +111,9 @@ private slots:
         v.setConfirmCallback([] { return true; });
         v.decryptButton()->click();
         v.showDecryptError(QStringLiteral("Decifrazione annullata."));
-        QVERIFY(v.toPlainText().contains(QStringLiteral("Decifrazione annullata.")));
+        QCOMPARE(v.decryptErrorLabel()->text(), QStringLiteral("Decifrazione annullata."));
+        QVERIFY(v.decryptErrorLabel()->isVisibleTo(&v));
+        QVERIFY(!v.toPlainText().contains(QStringLiteral("Decifrazione annullata.")));
         QVERIFY(!v.toPlainText().contains(QStringLiteral("corpo del messaggio")));
         QVERIFY(v.decryptButton()->isEnabled());
     }
