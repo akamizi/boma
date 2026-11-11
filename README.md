@@ -39,7 +39,7 @@ indicati sotto sono obiettivi di progetto, non risultati misurati.
 
 | Compito | Programma | Come lo usa Boma |
 |---|---|---|
-| Sincronizzazione IMAP bidirezionale | **mbsync** (pacchetto `isync`) | `mbsync -V <canale>` come processo asincrono: all'avvio, ogni 5 minuti e su richiesta; mai due insieme (blocco con `flock`). Le password IMAP le fornisce `PassCmd` nel suo file di configurazione, Boma non le vede. |
+| Sincronizzazione IMAP bidirezionale | **mbsync** (pacchetto `isync`) | `mbsync -V <canale>` come processo asincrono: all'avvio, ogni 5 minuti e su richiesta; mai due insieme da Boma (blocco con `flock` su un file di Boma, valido tra istanze di Boma: un `mbsync` lanciato a mano o da cron non lo usa, vedi «Limiti noti»). Le password IMAP le fornisce `PassCmd` nel suo file di configurazione, Boma non le vede. |
 | Archivio dei messaggi | **Maildir** (un file per messaggio) | Copia locale; Boma ci scrive direttamente solo per Inviata e Bozze (vedi sotto). |
 | Indice e ricerca | **mu** (pacchetto `mu4e`) | `mu index` dopo ogni sincronizzazione, `mu find` per le ricerche e per le non lette, `mu move` per spostare i messaggi nel cestino e per segnarli come letti quando si aprono. |
 | Invio | **msmtp** | Un account msmtp per ogni identità; le credenziali le recupera `passwordeval` nella sua configurazione. |
@@ -49,9 +49,10 @@ indicati sotto sono obiettivi di progetto, non risultati misurati.
 | Filtri in ingresso | **Sieve** sul server | Non è compito di Boma. In Boma "filtrare" significa cercare. |
 
 L'unico punto in cui Boma scrive direttamente nel Maildir è la copia dei messaggi
-inviati (Inviata) e delle bozze (Bozze), con la consegna Maildir standard (file
-scritto in `tmp/` e poi spostato con `rename`); tutto il resto passa da `mbsync`
-e `mu`.
+inviati (Inviata) e delle bozze (Bozze), con la consegna Maildir standard: file
+scritto e sincronizzato su disco in `tmp/`, poi pubblicato in `cur/` con `link()`
+(che non sostituisce mai un file esistente) e infine rimosso da `tmp/` con
+`unlink()`. Tutto il resto passa da `mbsync` e `mu`.
 
 ## Funzioni della prima versione
 
@@ -60,9 +61,22 @@ e `mu`.
   un'interruzione).
 - Elenco per messaggio (senza conversazioni), vista delle non lette all'avvio,
   ricerca veloce.
-- Testo semplice, HTML visualizzabile senza immagini remote, allegati.
+- Testo semplice, HTML visualizzabile senza immagini remote, allegati
+  («Salva allegato...»: nome ripulito, proposto in Scaricati; un file esistente
+  non viene mai sovrascritto).
+- I link si aprono solo dopo una conferma che mostra la destinazione reale (i
+  domini internazionali in forma ASCII `xn--`), e solo `http`, `https` e
+  `mailto`.
 - Più identità per account (indirizzo, firma, chiave PGP, account msmtp). La copia
-  inviata va nella cartella Inviata dell'account a cui appartiene l'identità.
+  inviata va nella cartella Inviata dell'account a cui appartiene l'identità,
+  con l'intestazione `Bcc` (che invece non viene mai trasmessa). Se Inviata non
+  è una Maildir scrivibile l'invio è rifiutato prima di partire (e all'avvio un
+  avviso segnala Inviata, Bozze o Cestino non validi). Se il messaggio parte ma la
+  copia in Inviata fallisce, Boma ne salva una copia di emergenza `.eml` in
+  `~/.local/share/Boma/non-salvati/` e la finestra di scrittura resta aperta,
+  segnata come INVIATO e non reinviabile.
+- Chiudere Boma passa da ogni finestra di scrittura aperta (che chiede conferma se
+  ci sono modifiche) ed è rifiutato mentre un messaggio è in fase di invio.
 - OpenPGP: vedi la sezione dedicata più sotto.
 - Cancellazione = spostamento nel cestino (pulsante «Elimina», tasto Canc), senza
   conferma ma recuperabile dal cestino. La cancellazione definitiva automatica non
@@ -221,7 +235,8 @@ percentuale.
 - Gli account vengono sincronizzati uno alla volta. Un errore su un account non
   ferma gli altri e non viene ritentato da solo: si usa «Riprova».
 - Chiudendo Boma il `mbsync` in corso riceve SIGTERM (SIGKILL dopo 3 secondi se
-  non risponde); la chiusura può quindi richiedere fino a 3 secondi in più. Al
+  non risponde, poi un'attesa di al massimo 2 secondi); la chiusura può quindi
+  richiedere fino a 5 secondi in più, con l'interfaccia ferma. Al
   riavvio `mbsync` riprende dal punto raggiunto, perché è incrementale.
 
 ## Cancellare i messaggi
@@ -264,8 +279,13 @@ non passa mai da Boma.
   chiesta la cifratura non viene mai inviato in chiaro. Se la chiave
   dell'identità è risolvibile il messaggio è cifrato anche per il mittente,
   altrimenti la copia in Inviata non sarà leggibile da lui.
-- **Verifica**: per i messaggi firmati la firma è controllata all'apertura; una
-  firma valida mostra una spunta verde con il firmatario.
+- **Verifica**: per i messaggi firmati la firma è controllata all'apertura (senza
+  scaricare chiavi dalla rete). La spunta verde con il firmatario compare solo se
+  la firma copre l'intero corpo del messaggio e se l'indirizzo del firmatario è
+  quello del mittente (Da); una firma valida di un altro indirizzo mostra
+  firmatario, mittente e un avviso. Se la parte firmata o cifrata è solo una
+  parte del messaggio (accanto a testo non protetto) compare «Firmato o cifrato
+  solo in parte» e mai il verde.
 - **Decifratura**: per i messaggi cifrati Boma chiede conferma prima di
   decifrare (e a quel punto pinentry chiede la password).
 - Un invio non riuscito non viene ripetuto da solo; se l'esito di `msmtp` è
@@ -293,6 +313,17 @@ non passa mai da Boma.
   (limite del formato PGP/MIME).
 - Se all'avvio `mu info store` fallisce, la radice di `mu` non viene rilevata di
   nuovo finché Boma non viene riavviato.
+- Il blocco che impedisce due `mbsync` insieme vale solo tra istanze di Boma:
+  un `mbsync` lanciato a mano o da cron sulle stesse cartelle non lo rispetta
+  (Boma non lo vede). Meglio non sincronizzare da fuori mentre Boma è aperto.
+- Se un altro `mu` tiene occupato l'indice (ad esempio un `mu index` lungo),
+  segna come letto, Elimina e l'aggiornamento dell'indice dopo l'invio riprovano
+  per al massimo 2 minuti, poi mostrano un errore: nulla viene spostato.
+- Il confronto firmatario/mittente usa l'identità che `gpg` riporta per la firma
+  (l'UID principale della chiave): una chiave con più indirizzi può dare un avviso
+  anche se il mittente è uno dei suoi altri indirizzi.
+- La copia di emergenza di un inviato (se Inviata fallisce) va spostata a mano in
+  Inviata; Boma non la ricarica da solo.
 - Provato finora solo con posta sintetica e programmi finti; le verifiche con
   posta, server e chiavi reali sono in corso e non ci sono ancora misure di
   prestazioni su una casella vera.
