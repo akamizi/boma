@@ -6,6 +6,7 @@
 #include <QList>
 #include <QObject>
 #include <QString>
+#include <chrono>
 #include <functional>
 
 namespace boma {
@@ -72,6 +73,7 @@ private:
     QString accountFor(const QString& path) const;
     QString m_mu, m_muHome, m_muRoot;
     QList<Account> m_accounts;
+    void reindexAttempt(Callback cb, std::chrono::milliseconds waited, std::chrono::milliseconds delay);
     ProcessRunner m_runner;
 };
 

@@ -1,6 +1,9 @@
 #include "core/MailActions.h"
 
 #include <QDir>
+#include <QPointer>
+#include <QTimer>
+#include <algorithm>
 #include <chrono>
 
 namespace boma {
@@ -10,8 +13,33 @@ void MailActions::runMu(const QStringList& argsIn, Callback cb)
     QStringList args = argsIn;
     if (!m_muHome.isEmpty() && !args.isEmpty())
         args.insert(1, QStringLiteral("--muhome=%1").arg(m_muHome));
+    attempt(args, std::move(cb), std::chrono::milliseconds(0), std::chrono::milliseconds(250));
+}
+
+void MailActions::attempt(const QStringList& args, Callback cb, std::chrono::milliseconds waited,
+                          std::chrono::milliseconds delay)
+{
+    QPointer<MailActions> self(this);
     m_runner.run(m_mu, args, std::chrono::seconds(30),
-                 [cb = std::move(cb)](ProcessResult r) {
+                 [self, args, waited, delay, cb = std::move(cb)](ProcessResult r) mutable {
+                     if (!self)
+                         return;
+                     // 19 = base dati bloccata da un altro processo mu: nulla e' stato fatto.
+                     if (r.exitCode == 19 && !r.crashed && !r.timedOut) {
+                         if (waited + delay <= self->m_lockBudget) {
+                             const auto next = std::min(delay * 2, std::chrono::milliseconds(4000));
+                             QTimer::singleShot(delay, self.data(),
+                                                [self, args, waited, delay, next, cb = std::move(cb)]() mutable {
+                                                    if (self)
+                                                        self->attempt(args, std::move(cb), waited + delay, next);
+                                                });
+                             return;
+                         }
+                         if (cb)
+                             cb(false, QStringLiteral("mu e' occupato (base dati bloccata da un'altra "
+                                                      "indicizzazione): operazione non eseguita, riprova piu' tardi"));
+                         return;
+                     }
                      const bool ok = r.exitCode == 0 && !r.crashed && !r.timedOut;
                      QString err;
                      if (!ok) {

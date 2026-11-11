@@ -79,6 +79,67 @@ private slots:
         }
         QVERIFY(!QFile::exists(e.td.path() + "/ran")); // nessun mu eseguito
     }
+    // I3: `mu index` in corso -> mu move esce 19 (database bloccato, nulla fatto):
+    // si riprova con attesa crescente finche' riesce.
+    void testLockedDatabaseIsRetried() {
+        Env e; e.init();
+        const QString cnt = e.td.path() + "/n";
+        const QString mu = script(e.td.path(), "mu",
+            "echo x >> \"" + cnt + "\"\n"
+            "[ $(wc -l < \"" + cnt + "\") -le 2 ] && { echo 'error: database locked' >&2; exit 19; }\n"
+            "exit 0");
+        MailActions a(nullptr, mu);
+        a.setMuRoot(e.mail);
+        bool done = false, ok = false; QString err;
+        a.markRead(e.msg, [&](bool o, QString m) { ok = o; err = m; done = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(done, 10000);
+        QVERIFY2(ok, qPrintable(err));
+        QFile f(cnt); QVERIFY(f.open(QIODevice::ReadOnly));
+        QCOMPARE(f.readAll().count('x'), 3);
+        // anche lo spostamento nel cestino
+        QFile::remove(cnt);
+        done = false;
+        a.moveToTrash(e.msg, e.acc, [&](bool o, QString m) { ok = o; err = m; done = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(done, 10000);
+        QVERIFY2(ok, qPrintable(err));
+    }
+    void testLockedDatabaseGivesUpWithClearError() {
+        Env e; e.init();
+        const QString cnt = e.td.path() + "/n";
+        const QString mu = script(e.td.path(), "mu", "echo x >> \"" + cnt + "\"\necho 'error: database locked' >&2\nexit 19");
+        MailActions a(nullptr, mu);
+        a.setMuRoot(e.mail);
+        a.setLockedRetryBudget(std::chrono::milliseconds(700));
+        bool done = false, ok = true; QString err;
+        a.markRead(e.msg, [&](bool o, QString m) { ok = o; err = m; done = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(done, 10000);
+        QVERIFY(!ok);
+        QVERIFY2(err.contains("occupato"), qPrintable(err));
+        QFile f(cnt); QVERIFY(f.open(QIODevice::ReadOnly));
+        QVERIFY(f.readAll().count('x') >= 2);
+        // altri codici di errore: nessun nuovo tentativo
+        QFile::remove(cnt);
+        const QString mu1 = script(e.td.path(), "mu1", "echo x >> \"" + cnt + "\"\nexit 1");
+        MailActions b(nullptr, mu1);
+        done = false;
+        b.markRead(e.msg, [&](bool o, QString) { ok = o; done = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(done, 5000);
+        QTest::qWait(700);
+        QFile g(cnt); QVERIFY(g.open(QIODevice::ReadOnly));
+        QCOMPARE(g.readAll().count('x'), 1);
+    }
+    void testDestroyWhileWaitingToRetryNeverCallsBack() {
+        Env e; e.init();
+        const QString mu = script(e.td.path(), "mu", "exit 19");
+        bool called = false;
+        {
+            MailActions a(nullptr, mu);
+            a.markRead(e.msg, [&](bool, QString) { called = true; });
+            QTest::qWait(150); // primo tentativo fallito, in attesa del successivo
+        }
+        QTest::qWait(1500);
+        QVERIFY(!called);
+    }
     void testMarkReadUsesFlagsArgument() {
         Env e; e.init();
         const QString log = e.td.path() + "/args.txt";

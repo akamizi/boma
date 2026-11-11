@@ -5,6 +5,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDebug>
+#include <QPointer>
+#include <QTimer>
+#include <algorithm>
 #include <QRegularExpression>
 #include <chrono>
 
@@ -167,8 +170,25 @@ void MailIndex::unread(int offset, int limit, SearchCallback cb)
 
 void MailIndex::reindex(const QString&, Callback cb)
 {
+    reindexAttempt(std::move(cb), std::chrono::milliseconds(0), std::chrono::milliseconds(250));
+}
+
+void MailIndex::reindexAttempt(Callback cb, std::chrono::milliseconds waited, std::chrono::milliseconds delay)
+{
+    QPointer<MailIndex> self(this);
     m_runner.run(m_mu, baseArgs(QStringLiteral("index")), std::chrono::minutes(60),
-                 [cb = std::move(cb)](ProcessResult r) {
+                 [self, waited, delay, cb = std::move(cb)](ProcessResult r) mutable {
+                     // 19 = base dati bloccata da un altro mu (spostamento o altra
+                     // indicizzazione): si riprova con attesa crescente, al massimo 2 minuti.
+                     if (self && r.exitCode == 19 && !r.crashed && !r.timedOut
+                         && waited + delay <= std::chrono::milliseconds(120000)) {
+                         const auto next = std::min(delay * 2, std::chrono::milliseconds(4000));
+                         QTimer::singleShot(delay, self.data(), [self, waited, delay, next, cb = std::move(cb)]() mutable {
+                             if (self)
+                                 self->reindexAttempt(std::move(cb), waited + delay, next);
+                         });
+                         return;
+                     }
                      const bool ok = r.exitCode == 0 && !r.crashed && !r.timedOut;
                      QString err;
                      if (!ok) {

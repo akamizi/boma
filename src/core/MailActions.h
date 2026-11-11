@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 #include "core/Config.h"
 #include "core/ProcessRunner.h"
 #include <QObject>
@@ -33,6 +34,10 @@ public:
     // moveToTrash la richiede (vuota o "/" = rifiuto) e rifiuta gli account che
     // non stanno sotto la radice: mai spostare in una cartella dedotta.
     void setMuRoot(const QString& r) { m_muRoot = r; }
+    // mu esce con 19 se la base dati e' bloccata (es. `mu index` in corso, di Boma
+    // o esterno): mu non ha fatto nulla, si riprova con attesa crescente
+    // (250 ms .. 4 s) fino a questo tempo totale; poi errore chiaro.
+    void setLockedRetryBudget(std::chrono::milliseconds b) { m_lockBudget = b; }
 
     // Aggiunge la bandiera S (letto) e toglie N (nuovo).
     void markRead(const QString& path, Callback cb);
@@ -41,6 +46,9 @@ public:
 
 private:
     void runMu(const QStringList& args, Callback cb);
+    void attempt(const QStringList& args, Callback cb, std::chrono::milliseconds waited,
+                 std::chrono::milliseconds delay);
+    std::chrono::milliseconds m_lockBudget{120000};
     QString m_mu, m_muHome, m_muRoot;
     ProcessRunner m_runner;
 };

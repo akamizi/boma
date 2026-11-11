@@ -187,6 +187,19 @@ private slots:
         auto c = runSearch(perr, "x", 0, 10);
         QVERIFY(c.error.isEmpty()); QVERIFY(c.list.isEmpty());
     }
+    // I3: `mu index` mentre un altro mu tiene la base dati (codice 19): si riprova.
+    void testReindexRetriesWhenDatabaseLocked() {
+        const QString cnt = td.path() + "/reindexcount";
+        QFile::remove(cnt);
+        MailIndex i(nullptr, fakeMu("mu19", "echo x >> \"" + cnt + "\"\n"
+            "[ $(wc -l < \"" + cnt + "\") -le 1 ] && { echo 'error: database locked' >&2; exit 19; }\nexit 0"), muhome);
+        bool done = false, ok = false; QString err;
+        i.reindex("acc", [&](bool o, QString e) { ok = o; err = e; done = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(done, 10000);
+        QVERIFY2(ok, qPrintable(err));
+        QFile f(cnt); QVERIFY(f.open(QIODevice::ReadOnly));
+        QCOMPARE(f.readAll().count('x'), 2);
+    }
     void testModelDestroyedWhileQueryInFlight() {
         const QString marker = td.path() + "/slow-done";
         QFile::remove(marker);
