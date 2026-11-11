@@ -391,6 +391,29 @@ private slots:
         }
     }
 
+    void testNoTimeoutClearedForNonFirstAccountAndRetryRunsWithoutTimeout() {
+        oneMessage(QStringLiteral("a")); // a non e' prima sincronizzazione, ma e' nella coda di avvio
+        touch(QStringLiteral("fail.b"));
+        MainWindow w(makeConfig(), opts());
+        w.syncService()->setTimeout(std::chrono::milliseconds(300));
+        w.show();
+        QVERIFY(waitStatus(w, QStringLiteral("b"), QStringLiteral("Errore")));
+        QTRY_VERIFY_WITH_TIMEOUT(w.syncService()->state() != SyncService::Running, 10000);
+        QVERIFY(!w.syncService()->hasNoTimeout(QStringLiteral("a")));
+        QVERIFY(!w.syncService()->hasNoTimeout(QStringLiteral("b"))); // anche dopo un errore
+        QTRY_VERIFY_WITH_TIMEOUT(dlg(w)->retryButton(QStringLiteral("b"))->isEnabled(), 10000);
+        // Riprova: di nuovo senza tempo massimo (1 s > 300 ms)
+        QFile::remove(f(QStringLiteral("fail.b")));
+        touch(QStringLiteral("gate.b"));
+        dlg(w)->retryButton(QStringLiteral("b"))->click();
+        QVERIFY(waitStatus(w, QStringLiteral("b"), QStringLiteral("In corso")));
+        QTest::qWait(1000);
+        QCOMPARE(dlg(w)->statusText(QStringLiteral("b")), QStringLiteral("In corso"));
+        QFile::remove(f(QStringLiteral("gate.b")));
+        QVERIFY(waitStatus(w, QStringLiteral("b"), QStringLiteral("Completata")));
+        QTRY_VERIFY_WITH_TIMEOUT(!w.syncService()->hasNoTimeout(QStringLiteral("b")), 5000);
+    }
+
     // ---- vista del dialogo ----
     void testTwoAccountsProgressIndependent() {
         FirstRunDialog d;

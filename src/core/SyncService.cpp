@@ -103,17 +103,22 @@ void SyncService::next()
         [this, alive, acc](ProcessResult r) {
             if (!*alive)
                 return;
+            m_noTimeout.remove(acc.id); // "senza tempo massimo" vale solo per questa esecuzione
             if (r.timedOut || r.crashed || r.exitCode != 0) {
                 QString detail = QString::fromUtf8(r.err).trimmed();
                 if (detail.isEmpty())
                     detail = QString::fromUtf8(r.out).trimmed().section('\n', -1);
-                m_failedId = acc.id;
-                m_failedMsg = r.timedOut ? tr("Tempo scaduto")
+                const bool first = m_failedId.isEmpty(); // si riporta il primo errore del giro
+                const QString failedMsg = r.timedOut ? tr("Tempo scaduto")
                               : r.crashed ? tr("mbsync terminato in modo anomalo")
                                           : tr("mbsync ha restituito %1: %2")
                                                 .arg(r.exitCode).arg(detail);
-                m_queue.clear(); // al primo errore ci si ferma
-                emit accountFinished(acc.id, false, m_failedMsg);
+                if (first) {
+                    m_failedId = acc.id;
+                    m_failedMsg = failedMsg;
+                }
+                // un errore non impedisce di sincronizzare gli account restanti
+                emit accountFinished(acc.id, false, failedMsg);
             } else {
                 m_anySynced = true;
                 emit accountFinished(acc.id, true, {});

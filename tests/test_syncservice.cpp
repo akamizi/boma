@@ -105,9 +105,46 @@ private slots:
         QSignalSpy st(&s, &SyncService::stateChanged);
         s.syncAll();
         QTRY_COMPARE_WITH_TIMEOUT(s.state(), SyncService::Failed, 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(countLines(log), 2, 10000); // b viene sincronizzato comunque
         QTest::qWait(300);
-        QCOMPARE(countLines(log), 1);
-        QCOMPARE(st.last().at(1).toString(), QString("a"));
+        QCOMPARE(countLines(log), 2);
+        QCOMPARE(st.last().at(1).toString(), QString("a")); // ...ma il fallimento di a e' riportato
+        QVERIFY(st.last().at(2).toString().contains("boom"));
+    }
+    void testFailureOfOneAccountDoesNotStarveTheOther() {
+        QString log = dir.filePath("log10");
+        QString p = writeScript(dir.filePath("m10"), "echo $2 >> " + log + "\n[ \"$2\" = chA ] && { echo boom >&2; exit 1; }\nexit 0");
+        ProcessRunner r; Config c = cfg();
+        SyncService s(&r, c, dir.filePath("lock10")); s.setMbsyncProgram(p);
+        for (int round = 1; round <= 2; ++round) {
+            s.syncAll();
+            QTRY_COMPARE_WITH_TIMEOUT(s.state(), SyncService::Failed, 10000);
+            QCOMPARE(countLines(log), round * 2);
+            QVERIFY(s.anySynced());
+        }
+    }
+    void testNoTimeoutFlagIsPerRun() {
+        QString slow = dir.filePath("slow11");
+        QString p = writeScript(dir.filePath("m11"), "[ -f " + slow + " ] && sleep 5\nexit 0");
+        ProcessRunner r; Config c = cfg();
+        SyncService s(&r, c, dir.filePath("lock11")); s.setMbsyncProgram(p);
+        s.setTimeout(std::chrono::milliseconds(300));
+        s.setNoTimeout("a", true);
+        s.syncAccount("a");
+        QTRY_COMPARE_WITH_TIMEOUT(s.state(), SyncService::Idle, 10000);
+        QVERIFY(!s.hasNoTimeout("a")); // vale solo per l'esecuzione in corso
+        QFile f(slow); (void)f.open(QIODevice::WriteOnly); f.close();
+        s.syncAccount("a");
+        QTRY_COMPARE_WITH_TIMEOUT(s.state(), SyncService::Failed, 10000); // tempo massimo normale
+    }
+    void testNoTimeoutFlagClearedAfterFailure() {
+        QString p = writeScript(dir.filePath("m12"), "echo boom >&2\nexit 1");
+        ProcessRunner r; Config c = cfg();
+        SyncService s(&r, c, dir.filePath("lock12")); s.setMbsyncProgram(p);
+        s.setNoTimeout("a", true);
+        s.syncAccount("a");
+        QTRY_COMPARE_WITH_TIMEOUT(s.state(), SyncService::Failed, 10000);
+        QVERIFY(!s.hasNoTimeout("a"));
     }
     void testDestroyWhileRunningIsSafe() {
         QString log = dir.filePath("log6");

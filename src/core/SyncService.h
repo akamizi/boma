@@ -15,7 +15,7 @@ namespace boma {
 // Sincronizzazione con mbsync (`mbsync -V <canale>`), un account alla volta.
 // Un solo giro alla volta (stato Running) e un flock su lockPath contro altre
 // istanze/processi: un lock occupato e' un errore, non si attende. In caso di
-// errore nessun nuovo tentativo automatico; il prossimo giro e' il timer o
+// errore di un account gli altri del giro vengono comunque sincronizzati e il primo errore e' riportato; nessun nuovo tentativo automatico; il prossimo giro e' il timer o
 // una richiesta esplicita. Nessuna eccezione se la rete manca: mbsync esce
 // con errore e lo stato diventa Failed.
 class SyncService : public QObject {
@@ -58,7 +58,8 @@ public:
     void setTimeout(std::chrono::milliseconds t) { m_timeout = t; }
     // Account senza tempo massimo (prima sincronizzazione: 15 GB non stanno in 10
     // minuti; mbsync e' interrompibile e l'utente puo' chiudere). Gli altri hanno
-    // m_timeout: allo scadere SIGTERM, poi SIGKILL, errore "Tempo scaduto".
+    // m_timeout (il flag vale solo per l'esecuzione in corso e si azzera al suo termine,
+    // ok o errore): allo scadere SIGTERM, poi SIGKILL, errore "Tempo scaduto".
     void setNoTimeout(const QString& accountId, bool on)
     {
         if (on) m_noTimeout.insert(accountId); else m_noTimeout.remove(accountId);
