@@ -34,7 +34,7 @@ private slots:
         QFETCH(bool, green);
         MessageView v;
         v.show(msg());
-        v.setSignatureResult(static_cast<SignatureStatus>(status), QStringLiteral("Alice"));
+        v.setSignatureResult(static_cast<SignatureStatus>(status), QStringLiteral("Alice <a@example.test>"));
         QLabel* b = v.signatureBadge();
         if (marker.isEmpty()) {
             QVERIFY(!b->isVisibleTo(&v));
@@ -49,6 +49,36 @@ private slots:
         QVERIFY(!v.toPlainText().contains(QStringLiteral("Firma")));
         QVERIFY(!hasGreen(v.toHtml()));
         QVERIFY(v.toPlainText().contains(QStringLiteral("corpo del messaggio")));
+    }
+    // Firma valida ma di un'identita' diversa dal mittente (Da): firmatario mostrato,
+    // avviso e mai il verde.
+    void testSignerDifferentFromSenderWarns() {
+        MessageView v;
+        ParsedMessage m = msg();
+        m.from = QStringLiteral("Banca <servizio@banca.example>");
+        v.show(m);
+        v.setSignatureResult(SignatureStatus::Valid, QStringLiteral("Mallory <mallory@evil.example>"));
+        QLabel* b = v.signatureBadge();
+        QVERIFY(b->isVisibleTo(&v));
+        QVERIFY2(b->text().contains(QStringLiteral("mallory@evil.example")), qPrintable(b->text()));
+        QVERIFY2(b->text().contains(QStringLiteral("servizio@banca.example")), qPrintable(b->text()));
+        QVERIFY2(!b->text().contains(QStringLiteral("\u2713")), qPrintable(b->text()));
+        QVERIFY(!b->styleSheet().contains(QStringLiteral("1a7f37")));
+        // stesso indirizzo (maiuscole diverse, nomi diversi): verde
+        m.from = QStringLiteral("Alice R. <Alice@Example.test>");
+        v.show(m);
+        v.setSignatureResult(SignatureStatus::Valid, QStringLiteral("Alice <alice@example.test>"));
+        QVERIFY(b->styleSheet().contains(QStringLiteral("1a7f37")));
+        // uid senza <>: solo indirizzo
+        m.from = QStringLiteral("alice@example.test");
+        v.show(m);
+        v.setSignatureResult(SignatureStatus::Valid, QStringLiteral("alice@example.test"));
+        QVERIFY(b->styleSheet().contains(QStringLiteral("1a7f37")));
+        // firmatario senza indirizzo riconoscibile: nessun verde
+        v.show(m);
+        v.setSignatureResult(SignatureStatus::Valid, QStringLiteral("Alice"));
+        QVERIFY(!b->styleSheet().contains(QStringLiteral("1a7f37")));
+        QVERIFY(b->text().contains(QStringLiteral("Alice")));
     }
     void testSenderHtmlCannotForgeBadge() {
         MessageView v;

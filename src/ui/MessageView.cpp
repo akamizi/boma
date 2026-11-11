@@ -273,6 +273,20 @@ void MessageView::showDecryptError(const QString& error) {
     layoutBar();
 }
 
+namespace {
+// Indirizzo e-mail (minuscolo) di "Nome <a@b>" o "a@b"; vuoto se non riconoscibile.
+QString addressOf(const QString& s) {
+    const int lt = s.lastIndexOf(QLatin1Char('<'));
+    const int gt = s.lastIndexOf(QLatin1Char('>'));
+    QString a = (lt >= 0 && gt > lt) ? s.mid(lt + 1, gt - lt - 1) : s;
+    a = a.trimmed().toLower();
+    if (a.count(QLatin1Char('@')) != 1 || a.contains(QLatin1Char(' ')) || a.startsWith(QLatin1Char('@')) ||
+        a.endsWith(QLatin1Char('@')))
+        return {};
+    return a;
+}
+} // namespace
+
 void MessageView::updateBadge() {
     const char* green = "color:#1a7f37;font-weight:bold"; // solo per Valid
     QString text, style;
@@ -291,10 +305,20 @@ void MessageView::updateBadge() {
     switch (sigStatus_) {
     case SignatureStatus::None:
         break;
-    case SignatureStatus::Valid:
-        text = QStringLiteral("\u2713 ") + tr("Firma valida: ") + signer_;
-        style = QString::fromLatin1(green);
+    case SignatureStatus::Valid: {
+        // Verde solo se l'indirizzo del firmatario coincide con quello del mittente
+        // (Da): una firma valida di un altro non deve far sembrare autentico il mittente.
+        const QString sAddr = addressOf(signer_), fAddr = addressOf(msg_.from);
+        if (!sAddr.isEmpty() && sAddr == fAddr) {
+            text = QStringLiteral("\u2713 ") + tr("Firma valida: ") + signer_;
+            style = QString::fromLatin1(green);
+        } else {
+            text = QStringLiteral("\u26A0 ") + tr("Firma valida di %1, ma il mittente (Da) e' %2")
+                                                     .arg(signer_, fAddr.isEmpty() ? msg_.from : fAddr);
+            style = QStringLiteral("color:#b26a00;font-weight:bold");
+        }
         break;
+    }
     case SignatureStatus::Invalid:
         text = QStringLiteral("\u2717 ") + tr("Firma non valida");
         style = QStringLiteral("color:#c62828;font-weight:bold");
