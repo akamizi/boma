@@ -323,11 +323,22 @@ void MainWindow::checkSpecialFolders() {
         [self](QStringList bad) {
             if (!self || bad.isEmpty()) return;
             self->statusBar()->showMessage(tr("Cartelle dell'account non valide: vedi l'avviso"), 30000);
-            self->showNotice(tr("Cartelle non valide"),
-                             tr("Queste cartelle non sono Maildir utilizzabili:\n\n%1\n\n"
-                                "Finche' non le correggi nella configurazione l'invio da quell'account e' bloccato "
-                                "(nulla parte senza la copia in Inviata), le bozze non si salvano ed Elimina non funziona.")
-                                 .arg(bad.join(QLatin1Char('\n'))));
+            const QString title = tr("Cartelle non valide");
+            const QString text = tr("Queste cartelle non sono Maildir utilizzabili:\n\n%1\n\n"
+                                    "Finche' non le correggi nella configurazione l'invio da quell'account e' bloccato "
+                                    "(nulla parte senza la copia in Inviata), le bozze non si salvano ed Elimina non funziona.")
+                                     .arg(bad.join(QLatin1Char('\n')));
+            if (self->notice_) {
+                self->notice_(title, text);
+                return;
+            }
+            // Avviso NON modale: all'avvio non deve fermare il ciclo di eventi
+            // (sincronizzazione, prima sincronizzazione, elenco).
+            auto* box = new QMessageBox(QMessageBox::Warning, title, text, QMessageBox::Ok, self.data());
+            box->setTextFormat(Qt::PlainText);
+            box->setAttribute(Qt::WA_DeleteOnClose);
+            box->setModal(false);
+            box->show();
         });
 }
 
