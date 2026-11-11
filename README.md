@@ -293,8 +293,6 @@ non passa mai da Boma.
 - `mbsync` non è lanciato in un proprio gruppo di processi: all'uscita il segnale
   arriva al processo `mbsync`; non è verificato che raggiunga anche i suoi figli
   (ad esempio `PassCmd` o `ssh`) con un `mbsync` reale.
-- Il controllo delle chiavi dei destinatari prima di un invio cifrato è
-  sincrono: l'interfaccia può restare ferma fino a 30 secondi.
 - Con la cifratura, l'oggetto e il numero dei destinatari restano visibili
   (limite del formato PGP/MIME).
 - Se all'avvio `mu info store` fallisce, la radice di `mu` non viene rilevata di

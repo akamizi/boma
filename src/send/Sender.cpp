@@ -194,27 +194,20 @@ void Sender::send(const OutgoingMessage& msg, bool sign, bool encrypt, std::func
                         tr("L'identita' non ha una chiave PGP: confermare per inviare senza firma."));
         sign = false;
     }
-    if (encrypt) {
-        const QStringList missing = gpg_.missingKeys(rcpts);
-        if (!missing.isEmpty())
-            return fail(SendResult::MissingKeys, tr("Manca una chiave di cifratura utilizzabile per: %1").arg(missing.join(QStringLiteral(", "))),
-                        missing);
-    }
-
-    // Chiave dell'identita' risolta in impronta (una volta). Firma: obbligatoria. Solo cifratura:
-    // se non risolvibile si rinuncia alla copia leggibile (--encrypt-to), senza indovinare.
-    QString fpr;
-    if (sign || (encrypt && !keyId.isEmpty())) {
-        QString kerr;
-        fpr = gpg_.resolveSecretKey(keyId, &kerr);
-        if (fpr.isEmpty() && sign) return fail(SendResult::SignFailed, kerr);
-    }
-
-    QPointer<Sender> self(this);
     if (!sign && !encrypt) {
         runMsmtp(built, rcpts);
         return;
     }
+
+    // Controllo delle chiavi (gpg --list-keys / --list-secret-keys, fino a 30 s):
+    // fuori dal thread GUI. runList() usa solo un QProcess locale e valori costanti,
+    // quindi e' sicuro; il risultato torna sul thread GUI (contesto `this`: se il
+    // Sender sparisce il callback non parte, e keyPool_ attende il lavoro in corso).
+    // Chiave dell'identita' risolta in impronta (una volta). Firma: obbligatoria. Solo
+    // cifratura: se non risolvibile si rinuncia alla copia leggibile (--encrypt-to),
+    // senza indovinare.
+    auto protect = [this](const Split& sp, const QStringList& rcpts, bool sign, bool encrypt, const QString& fpr) {
+    QPointer<Sender> self(this);
     // L'ultimo CRLF appartiene al delimitatore: la parte firmata e' quella senza.
     QByteArray part = sp.inner;
     if (part.endsWith("\r\n")) part.chop(2);
@@ -244,6 +237,34 @@ void Sender::send(const OutgoingMessage& msg, bool sign, bool encrypt, std::func
             return;
         }
         self->runMsmtp(assembleSigned(sp, part, sig, micalg, newBoundary(part)), rcpts);
+    });
+    };
+
+    keyPool_.setMaxThreadCount(1);
+    GpgService* gpg = &gpg_;
+    keyPool_.start([this, gpg, sp, rcpts, keyId, sign, encrypt, protect]() {
+        QStringList missing;
+        QString fpr, kerr;
+        if (encrypt) missing = gpg->missingKeys(rcpts);
+        if (missing.isEmpty() && (sign || (encrypt && !keyId.isEmpty()))) fpr = gpg->resolveSecretKey(keyId, &kerr);
+        QMetaObject::invokeMethod(
+            this,
+            [this, sp, rcpts, sign, encrypt, missing, fpr, kerr, protect]() {
+                SendResult r;
+                if (encrypt && !missing.isEmpty()) {
+                    r.kind = SendResult::MissingKeys;
+                    r.message = tr("Manca una chiave di cifratura utilizzabile per: %1").arg(missing.join(QStringLiteral(", ")));
+                    r.missing = missing;
+                    return finish(std::move(r));
+                }
+                if (sign && fpr.isEmpty()) {
+                    r.kind = SendResult::SignFailed;
+                    r.message = kerr;
+                    return finish(std::move(r));
+                }
+                protect(sp, rcpts, sign, encrypt, fpr);
+            },
+            Qt::QueuedConnection);
     });
 }
 
