@@ -98,7 +98,8 @@ void SyncService::next()
     auto alive = m_alive;
     emit accountStarted(acc.id);
     m_proc = m_runner->run(
-        m_program, {QStringLiteral("-V"), acc.mbsyncChannel}, m_timeout,
+        m_program, {QStringLiteral("-V"), acc.mbsyncChannel},
+        m_noTimeout.contains(acc.id) ? std::chrono::milliseconds::zero() : m_timeout,
         [this, alive, acc](ProcessResult r) {
             if (!*alive)
                 return;

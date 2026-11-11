@@ -25,6 +25,9 @@ class ProcessRunner : public QObject {
 public:
     using OutputCallback = std::function<void(const QByteArray&)>;
     explicit ProcessRunner(QObject* parent = nullptr) : QObject(parent) {}
+    // Allo scadere del tempo massimo (timeout > 0; 0 = nessun limite) il figlio
+    // riceve SIGTERM e, se non esce entro il periodo di tolleranza, SIGKILL.
+    void setKillGrace(std::chrono::milliseconds g) { m_grace = g; }
 
     // Restituisce il processo avviato (nullo dopo la distruzione) per consentire
     // a chi chiama di terminarlo.
@@ -32,6 +35,8 @@ public:
              std::chrono::milliseconds timeout,
              std::function<void(ProcessResult)> done,
              OutputCallback onOutput = nullptr);
+private:
+    std::chrono::milliseconds m_grace{5000};
 };
 
 } // namespace boma

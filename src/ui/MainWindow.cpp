@@ -193,6 +193,7 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
         st.status = ok ? FirstRunState::Done : FirstRunState::Failed;
         st.error = msg;
         setFirstState(id, st);
+        if (ok) sync_->setNoTimeout(id, false); // finita la prima sync, valgono i tempi normali
     });
     connect(sync_, &SyncService::progress, this, [this](const QString& id, int done, int total) {
         if (firstStates_.contains(id)) {
@@ -249,8 +250,10 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     } else {
         stack_->setCurrentWidget(view_);
         applyQuery(QString());
-        if (opts_.autoSync)
+        if (opts_.autoSync) {
+            startupPending_ = true;
             QTimer::singleShot(0, this, &MainWindow::startupSync);
+        }
     }
 }
 
@@ -279,6 +282,7 @@ void MainWindow::startupSync() {
 }
 
 void MainWindow::beginStartupQueue(const QStringList& firstIds) {
+    startupPending_ = false;
     if (firstIds.isEmpty()) {
         sync_->start();
         syncNow();
@@ -291,7 +295,8 @@ void MainWindow::beginStartupQueue(const QStringList& firstIds) {
     for (const Account& a : config_.accounts())
         if (!firstIds.contains(a.id)) queue_ << a.id; // gli altri, dopo, senza dialogo
     queueActive_ = true;
-    queueFailed_ = false;
+    // nessun tempo massimo per i sync di avvio (15 GB): mbsync e' interrompibile
+    for (const QString& id : std::as_const(queue_)) sync_->setNoTimeout(id, true);
     ensureFirstRunDialog()->show();
     updateFirstRunUi();
     runNextQueued();
@@ -303,7 +308,8 @@ void MainWindow::runNextQueued() {
     if (queue_.isEmpty()) {
         queueActive_ = false;
         queueCur_.clear();
-        if (!queueFailed_) sync_->start(); // la sincronizzazione periodica parte solo se tutto e' andato bene
+        sync_->start(); // anche dopo errori: il tick riprova e aggiorna lo stato (un tentativo per intervallo)
+        updateFirstRunUi();
         return;
     }
     queueCur_ = queue_.takeFirst();
@@ -314,6 +320,7 @@ void MainWindow::retryFirstRun(const QString& id) {
     // Mai due sincronizzazioni insieme: se ne e' in corso una (o la coda iniziale) non si fa nulla.
     if (!firstStates_.contains(id) || queueActive_ || sync_->state() == SyncService::Running) return;
     queueCur_ = id;
+    sync_->setNoTimeout(id, true);
     sync_->syncAccount(id);
 }
 
@@ -440,11 +447,13 @@ void MainWindow::clearViewer() {
     view_->show(ParsedMessage());
 }
 
-void MainWindow::reindexAndRefresh() {
-    // nuova posta: aggiorna l'indice di mu (asincrono) e poi l'elenco
+void MainWindow::reindexAndRefresh(std::function<void()> done) {
+    // nuova posta: aggiorna l'indice di mu (asincrono) e poi l'elenco;
+    // done (se dato) parte quando mu index ha finito, ok o no.
     QPointer<MainWindow> self(this);
-    index_->reindex(QString(), [self](bool ok, QString err) {
+    index_->reindex(QString(), [self, done = std::move(done)](bool ok, QString err) {
         if (!self) return;
+        if (done) QTimer::singleShot(0, self, done);
         if (!ok)
             self->statusBar()->showMessage(tr("Aggiornamento dell'indice non riuscito: %1").arg(err), 10000);
         else
@@ -662,12 +671,18 @@ void MainWindow::deleteSelected() {
 }
 
 void MainWindow::syncNow() {
-    if (config_.isEmpty()) return;
+    // durante il rilevamento iniziale e la coda di avvio la sincronizzazione e' gia' pilotata
+    if (config_.isEmpty() || startupPending_ || queueActive_) return;
     statusBar()->clearMessage();
     sync_->syncAll();
 }
 
 void MainWindow::onSyncState(SyncService::State st, const QString& accountId, const QString& message) {
+    bool reindexing = false;
+    QPointer<MainWindow> selfp(this);
+    const std::function<void()> cont = [selfp]() {
+        if (selfp && selfp->queueActive_ && selfp->sync_->state() != SyncService::Running) selfp->runNextQueued();
+    };
     switch (st) {
     case SyncService::Running:
         syncWasRunning_ = true;
@@ -683,12 +698,16 @@ void MainWindow::onSyncState(SyncService::State st, const QString& accountId, co
         syncLabel_->setText(tr("Sincronizzato alle %1").arg(lastSync_.toString(QStringLiteral("HH:mm"))));
         if (syncWasRunning_) {
             syncWasRunning_ = false;
-            reindexAndRefresh();
+            reindexing = true;
+            reindexAndRefresh(queueActive_ ? cont : std::function<void()>());
         }
         break;
     case SyncService::Failed:
         // un account fallito non deve nascondere la posta scaricata dagli altri
-        if (syncWasRunning_ && sync_->anySynced()) reindexAndRefresh();
+        if (syncWasRunning_ && sync_->anySynced()) {
+            reindexing = true;
+            reindexAndRefresh(queueActive_ ? cont : std::function<void()>());
+        }
         syncWasRunning_ = false;
         progress_->hide();
         // senza rete mbsync esce con errore: nessun messaggio ripetuto, solo lo stato
@@ -700,7 +719,6 @@ void MainWindow::onSyncState(SyncService::State st, const QString& accountId, co
         break;
     }
     if (st == SyncService::Failed) {
-        queueFailed_ = queueFailed_ || queueActive_;
         // errore senza account (lock occupato, ...): va all'account che si stava avviando
         if (accountId.isEmpty() && firstStates_.contains(queueCur_)) {
             FirstRunState fs;
@@ -709,7 +727,13 @@ void MainWindow::onSyncState(SyncService::State st, const QString& accountId, co
             setFirstState(queueCur_, fs);
         }
     }
-    if (st != SyncService::Running && queueActive_) runNextQueued();
+    if (st != SyncService::Running && queueActive_) {
+        if (reindexing) {
+            // il prossimo mbsync parte solo a mu index finito (niente sovrapposizioni): vedi cont
+        } else {
+            runNextQueued();
+        }
+    }
     updateFirstRunUi();
 }
 

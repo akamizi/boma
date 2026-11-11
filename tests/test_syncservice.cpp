@@ -137,6 +137,32 @@ private slots:
         QCOMPARE(prog.first().at(1).toInt(), 3);
         QCOMPARE(prog.first().at(2).toInt(), 4);
     }
+    void testTimeoutSendsSigtermFirst() {
+        QString mark = dir.filePath("term8");
+        QString p = writeScript(dir.filePath("m8"),
+            "trap 'echo term > " + mark + "; exit 143' TERM\ni=0\nwhile [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done\nexit 0");
+        ProcessRunner r; Config c = cfg();
+        SyncService s(&r, c, dir.filePath("lock8")); s.setMbsyncProgram(p);
+        s.setTimeout(std::chrono::milliseconds(300));
+        QSignalSpy st(&s, &SyncService::stateChanged);
+        s.syncAccount("a");
+        QTRY_COMPARE_WITH_TIMEOUT(s.state(), SyncService::Failed, 10000);
+        QVERIFY(st.last().at(2).toString().contains("Tempo scaduto"));
+        QVERIFY(QFile::exists(mark)); // SIGTERM, non SIGKILL
+    }
+    void testNoTimeoutAccountOutlivesTimeout() {
+        QString p = writeScript(dir.filePath("m9"), "sleep 1\nexit 0");
+        ProcessRunner r; Config c = cfg();
+        SyncService s(&r, c, dir.filePath("lock9")); s.setMbsyncProgram(p);
+        s.setTimeout(std::chrono::milliseconds(300));
+        s.setNoTimeout("a", true);
+        s.syncAccount("a");
+        QTRY_COMPARE_WITH_TIMEOUT(s.state(), SyncService::Idle, 10000);
+        QVERIFY(s.anySynced());
+        s.setNoTimeout("a", false); // ora vale il tempo massimo
+        s.syncAccount("a");
+        QTRY_COMPARE_WITH_TIMEOUT(s.state(), SyncService::Failed, 10000);
+    }
 };
 QTEST_MAIN(T)
 #include "test_syncservice.moc"

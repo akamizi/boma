@@ -4,6 +4,7 @@
 #include <QProcess>
 #include <memory>
 #include <QQueue>
+#include <QSet>
 #include <QString>
 #include <QTimer>
 #include "core/Config.h"
@@ -55,6 +56,14 @@ public:
     // Percorso del programma (iniettabile nei test con uno script finto).
     void setMbsyncProgram(const QString& program) { m_program = program; }
     void setTimeout(std::chrono::milliseconds t) { m_timeout = t; }
+    // Account senza tempo massimo (prima sincronizzazione: 15 GB non stanno in 10
+    // minuti; mbsync e' interrompibile e l'utente puo' chiudere). Gli altri hanno
+    // m_timeout: allo scadere SIGTERM, poi SIGKILL, errore "Tempo scaduto".
+    void setNoTimeout(const QString& accountId, bool on)
+    {
+        if (on) m_noTimeout.insert(accountId); else m_noTimeout.remove(accountId);
+    }
+    bool hasNoTimeout(const QString& accountId) const { return m_noTimeout.contains(accountId); }
 
     // Pianificazione: sincronizza tutto ogni intervallo (default 5 minuti).
     void setInterval(std::chrono::milliseconds i) { m_timer.setInterval(i); }
@@ -96,6 +105,7 @@ private:
     QString m_failedId, m_failedMsg;
     bool m_anySynced = false;
     bool m_shutdown = false;
+    QSet<QString> m_noTimeout;
 };
 
 } // namespace boma

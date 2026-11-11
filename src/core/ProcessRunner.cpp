@@ -55,10 +55,18 @@ QProcess* ProcessRunner::run(const QString& program, const QStringList& args,
     if (timeout.count() > 0) {
         auto* t = new QTimer(proc);
         t->setSingleShot(true);
-        connect(t, &QTimer::timeout, proc, [proc, result]() {
+        const int grace = static_cast<int>(m_grace.count());
+        connect(t, &QTimer::timeout, proc, [proc, result, grace]() {
             if (proc->state() != QProcess::NotRunning) {
                 result->timedOut = true;
-                proc->kill();
+                proc->terminate(); // arresto ordinato; SIGKILL solo se non risponde
+                auto* k = new QTimer(proc);
+                k->setSingleShot(true);
+                QObject::connect(k, &QTimer::timeout, proc, [proc]() {
+                    if (proc->state() != QProcess::NotRunning)
+                        proc->kill();
+                });
+                k->start(grace);
             }
         });
         t->start(static_cast<int>(timeout.count()));

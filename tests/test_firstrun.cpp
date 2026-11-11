@@ -75,7 +75,7 @@ class T : public QObject {
         const auto l = QDir(dir_).entryList({QStringLiteral("gate.*"), QStringLiteral("fail.*"), QStringLiteral("partial.*"),
                                              QStringLiteral("pid.*"), QStringLiteral("term.*")}, QDir::Files);
         for (const QString& n : l) QFile::remove(f(n));
-        for (const char* n : {"mbsync.log", "mu.log", "overlap.log", "busy", "lock"}) QFile::remove(f(QLatin1String(n)));
+        for (const char* n : {"mbsync.log", "mu.log", "seq.log", "overlap.log", "busy", "lock"}) QFile::remove(f(QLatin1String(n)));
     }
     void emptyFolders(const QString& ch) {
         for (const char* s : {"INBOX/cur", "INBOX/new", "INBOX/tmp", "Sent/cur", "Sent/new"})
@@ -117,12 +117,13 @@ private slots:
         dir_ = root_.path();
         mu_ = writeScript(dir_, QStringLiteral("mu"),
                           "#!/bin/sh\nd=$(dirname \"$0\")\nprintf '%s\\n' \"$*\" >> \"$d/mu.log\"\n"
-                          "case \"$1\" in\n find) echo '[]';;\n info) exit 1;;\n *) exit 0;;\nesac\n");
+                          "case \"$1\" in\n find) echo '[]';;\n info) exit 1;;\n"
+                          " index) echo mu-start >> \"$d/seq.log\"; sleep 0.3; echo mu-end >> \"$d/seq.log\"; exit 0;;\n *) exit 0;;\nesac\n");
         // mbsync finto: gate.<canale> = resta in attesa finche' il file esiste; fail.<canale> = errore
         // di rete; partial.<canale> = crea due messaggi poi cade. Segnala (overlap.log) due esecuzioni sovrapposte.
         mbsync_ = writeScript(dir_, QStringLiteral("mbsync"),
                               "#!/bin/sh\nd=$(dirname \"$0\")\nch=\"$2\"\n"
-                              "echo \"$ch\" >> \"$d/mbsync.log\"\n"
+                              "echo \"$ch\" >> \"$d/mbsync.log\"\necho mb-start >> \"$d/seq.log\"\n"
                               "[ -f \"$d/busy\" ] && echo \"$ch\" >> \"$d/overlap.log\"\n"
                               "echo \"$ch\" > \"$d/busy\"\necho $$ > \"$d/pid.$ch\"\n"
                               "trap 'echo term > \"$d/term.$ch\"; rm -f \"$d/busy\"; exit 143' TERM\n"
@@ -295,7 +296,7 @@ private slots:
         QVERIFY(waitStatus(w, QStringLiteral("b"), QStringLiteral("Completata")));
         QTRY_VERIFY_WITH_TIMEOUT(w.syncService()->state() != SyncService::Running, 10000);
         QVERIFY(dlg(w)->retryButton(QStringLiteral("a"))->isVisibleTo(dlg(w)));
-        QVERIFY(dlg(w)->retryButton(QStringLiteral("a"))->isEnabled());
+        QTRY_VERIFY_WITH_TIMEOUT(dlg(w)->retryButton(QStringLiteral("a"))->isEnabled(), 10000); // dopo mu index
         QVERIFY(!dlg(w)->retryButton(QStringLiteral("b"))->isVisibleTo(dlg(w)));
         const int before = runs(QStringLiteral("a"));
         QFile::remove(f(QStringLiteral("fail.a")));
@@ -337,6 +338,57 @@ private slots:
         QCOMPARE(runs(QStringLiteral("a")), 1);
         QCOMPARE(runs(QStringLiteral("b")), 1);
         QVERIFY(!w.syncService()->anySynced());
+    }
+
+    void testFirstSyncOutlivesTimeoutAndPeriodicTimerStartsAfterFailure() {
+        // I1: nessun tempo massimo per le prime sincronizzazioni
+        touch(QStringLiteral("gate.a"));
+        {
+            MainWindow w(makeConfig(), opts());
+            w.syncService()->setTimeout(std::chrono::milliseconds(300));
+            w.show();
+            QVERIFY(waitStatus(w, QStringLiteral("a"), QStringLiteral("In corso")));
+            QTest::qWait(1000); // ben oltre il tempo massimo
+            QCOMPARE(dlg(w)->statusText(QStringLiteral("a")), QStringLiteral("In corso"));
+            QFile::remove(f(QStringLiteral("gate.a")));
+            QVERIFY(waitStatus(w, QStringLiteral("a"), QStringLiteral("Completata")));
+            QVERIFY(waitStatus(w, QStringLiteral("b"), QStringLiteral("Completata")));
+            QVERIFY(!has(QStringLiteral("term.a")));
+        }
+    }
+    void testPeriodicTimerStartsAfterFailedStartupAndTickUpdatesRow() {
+        // I2
+        resetEnv();
+        touch(QStringLiteral("fail.a"));
+        touch(QStringLiteral("fail.b"));
+        MainWindow w(makeConfig(), opts());
+        w.show();
+        QVERIFY(waitStatus(w, QStringLiteral("a"), QStringLiteral("Errore")));
+        QVERIFY(waitStatus(w, QStringLiteral("b"), QStringLiteral("Errore")));
+        QTRY_VERIFY_WITH_TIMEOUT(w.syncService()->timerActive(), 5000);
+        QFile::remove(f(QStringLiteral("fail.a")));
+        QFile::remove(f(QStringLiteral("fail.b")));
+        w.syncService()->setInterval(std::chrono::milliseconds(300));
+        QVERIFY(waitStatus(w, QStringLiteral("a"), QStringLiteral("Completata")));
+    }
+    void testSyncNowDuringStartupDetectionDoesNotDropFirstAccount() {
+        MainWindow w(makeConfig(), opts());
+        w.show();
+        w.syncNow(); // prima della fine del rilevamento asincrono
+        QVERIFY(waitStatus(w, QStringLiteral("a"), QStringLiteral("Completata")));
+        QVERIFY(waitStatus(w, QStringLiteral("b"), QStringLiteral("Completata")));
+    }
+    void testMuIndexNeverOverlapsNextMbsync() {
+        MainWindow w(makeConfig(), opts());
+        w.show();
+        QVERIFY(waitStatus(w, QStringLiteral("b"), QStringLiteral("Completata")));
+        QTRY_VERIFY_WITH_TIMEOUT(w.syncService()->state() == SyncService::Idle && lines(QStringLiteral("seq.log")).count(QStringLiteral("mu-end")) >= 2, 10000);
+        bool inMu = false;
+        for (const QString& l : lines(QStringLiteral("seq.log"))) {
+            if (l == QLatin1String("mu-start")) inMu = true;
+            else if (l == QLatin1String("mu-end")) inMu = false;
+            else QVERIFY2(!inMu, "mbsync partito durante mu index");
+        }
     }
 
     // ---- vista del dialogo ----

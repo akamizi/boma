@@ -122,7 +122,7 @@ private:
     QStringList firstIds_;                      // ordine di visualizzazione
     QStringList queue_;                         // account ancora da sincronizzare all'avvio
     QString queueCur_;
-    bool queueActive_ = false, queueFailed_ = false;
+    bool queueActive_ = false, startupPending_ = false;
 
     void resolveMuRoot();
     void applyMuRoot(QString root, const QString& error);
@@ -138,7 +138,7 @@ private:
     void onPageLoaded(int added, const QString& error);
     void clearViewer();
     void startLoad(quint64 token, const MessageSummary& s);
-    void reindexAndRefresh();
+    void reindexAndRefresh(std::function<void()> done = {});
     void onSyncState(SyncService::State st, const QString& accountId, const QString& message);
     void compose(ReplyMode mode);
     ComposeWindow* openCompose(const OutgoingMessage* prefill);
