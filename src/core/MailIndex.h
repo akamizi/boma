@@ -75,6 +75,11 @@ private:
     QList<Account> m_accounts;
     void reindexAttempt(Callback cb, std::chrono::milliseconds waited, std::chrono::milliseconds delay);
     ProcessRunner m_runner;
+    // Ultima ricerca letta da mu: serve le pagine successive senza rilanciare mu.
+    static constexpr int kCacheChunk = 1000;
+    QList<MessageSummary> m_cache;
+    QString m_cacheQuery;
+    bool m_cacheValid = false, m_cacheComplete = false;
 };
 
 } // namespace boma
