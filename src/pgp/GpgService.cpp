@@ -185,7 +185,9 @@ void GpgService::verify(const QByteArray& signedPart, const QByteArray& signatur
         return;
     }
     const QStringList args{QStringLiteral("--batch"), QStringLiteral("--no-tty"), QStringLiteral("--status-fd"),
-                           QStringLiteral("2"), QStringLiteral("--verify"), sigPath, QStringLiteral("-")};
+                           QStringLiteral("2"), QStringLiteral("--no-auto-key-locate"),
+                           QStringLiteral("--no-auto-key-retrieve"), QStringLiteral("--verify"), sigPath,
+                           QStringLiteral("-")};
     start(args, signedPart, kVerifyTimeoutMs, [dir, done](Result r) {
         QString who;
         SignatureStatus s = SignatureStatus::Invalid;
@@ -197,7 +199,8 @@ void GpgService::verify(const QByteArray& signedPart, const QByteArray& signatur
 void GpgService::decrypt(const QByteArray& encrypted, std::function<void(bool, QByteArray, QString)> done,
                          std::function<void(SignatureStatus, QString)> innerSignature) {
     const QStringList args{QStringLiteral("--batch"), QStringLiteral("--no-tty"), QStringLiteral("--status-fd"),
-                           QStringLiteral("2"), QStringLiteral("--decrypt")};
+                           QStringLiteral("2"), QStringLiteral("--no-auto-key-locate"),
+                           QStringLiteral("--no-auto-key-retrieve"), QStringLiteral("--decrypt")};
     start(args, encrypted, kDecryptTimeoutMs, [done, innerSignature](Result r) {
         if (!done) return;
         if (r.startFailed) {

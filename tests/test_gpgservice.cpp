@@ -353,6 +353,16 @@ private slots:
         QVERIFY2(!args.contains("loopback"), args.constData());
         QVERIFY2(!args.contains("pinentry-mode"), args.constData());
         QVERIFY2(!args.contains("--homedir"), args.constData());
+        // nessuna rete: verify e decrypt non scaricano chiavi (entrambe le esecuzioni)
+        const QList<QByteArray> calls = QByteArray(args).replace("----\n", "\x01").split('\x01');
+        int checked = 0;
+        for (const QByteArray& c : calls) {
+            if (c.trimmed().isEmpty()) continue;
+            ++checked;
+            QVERIFY2(c.contains("--no-auto-key-retrieve\n"), c.constData());
+            QVERIFY2(c.contains("--no-auto-key-locate\n"), c.constData());
+        }
+        QCOMPARE(checked, 2);
     }
 
     void testDestroyWhileRunningKillsChildAndNeverCallsBack() {
