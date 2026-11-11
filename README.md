@@ -39,7 +39,7 @@ indicati sotto sono obiettivi di progetto, non risultati misurati.
 
 | Compito | Programma | Come lo usa Boma |
 |---|---|---|
-| Sincronizzazione IMAP bidirezionale | **mbsync** (pacchetto `isync`) | `mbsync -V <canale>` come processo asincrono: all'avvio, ogni 5 minuti e su richiesta; mai due insieme da Boma (blocco con `flock` su un file di Boma, valido tra istanze di Boma: un `mbsync` lanciato a mano o da cron non lo usa, vedi «Limiti noti»). Le password IMAP le fornisce `PassCmd` nel suo file di configurazione, Boma non le vede. |
+| Sincronizzazione IMAP bidirezionale | **mbsync** (pacchetto `isync`) | Il download periodico è del **cron** (`mbsync` seguito da `mu index`): Boma non sincronizza da solo. Il pulsante «Aggiorna» (F5) lancia `mbsync -V <canale>` per ogni account, uno alla volta, e poi `mu index`. Se il cron è in corso `mbsync` trova il canale bloccato e Boma lo segnala senza trattarlo come errore di rete. Le password IMAP le fornisce `PassCmd` nel suo file di configurazione, Boma non le vede. |
 | Archivio dei messaggi | **Maildir** (un file per messaggio) | Copia locale; Boma ci scrive direttamente solo per Inviata e Bozze (vedi sotto). |
 | Indice e ricerca | **mu** (pacchetto `mu4e`) | `mu index` dopo ogni sincronizzazione, `mu find` per le ricerche e per le non lette, `mu move` per spostare i messaggi nel cestino e per segnarli come letti quando si aprono. |
 | Invio | **msmtp** | Un account msmtp per ogni identità; le credenziali le recupera `passwordeval` nella sua configurazione. |
@@ -57,8 +57,7 @@ scritto e sincronizzato su disco in `tmp/`, poi pubblicato in `cur/` con `link()
 ## Funzioni della prima versione
 
 - Due account IMAP completamente indipendenti, con copia locale completa
-  (la prima sincronizzazione è lunga: ha avanzamento visibile e riprende dopo
-  un'interruzione).
+  (scaricata dal cron con `mbsync`, non da Boma).
 - Elenco per messaggio (senza conversazioni), vista delle non lette all'avvio,
   ricerca veloce.
 - Testo semplice, HTML visualizzabile senza immagini remote, allegati
@@ -209,7 +208,7 @@ ricerca):
 | Tasto | Azione |
 |---|---|
 | Ctrl+F oppure `/` | vai alla ricerca (campo vuoto = non lette) |
-| F5 | sincronizza ora |
+| F5 | aggiorna ora (`mbsync` + `mu index`) |
 | Ctrl+N | nuovo messaggio |
 | `R` / Maiusc+`R` | rispondi / rispondi a tutti |
 | `F` | inoltra |
@@ -218,26 +217,16 @@ ricerca):
 La finestra di scrittura non ha scorciatoie proprie: Firma, Cifra, Salva bozza,
 Invia e Chiudi sono pulsanti.
 
-## Prima sincronizzazione
+## Aggiornamento della posta
 
-All'avvio Boma controlla, per ogni account, se la Maildir contiene già almeno un
-messaggio. Se un account è vuoto (o la cartella non esiste) è una prima
-sincronizzazione: si apre la finestra «Prima sincronizzazione» con lo stato di
-ogni account (in attesa, in corso, completata, errore) e un pulsante «Riprova» in
-caso di errore. L'avanzamento mostra i contatori di cartelle di `mbsync`, non una
-percentuale.
-
-- La finestra si può chiudere: si nasconde soltanto e la sincronizzazione
-  continua; la si riapre dal pulsante «Prima sincronizzazione...» nella barra di
-  stato.
-- La prima sincronizzazione non ha tempo massimo (per circa 15 GB può durare
-  ore). Le sincronizzazioni successive hanno un limite di 10 minuti.
-- Gli account vengono sincronizzati uno alla volta. Un errore su un account non
-  ferma gli altri e non viene ritentato da solo: si usa «Riprova».
-- Chiudendo Boma il `mbsync` in corso riceve SIGTERM (SIGKILL dopo 3 secondi se
-  non risponde, poi un'attesa di al massimo 2 secondi); la chiusura può quindi
-  richiedere fino a 5 secondi in più, con l'interfaccia ferma. Al
-  riavvio `mbsync` riprende dal punto raggiunto, perché è incrementale.
+Boma non sincronizza né all'avvio né a intervalli: lo fa il cron (consigliato:
+`mbsync -a && mu index`). All'avvio mostra quello che l'indice di `mu` contiene.
+«Aggiorna» (F5) esegue `mbsync -V <canale>` per ogni account, uno alla volta
+(limite di 10 minuti ciascuno), poi `mu index` e rilegge l'elenco. Un errore su un
+account non ferma gli altri; nulla viene ritentato da solo. Se il cron sta già
+sincronizzando, la barra di stato lo dice. Alla chiusura il `mbsync` in corso
+riceve SIGTERM (SIGKILL dopo 3 secondi): al riavvio riprende, perché è
+incrementale.
 
 ## Cancellare i messaggi
 
@@ -301,9 +290,6 @@ non passa mai da Boma.
 - Niente conversazioni, niente ricerche salvate, nessuna gestione delle chiavi
   (si usa `gpg`).
 - Inoltrare non include gli allegati del messaggio originale.
-- Se una casella è davvero vuota, la finestra della prima sincronizzazione si
-  riapre a ogni avvio finché la Maildir locale non contiene almeno un messaggio
-  (vale anche per un account rimasto vuoto dopo un'interruzione).
 - `mbsync` non è lanciato in un proprio gruppo di processi: all'uscita il segnale
   arriva al processo `mbsync`; non è verificato che raggiunga anche i suoi figli
   (ad esempio `PassCmd` o `ssh`) con un `mbsync` reale.
@@ -313,9 +299,10 @@ non passa mai da Boma.
   (limite del formato PGP/MIME).
 - Se all'avvio `mu info store` fallisce, la radice di `mu` non viene rilevata di
   nuovo finché Boma non viene riavviato.
-- Il blocco che impedisce due `mbsync` insieme vale solo tra istanze di Boma:
-  un `mbsync` lanciato a mano o da cron sulle stesse cartelle non lo rispetta
-  (Boma non lo vede). Meglio non sincronizzare da fuori mentre Boma è aperto.
+- Boma non ha un blocco proprio: se «Aggiorna» e il cron si sovrappongono è `mbsync`
+  stesso a rifiutare il secondo, e Boma lo segnala.
+- Gli `mu move` (segna come letto, Elimina) possono avvenire mentre il cron sta
+  eseguendo `mbsync`: `mbsync` li riprende alla sincronizzazione successiva.
 - Se un altro `mu` tiene occupato l'indice (ad esempio un `mu index` lungo),
   segna come letto, Elimina e l'aggiornamento dell'indice dopo l'invio riprovano
   per al massimo 2 minuti, poi mostrano un errore: nulla viene spostato.

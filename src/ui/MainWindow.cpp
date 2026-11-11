@@ -48,12 +48,6 @@ void offThread(MainWindow* self, W work, D deliver) {
     });
 }
 
-QString defaultLockPath() {
-    QString d = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
-    if (d.isEmpty()) d = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-    return d + QStringLiteral("/boma-sync.lock");
-}
-
 } // namespace
 
 MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, QWidget* parent)
@@ -67,7 +61,7 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     index_->setAccounts(config_.accounts());
     actions_ = new MailActions(this, opts_.muProgram);
     actions_->setMuHome(opts_.muHome);
-    sync_ = new SyncService(runner_, config_, opts_.lockPath.isEmpty() ? defaultLockPath() : opts_.lockPath, this);
+    sync_ = new SyncService(runner_, config_, this);
     sync_->setMbsyncProgram(opts_.mbsyncProgram);
     sender_ = new Sender(this);
     sender_->setAccounts(config_.accounts());
@@ -87,8 +81,8 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     search_ = new QLineEdit(central);
     search_->setPlaceholderText(tr("Cerca (vuoto = non lette)   [Ctrl+F o /]"));
     search_->setClearButtonEnabled(true);
-    syncBtn_ = new QPushButton(tr("Sincronizza"), central);
-    syncBtn_->setToolTip(tr("Sincronizza ora (F5)"));
+    syncBtn_ = new QPushButton(tr("Aggiorna"), central);
+    syncBtn_->setToolTip(tr("Scarica la posta e aggiorna l'elenco (F5)"));
     searchRow->addWidget(search_, 1);
     searchRow->addWidget(syncBtn_);
     top->addLayout(searchRow);
@@ -146,11 +140,6 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     progress_->setMaximumWidth(160);
     progress_->setTextVisible(false);
     progress_->hide();
-    firstBtn_ = new QPushButton(tr("Prima sincronizzazione..."), this);
-    firstBtn_->setFlat(true);
-    firstBtn_->setToolTip(tr("Mostra l'avanzamento della prima sincronizzazione"));
-    firstBtn_->hide();
-    statusBar()->addPermanentWidget(firstBtn_);
     statusBar()->addPermanentWidget(syncLabel_);
     statusBar()->addPermanentWidget(progress_);
 
@@ -187,36 +176,6 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     connect(delBtn_, &QPushButton::clicked, this, &MainWindow::deleteSelected);
     connect(syncBtn_, &QPushButton::clicked, this, &MainWindow::syncNow);
     connect(sync_, &SyncService::stateChanged, this, &MainWindow::onSyncState);
-    connect(firstBtn_, &QPushButton::clicked, this, &MainWindow::showFirstRunDialog);
-    connect(sync_, &SyncService::accountStarted, this, [this](const QString& id) {
-        if (!firstStates_.contains(id)) return;
-        FirstRunState st;
-        st.status = FirstRunState::Running;
-        setFirstState(id, st);
-        syncLabel_->setText(tr("Prima sincronizzazione di %1...").arg(accountFor(id).name));
-    });
-    connect(sync_, &SyncService::accountFinished, this, [this](const QString& id, bool ok, const QString& msg) {
-        if (!firstStates_.contains(id)) return;
-        FirstRunState st;
-        st.status = ok ? FirstRunState::Done : FirstRunState::Failed;
-        st.error = msg;
-        setFirstState(id, st);
-        if (ok) sync_->setNoTimeout(id, false); // finita la prima sync, valgono i tempi normali
-    });
-    connect(sync_, &SyncService::progress, this, [this](const QString& id, int done, int total) {
-        if (firstStates_.contains(id)) {
-            // contatori di mbsync (cartelle/canali), non dati: solo testo "N/M", barra occupata
-            FirstRunState st = firstStates_.value(id);
-            st.status = FirstRunState::Running;
-            st.done = done;
-            st.total = total;
-            setFirstState(id, st);
-            syncLabel_->setText(tr("Prima sincronizzazione di %1: %2/%3").arg(accountFor(id).name).arg(done).arg(total));
-            return;
-        }
-        progress_->setRange(0, total > 0 ? total : 0);
-        progress_->setValue(done);
-    });
     // All'uscita il mbsync in corso e' fermato con SIGTERM (mai lasciato orfano);
     // il contesto `this` scollega la callback se la finestra sparisce prima.
     connect(qApp, &QCoreApplication::aboutToQuit, this, [this]() { sync_->shutdown(); });
@@ -262,10 +221,6 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
         stack_->setCurrentWidget(view_);
         applyQuery(QString());
         checkSpecialFolders();
-        if (opts_.autoSync) {
-            startupPending_ = true;
-            QTimer::singleShot(0, this, &MainWindow::startupSync);
-        }
     }
 }
 
@@ -308,7 +263,7 @@ void MainWindow::checkSpecialFolders() {
         [accounts]() {
             QStringList bad;
             for (const Account& a : accounts) {
-                if (a.maildirRoot.isEmpty() || SyncService::isFirstSync(a.maildirRoot)) continue;
+                if (a.maildirRoot.isEmpty()) continue;
                 const QList<QPair<QString, QString>> folders{{QObject::tr("Inviata (sentFolder)"), a.sentFolder},
                                                               {QObject::tr("Bozze (draftsFolder)"), a.draftsFolder},
                                                               {QObject::tr("Cestino (trashFolder)"), a.trashFolder}};
@@ -340,103 +295,6 @@ void MainWindow::checkSpecialFolders() {
             box->setModal(false);
             box->show();
         });
-}
-
-// ---- prima sincronizzazione ----
-
-void MainWindow::startupSync() {
-    if (config_.isEmpty()) return;
-    // Controllo asincrono ed economico: per ogni account si cerca UN file di messaggio e
-    // ci si ferma al primo trovato (mai una visita dell'intera Maildir da 15 GB).
-    const QList<Account> accounts = config_.accounts();
-    offThread<QStringList>(
-        this,
-        [accounts]() {
-            QStringList ids;
-            for (const Account& a : accounts)
-                if (SyncService::isFirstSync(a.maildirRoot)) ids << a.id;
-            return ids;
-        },
-        [this](QStringList ids) { beginStartupQueue(ids); });
-}
-
-void MainWindow::beginStartupQueue(const QStringList& firstIds) {
-    startupPending_ = false;
-    if (firstIds.isEmpty()) {
-        sync_->start();
-        syncNow();
-        return;
-    }
-    firstIds_ = firstIds;
-    firstStates_.clear();
-    for (const QString& id : firstIds) firstStates_.insert(id, FirstRunState());
-    queue_ = firstIds;
-    for (const Account& a : config_.accounts())
-        if (!firstIds.contains(a.id)) queue_ << a.id; // gli altri, dopo, senza dialogo
-    queueActive_ = true;
-    // nessun tempo massimo per i sync di avvio (15 GB): mbsync e' interrompibile
-    for (const QString& id : std::as_const(queue_)) sync_->setNoTimeout(id, true);
-    ensureFirstRunDialog()->show();
-    updateFirstRunUi();
-    runNextQueued();
-}
-
-// Un account alla volta tramite SyncService (che serializza e prende il flock);
-// un errore su un account non ferma gli altri, ne' si riprova da soli.
-void MainWindow::runNextQueued() {
-    if (queue_.isEmpty()) {
-        queueActive_ = false;
-        queueCur_.clear();
-        sync_->start(); // anche dopo errori: il tick riprova e aggiorna lo stato (un tentativo per intervallo)
-        updateFirstRunUi();
-        return;
-    }
-    queueCur_ = queue_.takeFirst();
-    sync_->syncAccount(queueCur_);
-}
-
-void MainWindow::retryFirstRun(const QString& id) {
-    // Mai due sincronizzazioni insieme: se ne e' in corso una (o la coda iniziale) non si fa nulla.
-    if (!firstStates_.contains(id) || queueActive_ || sync_->state() == SyncService::Running) return;
-    queueCur_ = id;
-    sync_->setNoTimeout(id, true);
-    sync_->syncAccount(id);
-}
-
-void MainWindow::setFirstState(const QString& id, const FirstRunState& st) {
-    firstStates_[id] = st;
-    if (firstRun_) firstRun_->setState(id, st);
-    updateFirstRunUi();
-}
-
-void MainWindow::updateFirstRunUi() {
-    bool allDone = !firstStates_.isEmpty();
-    for (const FirstRunState& s : std::as_const(firstStates_))
-        allDone = allDone && s.status == FirstRunState::Done;
-    firstBtn_->setVisible(!firstStates_.isEmpty() && !allDone);
-    if (firstRun_) firstRun_->setRetryAllowed(!queueActive_ && sync_->state() != SyncService::Running);
-}
-
-FirstRunDialog* MainWindow::ensureFirstRunDialog() {
-    if (!firstRun_) {
-        auto* d = new FirstRunDialog(this);
-        QList<QPair<QString, QString>> rows;
-        for (const QString& id : std::as_const(firstIds_)) rows.append({id, accountFor(id).name});
-        d->setAccounts(rows);
-        for (auto it = firstStates_.cbegin(); it != firstStates_.cend(); ++it) d->setState(it.key(), it.value());
-        connect(d, &FirstRunDialog::retryRequested, this, &MainWindow::retryFirstRun);
-        firstRun_ = d;
-        updateFirstRunUi();
-    }
-    return firstRun_;
-}
-
-void MainWindow::showFirstRunDialog() {
-    if (firstStates_.isEmpty()) return;
-    FirstRunDialog* d = ensureFirstRunDialog();
-    d->show();
-    d->raise();
-    d->activateWindow();
 }
 
 QList<ComposeWindow*> MainWindow::composers() const {
@@ -838,70 +696,54 @@ void MainWindow::deleteSelected() {
 }
 
 void MainWindow::syncNow() {
-    // durante il rilevamento iniziale e la coda di avvio la sincronizzazione e' gia' pilotata
-    if (config_.isEmpty() || startupPending_ || queueActive_) return;
+    // La sincronizzazione periodica e' del cron; qui solo "Aggiorna ora":
+    // mbsync e poi mu index (reindexAndRefresh), uno alla volta.
+    if (config_.isEmpty() || sync_->state() == SyncService::Running || reindexing_) return;
     statusBar()->clearMessage();
     sync_->syncAll();
 }
 
-void MainWindow::onSyncState(SyncService::State st, const QString& accountId, const QString& message) {
-    bool reindexing = false;
-    QPointer<MainWindow> selfp(this);
-    const std::function<void()> cont = [selfp]() {
-        if (selfp && selfp->queueActive_ && selfp->sync_->state() != SyncService::Running) selfp->runNextQueued();
-    };
+void MainWindow::onSyncState(SyncService::State st, const QString&, const QString& message) {
     switch (st) {
     case SyncService::Running:
-        syncWasRunning_ = true;
-        syncLabel_->setText(accountId.isEmpty() ? tr("Sincronizzazione in corso...")
-                                                 : tr("Sincronizzazione in corso: %1").arg(accountId));
+        syncBtn_->setEnabled(false);
+        syncLabel_->setText(tr("Aggiornamento in corso..."));
         progress_->setRange(0, 0);
         progress_->show();
         break;
     case SyncService::Idle:
         progress_->hide();
-        if (opts_.autoSync && !queueActive_ && !sync_->timerActive()) sync_->start(); // dopo un errore iniziale, al primo successo
         lastSync_ = QDateTime::currentDateTime();
-        syncLabel_->setText(tr("Sincronizzato alle %1").arg(lastSync_.toString(QStringLiteral("HH:mm"))));
-        if (syncWasRunning_) {
-            syncWasRunning_ = false;
-            reindexing = true;
-            reindexAndRefresh(queueActive_ ? cont : std::function<void()>());
-        }
+        syncLabel_->setText(tr("Aggiornato alle %1").arg(lastSync_.toString(QStringLiteral("HH:mm"))));
+        syncLabel_->setToolTip(QString());
+        runReindex();
         break;
     case SyncService::Failed:
-        // un account fallito non deve nascondere la posta scaricata dagli altri
-        if (syncWasRunning_ && sync_->anySynced()) {
-            reindexing = true;
-            reindexAndRefresh(queueActive_ ? cont : std::function<void()>());
-        }
-        syncWasRunning_ = false;
         progress_->hide();
-        // senza rete mbsync esce con errore: nessun messaggio ripetuto, solo lo stato
-        syncLabel_->setText(tr("Offline o sincronizzazione non riuscita%1%2")
-                                .arg(lastSync_.isValid() ? tr(" (ultima sincronizzazione %1)").arg(lastSync_.toString(QStringLiteral("HH:mm")))
-                                                         : tr(" (mai sincronizzato)"),
-                                     message.isEmpty() ? QString() : QStringLiteral(": ") + message.left(160)));
+        // un account fallito non deve nascondere la posta scaricata dagli altri
+        if (sync_->anySynced()) runReindex();
+        else syncBtn_->setEnabled(true);
+        if (sync_->busyElsewhere())
+            syncLabel_->setText(tr("Sincronizzazione gia' in corso altrove (cron): riprova tra poco"));
+        else
+            syncLabel_->setText(tr("Aggiornamento non riuscito%1%2")
+                                    .arg(lastSync_.isValid() ? tr(" (ultimo %1)").arg(lastSync_.toString(QStringLiteral("HH:mm")))
+                                                             : QString(),
+                                         message.isEmpty() ? QString() : QStringLiteral(": ") + message.left(160)));
         syncLabel_->setToolTip(message);
         break;
     }
-    if (st == SyncService::Failed) {
-        // errore senza account (lock occupato, ...): va all'account che si stava avviando
-        if (accountId.isEmpty() && firstStates_.contains(queueCur_)) {
-            FirstRunState fs;
-            fs.status = FirstRunState::Failed;
-            fs.error = message;
-            setFirstState(queueCur_, fs);
-        }
-    }
-    if (st != SyncService::Running && queueActive_) {
-        if (reindexing) {
-            // il prossimo mbsync parte solo a mu index finito (niente sovrapposizioni): vedi cont
-        } else {
-            runNextQueued();
-        }
-    }
-    updateFirstRunUi();
+}
+
+void MainWindow::runReindex() {
+    reindexing_ = true;
+    syncBtn_->setEnabled(false);
+    QPointer<MainWindow> self(this);
+    reindexAndRefresh([self]() {
+        if (!self) return;
+        self->reindexing_ = false;
+        self->syncBtn_->setEnabled(true);
+    });
 }
 
 // ---- scrittura e invio ----
