@@ -18,6 +18,7 @@
 #include <QProcessEnvironment>
 #include <QTemporaryDir>
 #include <QMenu>
+#include <QSignalSpy>
 #include <QToolButton>
 #include <QTest>
 #include <sys/stat.h>
@@ -1047,6 +1048,28 @@ private slots:
         QCOMPARE(asked.size(), askedBefore); // nemmeno chiesto
         QCOMPARE(opened.size(), 3);
         QVERIFY(n.titles.contains(QStringLiteral("Link non aperto")));
+    }
+    // Dopo l'invio e l'indicizzazione riuscita l'elenco viene ricaricato.
+    void testListRefreshedAfterReindexAfterSend() {
+        MainWindow w(makeConfig(false), opts());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        QSignalSpy spy(w.sender(), &Sender::reindexFinished);
+        w.newButton()->click();
+        QPointer<ComposeWindow> c = firstComposer(w);
+        QVERIFY(c);
+        c->toEdit()->setText(QStringLiteral("bob@x.test"));
+        c->bodyEdit()->setPlainText(QStringLiteral("ciao"));
+        resetLogs();
+        c->sendButton()->click();
+        QVERIFY(spy.wait(20000));
+        QVERIFY(spy.first().at(0).toBool());
+        QVERIFY(QTest::qWaitFor([&] {
+            const QString l = log(QStringLiteral("mu.log"));
+            const int i = l.indexOf(QStringLiteral("index"));
+            return i >= 0 && l.indexOf(QStringLiteral("find"), i) > i;
+        }, 5000));
+        QVERIFY(waitRows(w, 2));
     }
     void testSendUnsignedNeedsExplicitConfirmation() {
         MainWindow w(makeConfig(true), opts());

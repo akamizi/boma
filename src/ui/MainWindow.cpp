@@ -221,8 +221,11 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     // il contesto `this` scollega la callback se la finestra sparisce prima.
     connect(qApp, &QCoreApplication::aboutToQuit, this, [this]() { sync_->shutdown(); });
     connect(sender_, &Sender::reindexFinished, this, [this](bool ok, const QString& err) {
-        if (!ok)
+        if (!ok) {
             statusBar()->showMessage(tr("Attenzione: aggiornamento dell'indice dopo l'invio non riuscito: %1").arg(err));
+            return;
+        }
+        refreshList(); // il messaggio in Inviata e' ora cercabile (selezione mantenuta)
     });
 
     // scorciatoie: i tasti semplici non scattano mentre si scrive nel campo di ricerca
@@ -594,21 +597,31 @@ void MainWindow::markReadAfterOpen(const MessageSummary& s) {
             self->statusBar()->showMessage(tr("Impossibile segnare come letto: %1").arg(err), 10000);
             return;
         }
-        // mu sposta i file di new/ in cur/: ririsolve il percorso (sola lettura)
-        QString newPath;
-        if (s.path.contains(QStringLiteral("/new/"))) {
-            const int slash = s.path.lastIndexOf(QLatin1Char('/'));
-            const QString base = s.path.mid(slash + 1).section(QLatin1Char(':'), 0, 0);
-            const QString curDir = s.path.left(s.path.lastIndexOf(QStringLiteral("/new/"))) + QStringLiteral("/cur");
-            const QStringList found = QDir(curDir).entryList({base + QLatin1Char('*')}, QDir::Files);
-            if (!found.isEmpty()) newPath = curDir + QLatin1Char('/') + found.first();
+        auto apply = [self, s](const QString& newPath) {
+            if (!self) return;
+            const int row = self->rowForPath(s.path);
+            if (row >= 0) self->model_->markReadLocal(row, newPath);
+            if (self->curSummary_.path == s.path) {
+                self->curSummary_.unread = false;
+                if (!newPath.isEmpty()) self->curSummary_.path = newPath;
+            }
+        };
+        if (!s.path.contains(QStringLiteral("/new/"))) {
+            apply(QString());
+            return;
         }
-        const int row = self->rowForPath(s.path);
-        if (row >= 0) self->model_->markReadLocal(row, newPath);
-        if (self->curSummary_.path == s.path) {
-            self->curSummary_.unread = false;
-            if (!newPath.isEmpty()) self->curSummary_.path = newPath;
-        }
+        // mu sposta i file di new/ in cur/: ririsolve il percorso (sola lettura).
+        // La lettura di cur/ (migliaia di file) avviene fuori dal thread GUI.
+        offThread<QString>(
+            self.data(),
+            [path = s.path]() {
+                const int slash = path.lastIndexOf(QLatin1Char('/'));
+                const QString base = path.mid(slash + 1).section(QLatin1Char(':'), 0, 0);
+                const QString curDir = path.left(path.lastIndexOf(QStringLiteral("/new/"))) + QStringLiteral("/cur");
+                const QStringList found = QDir(curDir).entryList({base + QLatin1Char('*')}, QDir::Files);
+                return found.isEmpty() ? QString() : curDir + QLatin1Char('/') + found.first();
+            },
+            apply);
     });
 }
 
