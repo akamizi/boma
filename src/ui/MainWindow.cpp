@@ -899,6 +899,11 @@ void MainWindow::applyMuRoot(QString root, const QString& error)
     // Elimina solo con radice affidabile; l'euristica serve alle sole viste delle cartelle
     actions_->setMuRoot(muRootReliable_ ? root : QString());
     folders_->setMuRoot(root);
+    // "Non lette" esclude Cestino/Bozze/Inviata (cartelle relative alla radice di mu).
+    // Con una radice dedotta male le esclusioni non trovano nulla: nessun danno.
+    const bool changed = index_->muRoot() != root;
+    index_->setMuRoot(root);
+    if (changed && model_->query().isEmpty()) refreshList();
     if (!warning.isEmpty()) statusBar()->showMessage(warning);
 }
 

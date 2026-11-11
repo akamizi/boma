@@ -1,24 +1,11 @@
 #include "ui/FolderPane.h"
 
-#include <QDir>
+#include "core/MailIndex.h"
 
 namespace boma {
 
 QString FolderPane::folderQuery(const QString& muRoot, const QString& maildirRoot, const QString& folder) {
-    QString rel = QDir::cleanPath(QStringLiteral("/") + folder);
-    const QString root = QDir::cleanPath(muRoot);
-    const QString acc = QDir::cleanPath(maildirRoot);
-    if (acc == root) {
-        // account = radice di mu
-    } else if (root == QLatin1String("/") && acc.startsWith(QLatin1Char('/'))) {
-        rel = acc + rel;
-    } else if (acc.startsWith(root + QLatin1Char('/'))) {
-        rel = acc.mid(root.size()) + rel;
-    } else {
-        return {};
-    }
-    rel.replace(QLatin1Char('\\'), QStringLiteral("\\\\")).replace(QLatin1Char('"'), QStringLiteral("\\\""));
-    return QStringLiteral("maildir:\"%1\"").arg(rel);
+    return MailIndex::maildirQuery(muRoot, maildirRoot, folder);
 }
 
 FolderPane::FolderPane(const Config& config, QWidget* parent) : QTreeView(parent), config_(config) {

@@ -10,8 +10,9 @@ namespace boma {
 using Callback = std::function<void(bool ok, QString error)>;
 
 // Note:
-// - mu scarta la bandiera S quando sposta nel cestino: un messaggio letto puo'
-//   risultare non letto nel Cestino.
+// - Lo spostamento nel cestino usa `mu move --change-name --flags=+S`: nome
+//   nuovo (senza il ",U=" di mbsync della cartella di origine, che romperebbe la
+//   sincronizzazione) e bandiera S (letto; mu altrimenti la toglierebbe).
 // - markRead su un messaggio in new/ sposta il file in cur/ e la callback non
 //   restituisce il nuovo percorso: chi concatena azioni deve ririsolvere il
 //   percorso tramite mu.

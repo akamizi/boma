@@ -46,6 +46,15 @@ public:
     void setMuHome(const QString& h) { m_muHome = h; }
     // Usati per ricavare accountId dal percorso del messaggio.
     void setAccounts(const QList<Account>& a) { m_accounts = a; }
+    // Radice Maildir di mu: serve a escludere Cestino, Bozze e Inviata di ogni
+    // account dalla vista "Non lette". Vuota = nessuna esclusione per cartella.
+    void setMuRoot(const QString& r) { m_muRoot = r; }
+    QString muRoot() const { return m_muRoot; }
+    // Query della vista "Non lette" (con le esclusioni per cartella).
+    QString unreadQuery() const;
+    // Query di una cartella `maildir:"/<rel>"`, relativa alla radice di mu.
+    // Vuota se la Maildir dell'account non e' sotto la radice o la cartella e' vuota.
+    static QString maildirQuery(const QString& muRoot, const QString& maildirRoot, const QString& folder);
 
     void search(const QString& query, int offset, int limit, SearchCallback cb);
     void unread(int offset, int limit, SearchCallback cb);
@@ -61,7 +70,7 @@ public:
 private:
     QStringList baseArgs(const QString& sub) const;
     QString accountFor(const QString& path) const;
-    QString m_mu, m_muHome;
+    QString m_mu, m_muHome, m_muRoot;
     QList<Account> m_accounts;
     ProcessRunner m_runner;
 };

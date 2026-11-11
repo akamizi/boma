@@ -70,7 +70,14 @@ void MailActions::moveToTrash(const QString& path, const Account& account, Callb
         return refuse(QStringLiteral("La Maildir dell'account (%1) non e' sotto la radice di mu (%2): spostamento rifiutato")
                           .arg(account.maildirRoot, m_muRoot));
     }
-    runMu({QStringLiteral("move"), path, prefix + QLatin1Char('/') + parts.join(QLatin1Char('/'))}, std::move(cb));
+    // --change-name: il nome nel cestino NON deve conservare il ",U=<uid>" assegnato da
+    // mbsync alla cartella di origine (mbsync lo rifiuterebbe: "UID beyond highest
+    // assigned"/"duplicate UID", uscendo con errore a ogni giro e cancellando il
+    // messaggio dalla posta in arrivo remota senza caricarlo nel cestino remoto).
+    // --flags=+S: mu toglierebbe la bandiera S; un messaggio eliminato e' letto.
+    runMu({QStringLiteral("move"), path, prefix + QLatin1Char('/') + parts.join(QLatin1Char('/')),
+           QStringLiteral("--change-name"), QStringLiteral("--flags=+S")},
+          std::move(cb));
 }
 
 } // namespace boma

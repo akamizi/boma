@@ -150,6 +150,13 @@ class T : public QObject {
         return o;
     }
     QString log(const QString& name) const { return QString::fromUtf8(readFile(dir_ + QLatin1Char('/') + name)); }
+    // Solo le invocazioni di `mu move` (le query di find possono citare le cartelle).
+    QString moves() const {
+        QStringList out;
+        for (const QString& l : log(QStringLiteral("mu.log")).split(QLatin1Char('\n')))
+            if (l.startsWith(QLatin1String("move "))) out << l;
+        return out.join(QLatin1Char('\n'));
+    }
     void resetLogs() {
         for (const char* f : {"mu.log", "count", "argv", "stdin", "mbsync.log", "gpg.log", "slow", "slowinfo", "mbok", "mba", "info.txt"}) QFile::remove(dir_ + QLatin1Char('/') + QLatin1String(f));
     }
@@ -299,8 +306,8 @@ private slots:
         QVERIFY(w.deleteButton()->styleSheet() != w.replyButton()->styleSheet());
         QVERIFY(w.replyButton()->styleSheet().isEmpty());
         w.deleteButton()->click();
-        QVERIFY(QTest::qWaitFor([&] { return log(QStringLiteral("mu.log")).contains(QStringLiteral("/Trash")); }, 10000));
-        QVERIFY(log(QStringLiteral("mu.log")).contains(QStringLiteral("%1 /a/Trash").arg(pathB_)));
+        QVERIFY(QTest::qWaitFor([&] { return moves().contains(QStringLiteral("/Trash")); }, 10000));
+        QVERIFY(moves().contains(QStringLiteral("%1 /a/Trash").arg(pathB_)));
         QVERIFY(waitRows(w, 1)); // tolto dall'elenco
         QCOMPARE(asked, 0);
         QVERIFY(n.titles.isEmpty()); // nessuna finestra di dialogo
@@ -316,6 +323,20 @@ private slots:
     void testFolderQueryWithSlashRoot() {
         QCOMPARE(FolderPane::folderQuery(QStringLiteral("/"), QStringLiteral("/m/a"), QStringLiteral("INBOX")),
                  QStringLiteral("maildir:\"/m/a/INBOX\""));
+    }
+    void testUnreadQueryExcludesSpecialFolders() {
+        MailIndex idx;
+        Account a; a.id = "a"; a.maildirRoot = "/m/a"; a.trashFolder = "Trash"; a.draftsFolder = "Drafts"; a.sentFolder = "Sent";
+        Account b; b.id = "b"; b.maildirRoot = "/altrove/b"; b.trashFolder = "Cestino"; // fuori dalla radice: nessuna esclusione
+        idx.setAccounts({a, b});
+        QCOMPARE(idx.unreadQuery(), QStringLiteral("flag:unread AND NOT flag:trashed")); // radice ignota
+        idx.setMuRoot("/m");
+        QCOMPARE(idx.unreadQuery(), QStringLiteral("flag:unread AND NOT flag:trashed AND NOT maildir:\"/a/Trash\" "
+                                                   "AND NOT maildir:\"/a/Drafts\" AND NOT maildir:\"/a/Sent\""));
+        // la finestra principale passa la radice all'indice: la vista "Non lette" esclude le cartelle speciali
+        MainWindow w(makeConfig(), optsRoot());
+        QVERIFY(QTest::qWaitFor([&] { return log(QStringLiteral("mu.log")).contains(QStringLiteral("flag:unread")); }, 10000));
+        QVERIFY(log(QStringLiteral("mu.log")).contains(QStringLiteral("AND NOT maildir:\"/a/Trash\" AND NOT maildir:\"/a/Drafts\"")));
     }
     void testParseStoreRoot() {
         const QByteArray t = "+---+---+\n| property | value |\n+---+---+\n| maildir           | /x/y/mail/   |\n"
@@ -392,7 +413,7 @@ private slots:
         QVERIFY(!w.deleteButton()->isEnabled());
         w.deleteSelected(); // anche dalla scorciatoia: nessun secondo spostamento
         QVERIFY(waitRows(w, 1));
-        QCOMPARE(countLines(log(QStringLiteral("mu.log")), QStringLiteral("/a/Trash")), 1);
+        QCOMPARE(countLines(moves(), QStringLiteral("/a/Trash")), 1);
     }
     void testDecryptInFlightGuard() {
         listUnread({jsonMsg(pathEnc_, QStringLiteral("enc1@x"), QStringLiteral("Alice"), QStringLiteral("Cifrato"), false)});
@@ -519,7 +540,7 @@ private slots:
         key(Qt::Key_F5);
         QTRY_VERIFY(log(QStringLiteral("mbsync.log")).contains(QStringLiteral("-V")));
         key(Qt::Key_Delete);
-        QTRY_VERIFY(log(QStringLiteral("mu.log")).contains(QStringLiteral("/a/Trash")));
+        QTRY_VERIFY(moves().contains(QStringLiteral("/a/Trash")));
     }
     void testReplyBuilderSanitisesAndCaps() {
         const Config cfg = makeConfig();
@@ -557,12 +578,12 @@ private slots:
         w.deleteButton()->click();
         QVERIFY(w.statusBar()->currentMessage().contains(QStringLiteral("Cancella disponibile dopo il rilevamento della radice mu")));
         QTest::qWait(200);
-        QVERIFY(!log(QStringLiteral("mu.log")).contains(QStringLiteral("Trash")));
+        QVERIFY(!moves().contains(QStringLiteral("Trash")));
         QCOMPARE(w.model()->rowCount(), 2);
         QVERIFY(QTest::qWaitFor([&] { return !folderQueries(w).isEmpty(); }, 10000));
         w.deleteButton()->click();
         QVERIFY(waitRows(w, 1));
-        QVERIFY(log(QStringLiteral("mu.log")).contains(QStringLiteral("/a/Trash")));
+        QVERIFY(moves().contains(QStringLiteral("/a/Trash")));
     }
     void testDeleteRefusedInFallbackMode() {
         MainWindow w(makeConfig(), opts()); // mu info store fallisce
@@ -578,7 +599,7 @@ private slots:
         QVERIFY(!n.texts.isEmpty());
         QVERIFY(n.texts.first().contains(QStringLiteral("muRoot=")));
         QTest::qWait(200);
-        QVERIFY(!log(QStringLiteral("mu.log")).contains(QStringLiteral("Trash")));
+        QVERIFY(!moves().contains(QStringLiteral("Trash")));
         QCOMPARE(w.model()->rowCount(), 2);
     }
     void testDeleteKeepsUnrelatedSelectionMadeDuringMove() {
@@ -607,7 +628,7 @@ private slots:
         w.deleteButton()->click();
         QVERIFY(QTest::qWaitFor([&] { return !n.texts.isEmpty(); }, 10000));
         QVERIFY(n.texts.first().contains(QStringLiteral("radice di mu")));
-        QVERIFY(!log(QStringLiteral("mu.log")).contains(QStringLiteral("Trash")));
+        QVERIFY(!moves().contains(QStringLiteral("Trash")));
         QVERIFY(w.deleteButton()->isEnabled()); // di nuovo utilizzabile
         QCOMPARE(w.model()->rowCount(), 2);
     }

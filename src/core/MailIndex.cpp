@@ -125,9 +125,44 @@ void MailIndex::search(const QString& query, int offset, int limit, SearchCallba
                  });
 }
 
+QString MailIndex::maildirQuery(const QString& muRoot, const QString& maildirRoot, const QString& folder)
+{
+    if (folder.trimmed().isEmpty() || muRoot.isEmpty())
+        return {};
+    QString rel = QDir::cleanPath(QStringLiteral("/") + folder.trimmed());
+    if (rel == QLatin1String("/"))
+        return {};
+    const QString root = QDir::cleanPath(muRoot);
+    const QString acc = QDir::cleanPath(maildirRoot);
+    if (acc == root) {
+        // account = radice di mu
+    } else if (root == QLatin1String("/") && acc.startsWith(QLatin1Char('/'))) {
+        rel = acc + rel;
+    } else if (acc.startsWith(root + QLatin1Char('/'))) {
+        rel = acc.mid(root.size()) + rel;
+    } else {
+        return {};
+    }
+    rel.replace(QLatin1Char('\\'), QStringLiteral("\\\\")).replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    return QStringLiteral("maildir:\"%1\"").arg(rel);
+}
+
+QString MailIndex::unreadQuery() const
+{
+    // Cestino, Bozze (salvate con la sola bandiera D) e Inviata non sono "da leggere".
+    QString q = QStringLiteral("flag:unread AND NOT flag:trashed");
+    for (const Account& a : m_accounts)
+        for (const QString& f : {a.trashFolder, a.draftsFolder, a.sentFolder}) {
+            const QString m = maildirQuery(m_muRoot, a.maildirRoot, f);
+            if (!m.isEmpty())
+                q += QStringLiteral(" AND NOT ") + m;
+        }
+    return q;
+}
+
 void MailIndex::unread(int offset, int limit, SearchCallback cb)
 {
-    search(QStringLiteral("flag:unread AND NOT flag:trashed"), offset, limit, std::move(cb));
+    search(unreadQuery(), offset, limit, std::move(cb));
 }
 
 void MailIndex::reindex(const QString&, Callback cb)
