@@ -34,6 +34,24 @@ public:
     // (anche se un account successivo e' fallito): la posta nuova va indicizzata.
     bool anySynced() const { return m_anySynced; }
 
+    // Arresto per l'uscita dell'applicazione: il mbsync in corso riceve SIGTERM
+    // (arresto ordinato; mbsync e' sicuro da interrompere e al prossimo avvio
+    // riprende in modo incrementale) e, solo se non esce entro 3 s, SIGKILL.
+    // Poi rilascia il lock. Idempotente; dopo l'arresto non parte piu' nulla.
+    void shutdown();
+
+    // "Prima sincronizzazione": la Maildir non contiene nemmeno un file di
+    // messaggio (radice assente, o solo cartelle vuote, o solo file fuori da
+    // cur/ e new/ come .uidvalidity e .mbsyncstate). Vale solo la presenza di
+    // UN file in una cartella cur/ o new/: la ricerca si ferma al primo trovato
+    // e non percorre mai l'intera Maildir (15 GB). In *examined, se dato, il
+    // numero di voci esaminate (cartelle entrate + file visti), per i test.
+    static bool maildirHasMessages(const QString& root, int* examined = nullptr);
+    static bool isFirstSync(const QString& root, int* examined = nullptr)
+    {
+        return !maildirHasMessages(root, examined);
+    }
+
     // Percorso del programma (iniettabile nei test con uno script finto).
     void setMbsyncProgram(const QString& program) { m_program = program; }
     void setTimeout(std::chrono::milliseconds t) { m_timeout = t; }
@@ -43,6 +61,7 @@ public:
     std::chrono::milliseconds interval() const { return m_timer.intervalAsDuration(); }
     void start() { m_timer.start(); }
     void stop() { m_timer.stop(); }
+    bool timerActive() const { return m_timer.isActive(); }
 
     // Estrae "B: done/total" (o, in mancanza, "C: done/total") da un output
     // di mbsync -V; vero se trovato. Considera l'ultima riga utile.
@@ -51,6 +70,9 @@ public:
 signals:
     void stateChanged(boma::SyncService::State state, QString accountId, QString message);
     void progress(QString accountId, int done, int total);
+    // Per account: avvio ed esito (ok=false: message contiene l'errore).
+    void accountStarted(QString accountId);
+    void accountFinished(QString accountId, bool ok, QString message);
 
 private:
     void begin(const QList<Account>& accounts);
@@ -73,6 +95,7 @@ private:
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
     QString m_failedId, m_failedMsg;
     bool m_anySynced = false;
+    bool m_shutdown = false;
 };
 
 } // namespace boma

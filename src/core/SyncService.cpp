@@ -1,5 +1,8 @@
 #include "core/SyncService.h"
 
+#include <QDir>
+#include <QDirIterator>
+#include <QFileInfo>
 #include <QRegularExpression>
 #include <fcntl.h>
 #include <sys/file.h>
@@ -15,18 +18,31 @@ SyncService::SyncService(ProcessRunner* runner, const Config& config, QString lo
     connect(&m_timer, &QTimer::timeout, this, &SyncService::syncAll);
 }
 
-SyncService::~SyncService()
+SyncService::~SyncService() { shutdown(); }
+
+void SyncService::shutdown()
 {
     // Nessuna callback deve toccare un oggetto distrutto; il figlio in corso
-    // viene terminato prima di rilasciare il lock (niente mbsync concorrenti).
+    // viene fermato con SIGTERM (poi SIGKILL se non risponde) prima di
+    // rilasciare il lock (niente mbsync concorrenti ne' orfani).
+    m_shutdown = true;
     *m_alive = false;
+    m_timer.stop();
+    m_queue.clear();
     if (m_proc) {
         m_proc->disconnect();
-        m_proc->kill();
-        m_proc->waitForFinished(2000);
+        if (m_proc->state() != QProcess::NotRunning) {
+            m_proc->terminate();
+            if (!m_proc->waitForFinished(3000)) {
+                m_proc->kill();
+                m_proc->waitForFinished(2000);
+            }
+        }
     }
-    if (m_lockFd >= 0)
+    if (m_lockFd >= 0) {
         ::close(m_lockFd);
+        m_lockFd = -1;
+    }
 }
 
 void SyncService::syncAll() { begin(m_config.accounts()); }
@@ -45,7 +61,7 @@ void SyncService::syncAccount(const QString& id)
 
 void SyncService::begin(const QList<Account>& accounts)
 {
-    if (m_state == Running || accounts.isEmpty())
+    if (m_shutdown || m_state == Running || accounts.isEmpty())
         return;
 
     m_lockFd = ::open(m_lockPath.toLocal8Bit().constData(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
@@ -80,6 +96,7 @@ void SyncService::next()
     const Account acc = m_queue.dequeue();
     m_lineBuf.clear();
     auto alive = m_alive;
+    emit accountStarted(acc.id);
     m_proc = m_runner->run(
         m_program, {QStringLiteral("-V"), acc.mbsyncChannel}, m_timeout,
         [this, alive, acc](ProcessResult r) {
@@ -95,8 +112,10 @@ void SyncService::next()
                                           : tr("mbsync ha restituito %1: %2")
                                                 .arg(r.exitCode).arg(detail);
                 m_queue.clear(); // al primo errore ci si ferma
+                emit accountFinished(acc.id, false, m_failedMsg);
             } else {
                 m_anySynced = true;
+                emit accountFinished(acc.id, true, {});
             }
             next();
         },
@@ -167,6 +186,57 @@ bool SyncService::parseProgress(const QByteArray& chunk, int* done, int* total)
         }
     }
     return found;
+}
+
+namespace {
+
+constexpr int kMaxDepth = 24;
+
+// Vero al primo file (non nascosto) in dir.
+bool hasFile(const QString& dir, int* examined)
+{
+    QDirIterator it(dir, QDir::Files | QDir::NoDotAndDotDot);
+    if (it.hasNext()) {
+        it.next();
+        if (examined)
+            ++*examined;
+        return true;
+    }
+    return false;
+}
+
+bool walk(const QString& dir, int depth, int* examined)
+{
+    if (depth > kMaxDepth)
+        return false;
+    if (examined)
+        ++*examined;
+    // Prima cur/ e new/ di questa cartella, poi le sottocartelle (anche
+    // nascoste: Maildir++ usa ".Sotto"); tmp/ e i link simbolici si saltano.
+    for (const char* sub : {"cur", "new"})
+        if (hasFile(dir + QLatin1Char('/') + QLatin1String(sub), examined))
+            return true;
+    QDirIterator it(dir, QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::NoSymLinks);
+    while (it.hasNext()) {
+        const QString child = it.next();
+        const QString name = it.fileName();
+        if (name == QLatin1String("cur") || name == QLatin1String("new") || name == QLatin1String("tmp"))
+            continue;
+        if (walk(child, depth + 1, examined))
+            return true;
+    }
+    return false;
+}
+
+} // namespace
+
+bool SyncService::maildirHasMessages(const QString& root, int* examined)
+{
+    if (examined)
+        *examined = 0;
+    if (root.isEmpty() || !QFileInfo(root).isDir())
+        return false;
+    return walk(QDir::cleanPath(root), 0, examined);
 }
 
 } // namespace boma

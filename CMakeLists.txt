@@ -26,6 +26,7 @@ add_library(boma_core STATIC
     src/send/Sender.cpp
     src/ui/MessageView.cpp
     src/ui/ComposeWindow.cpp
+    src/ui/FirstRunDialog.cpp
 )
 target_include_directories(boma_core PUBLIC src)
 target_link_libraries(boma_core PUBLIC Qt6::Widgets PkgConfig::GMIME)

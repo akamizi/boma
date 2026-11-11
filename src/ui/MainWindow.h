@@ -8,6 +8,7 @@
 #include "mime/MessageParser.h"
 #include "send/Sender.h"
 #include "ui/ComposeWindow.h"
+#include "ui/FirstRunDialog.h"
 #include "ui/FolderPane.h"
 #include "ui/MessageListModel.h"
 #include "ui/MessageView.h"
@@ -15,6 +16,7 @@
 #include <QLabel>
 #include <QListView>
 #include <QLineEdit>
+#include <QMap>
 #include <QMainWindow>
 #include <QPointer>
 #include <QProgressBar>
@@ -71,6 +73,9 @@ public:
     QPushButton* deleteButton() const { return delBtn_; }
     Sender* sender() const { return sender_; }
     SyncService* syncService() const { return sync_; }
+    // Prima sincronizzazione guidata (nullo se non serve o se il dialogo e' stato distrutto).
+    FirstRunDialog* firstRunDialog() const { return firstRun_; }
+    QPushButton* firstRunButton() const { return firstBtn_; }
     // Finestre di scrittura aperte.
     QList<ComposeWindow*> composers() const;
 
@@ -88,12 +93,37 @@ public slots:
     void newMessage();
     void syncNow();
     void focusSearch();
+    // Mostra (ricreandolo se serve) il dialogo della prima sincronizzazione.
+    void showFirstRunDialog();
 
 signals:
     // Il messaggio e' stato mostrato (segnato come letto solo DOPO questo segnale).
     void messageOpened(const QString& path);
 
 private:
+    // Prima sincronizzazione. Un account la richiede se la sua Maildir non ha
+    // alcun file di messaggio (SyncService::isFirstSync; controllo asincrono che
+    // si ferma al primo file). Non serve un marcatore su disco: la ripresa dopo
+    // un'interruzione la da' mbsync stesso (incrementale), e finche' l'account e'
+    // ancora vuoto al prossimo avvio il dialogo riappare; con la Maildir gia'
+    // parzialmente piena si prosegue con una sincronizzazione normale. Il dialogo
+    // e' solo una vista: la sincronizzazione e' di SyncService, pilotata qui,
+    // un account alla volta (la serializzazione e il flock restano di SyncService).
+    void startupSync();
+    void beginStartupQueue(const QStringList& firstIds);
+    void runNextQueued();
+    void retryFirstRun(const QString& id);
+    void setFirstState(const QString& id, const FirstRunState& st);
+    void updateFirstRunUi();
+    FirstRunDialog* ensureFirstRunDialog();
+    QPointer<FirstRunDialog> firstRun_;
+    QPushButton* firstBtn_ = nullptr;
+    QMap<QString, FirstRunState> firstStates_; // account in prima sincronizzazione
+    QStringList firstIds_;                      // ordine di visualizzazione
+    QStringList queue_;                         // account ancora da sincronizzare all'avvio
+    QString queueCur_;
+    bool queueActive_ = false, queueFailed_ = false;
+
     void resolveMuRoot();
     void applyMuRoot(QString root, const QString& error);
     QString muRoot_, muRootError_;
