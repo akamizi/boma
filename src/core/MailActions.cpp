@@ -102,9 +102,11 @@ void MailActions::moveToTrash(const QString& path, const Account& account, Callb
     // mbsync alla cartella di origine (mbsync lo rifiuterebbe: "UID beyond highest
     // assigned"/"duplicate UID", uscendo con errore a ogni giro e cancellando il
     // messaggio dalla posta in arrivo remota senza caricarlo nel cestino remoto).
-    // --flags=+S: mu toglierebbe la bandiera S; un messaggio eliminato e' letto.
+    // --flags=+S-N: un messaggio eliminato e' letto; -N perche' per un messaggio
+    // ancora in new/ mu rifiuta N insieme ad altre bandiere ("the New flag cannot be
+    // combined with others", uscita 1, nulla spostato). Con -N finisce in cur/.
     runMu({QStringLiteral("move"), path, prefix + QLatin1Char('/') + parts.join(QLatin1Char('/')),
-           QStringLiteral("--change-name"), QStringLiteral("--flags=+S")},
+           QStringLiteral("--change-name"), QStringLiteral("--flags=+S-N")},
           std::move(cb));
 }
 

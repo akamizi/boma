@@ -93,6 +93,9 @@ private slots:
         // un messaggio letto e uno non letto nella posta in arrivo "remota"
         QVERIFY(writeFile(far + "/INBOX/cur/1700000000.1.host:2,S", message("letto", "messaggio letto")));
         QVERIFY(writeFile(far + "/INBOX/cur/1700000001.2.host:2,", message("nonletto", "messaggio non letto")));
+        // un messaggio appena arrivato (new/, non letto) e uno letto da eliminare dopo
+        QVERIFY(writeFile(far + "/INBOX/new/1700000005.5.host", message("nuovo", "messaggio nuovo")));
+        QVERIFY(writeFile(far + "/INBOX/cur/1700000006.6.host:2,S", message("secondo", "secondo letto")));
         // una bozza (D, mai S) e un messaggio in Inviata senza S
         QVERIFY(writeFile(far + "/Drafts/cur/1700000002.3.host:2,D", message("bozza", "bozza")));
         QVERIFY(writeFile(far + "/Sent/cur/1700000003.4.host:2,", message("inviato", "inviato")));
@@ -103,7 +106,7 @@ private slots:
             .arg(far, acc).toUtf8()));
         const Run s = mbsync();
         QVERIFY2(s.code == 0, qPrintable(s.out));
-        QCOMPARE(filesIn(acc + "/INBOX").size(), 2);
+        QCOMPARE(filesIn(acc + "/INBOX").size(), 4);
         const Run i = run("mu", {"init", "--muhome=" + muhome, "--maildir=" + mail});
         QVERIFY2(i.code == 0, qPrintable(i.out));
     }
@@ -153,7 +156,7 @@ private slots:
             QVERIFY(g.open(QIODevice::ReadOnly));
             QVERIFY2(!g.readAll().contains("<letto@example.org>"), qPrintable(p));
         }
-        QCOMPARE(filesIn(far + "/INBOX").size(), 1);
+        QCOMPARE(filesIn(far + "/INBOX").size(), 3);
 
         // indice reale dopo la sincronizzazione: il messaggio e' nel cestino, letto
         QVERIFY(reindex(idx));
@@ -183,12 +186,69 @@ private slots:
         QCOMPARE(query(idx, "msgid:nonletto@example.org AND flag:unread").size(), 1);
 
         const auto unread = query(idx, {}, true);
+        // caso positivo: un vero non letto della posta in arrivo c'e' ancora
+        bool sawNew = false;
+        for (const auto& s : unread)
+            if (s.messageId == QLatin1String("nuovo@example.org")) sawNew = s.path.startsWith(acc + "/INBOX/");
+        QVERIFY(sawNew);
         for (const auto& s : unread) {
             QVERIFY2(!s.path.startsWith(acc + "/Trash/"), qPrintable(s.path));
             QVERIFY2(!s.path.startsWith(acc + "/Drafts/"), qPrintable(s.path));
             QVERIFY2(!s.path.startsWith(acc + "/Sent/"), qPrintable(s.path));
         }
-        QCOMPARE(unread.size(), 0);
+        QCOMPARE(unread.size(), 1);
+    }
+
+    // Elimina un messaggio ancora in new/ (mu rifiuta N insieme ad altre bandiere:
+    // serve --flags=+S-N) e uno in cur/: entrambi arrivano nel Cestino remoto.
+    void testDeleteFromNewAndCurReachesFarTrash() {
+        // stato di partenza stabile: i test precedenti possono aver lasciato modifiche locali
+        QVERIFY2(mbsync().code == 0, "mbsync iniziale");
+        MailIndex idx(nullptr, "mu", muhome);
+        Account a; a.id = "acc"; a.maildirRoot = acc; a.trashFolder = "Trash"; a.draftsFolder = "Drafts"; a.sentFolder = "Sent";
+        idx.setAccounts({a});
+        idx.setMuRoot(mail);
+        QVERIFY(reindex(idx));
+        const auto nuovo = query(idx, "msgid:nuovo@example.org");
+        const auto secondo = query(idx, "msgid:secondo@example.org");
+        QCOMPARE(nuovo.size(), 1);
+        QCOMPARE(secondo.size(), 1);
+        QVERIFY2(nuovo.first().path.contains("/INBOX/new/"), qPrintable(nuovo.first().path));
+        QVERIFY2(secondo.first().path.contains("/INBOX/cur/"), qPrintable(secondo.first().path));
+        const QStringList nearTrashBefore = filesIn(acc + "/Trash");
+        const int farTrashBefore = filesIn(far + "/Trash").size();
+        const int farInboxBefore = filesIn(far + "/INBOX").size();
+
+        MailActions actions(nullptr, "mu");
+        actions.setMuHome(muhome);
+        actions.setMuRoot(mail);
+        for (const auto& m : {nuovo.first(), secondo.first()}) {
+            bool done = false, ok = false; QString err;
+            actions.moveToTrash(m.path, a, [&](bool o, QString e) { ok = o; err = e; done = true; });
+            QTRY_VERIFY_WITH_TIMEOUT(done, 30000);
+            QVERIFY2(ok, qPrintable(m.path + ": " + err));
+            QVERIFY(!QFileInfo::exists(m.path));
+        }
+        int moved = 0;
+        for (const QString& t : filesIn(acc + "/Trash")) {
+            if (nearTrashBefore.contains(t))
+                continue;
+            ++moved;
+            QVERIFY2(!t.contains(",U="), qPrintable(t));
+            QVERIFY2(t.contains("/Trash/cur/") && t.endsWith(":2,S"), qPrintable(t));
+        }
+        QCOMPARE(moved, 2);
+        const Run s = mbsync();
+        QVERIFY2(s.code == 0, qPrintable(s.out));
+        QVERIFY2(mbsync().code == 0, "secondo mbsync");
+        QCOMPARE(filesIn(far + "/Trash").size(), farTrashBefore + 2);
+        QCOMPARE(filesIn(far + "/INBOX").size(), farInboxBefore - 2);
+        for (const QString& p : filesIn(far + "/INBOX")) {
+            QFile g(p);
+            QVERIFY(g.open(QIODevice::ReadOnly));
+            const QByteArray b = g.readAll();
+            QVERIFY2(!b.contains("<nuovo@example.org>") && !b.contains("<secondo@example.org>"), qPrintable(p));
+        }
     }
 };
 QTEST_MAIN(T)

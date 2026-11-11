@@ -206,7 +206,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(done, 5000);
         QVERIFY(ok);
         QFile lf(log2); QVERIFY(lf.open(QIODevice::ReadOnly));
-        QCOMPARE(QString::fromUtf8(lf.readAll()).trimmed(), "move " + e.msg + " /Trash --change-name --flags=+S");
+        QCOMPARE(QString::fromUtf8(lf.readAll()).trimmed(), "move " + e.msg + " /Trash --change-name --flags=+S-N");
     }
     void testNoActionEverDeletesFiles() {
         Env e; e.init();
