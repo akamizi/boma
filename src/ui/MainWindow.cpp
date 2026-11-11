@@ -968,7 +968,9 @@ void MainWindow::onSendResult(QPointer<ComposeWindow> c, const OutgoingMessage& 
             c->statusLabel()->setText(r.fallbackPath.isEmpty()
                                           ? tr("INVIATO. Copia in Inviata non salvata: copia il testo prima di chiudere.")
                                           : tr("INVIATO. Copia in Inviata non salvata; copia di emergenza: %1").arg(r.fallbackPath));
-            c->markClean();
+            // Se anche la copia di emergenza e' fallita il testo esiste solo qui: la
+            // finestra resta "modificata", cosi' chiuderla chiede conferma.
+            if (!r.fallbackPath.isEmpty()) c->markClean();
         } else if (c) {
             c->markClean();
             c->close();

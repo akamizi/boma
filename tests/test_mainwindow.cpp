@@ -916,6 +916,47 @@ private slots:
         QVERIFY(QTest::qWaitFor([&] { return c.isNull(); }, 2000));
         QDir(dir_ + QStringLiteral("/non-salvati")).removeRecursively();
     }
+    // Doppio guasto: inviato, copia in Inviata fallita E copia di emergenza fallita.
+    // Il testo esiste solo nella finestra: chiuderla deve chiedere conferma.
+    void testSentCopyAndFallbackFailedKeepsComposerDirty() {
+        const QString sent = dir_ + QStringLiteral("/mail/a/Sent");
+        const QString blocker = dir_ + QStringLiteral("/non-una-cartella");
+        writeFile(blocker, "file, non cartella");
+        MainWindowOptions o = opts();
+        o.unsavedDir = blocker + QStringLiteral("/non-salvati");
+        o.msmtpProgram = writeScript(dir_, QStringLiteral("msmtpbreak2"),
+                                     ("#!/bin/sh\nd=$(dirname \"$0\")\ncat > \"$d/stdin\"\nrm -rf '" +
+                                      sent.toUtf8() + "'\nexit 0\n"));
+        MainWindow w(makeConfig(false), o);
+        Noticed n;
+        w.setNoticeCallback([&](const QString& t, const QString& x) { n.titles << t; n.texts << x; });
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        w.newButton()->click();
+        QPointer<ComposeWindow> c = firstComposer(w);
+        QVERIFY(c);
+        c->toEdit()->setText(QStringLiteral("bob@x.test"));
+        c->bodyEdit()->setPlainText(QStringLiteral("Testo unico 9090"));
+        c->sendButton()->click();
+        QVERIFY(QTest::qWaitFor([&] { return !n.titles.isEmpty(); }, 20000));
+        QTest::qWait(300);
+        for (const char* d : {"cur", "new", "tmp"}) QDir().mkpath(sent + QLatin1Char('/') + QLatin1String(d)); // per gli altri test
+        QVERIFY(c);
+        QVERIFY(!c->sendButton()->isEnabled());
+        QVERIFY2(c->statusLabel()->text().contains(QStringLiteral("INVIATO")), qPrintable(c->statusLabel()->text()));
+        QVERIFY(!QFileInfo::exists(o.unsavedDir));
+        int asked = 0;
+        c->setConfirmCallback([&] { ++asked; return false; });
+        QVERIFY(!c->close());
+        QCOMPARE(asked, 1);
+        QVERIFY(c);
+        QVERIFY(c->bodyEdit()->toPlainText().contains(QStringLiteral("9090")));
+        c->setConfirmCallback([&] { ++asked; return true; });
+        c->close();
+        QVERIFY(QTest::qWaitFor([&] { return c.isNull(); }, 2000));
+        QCOMPARE(asked, 2);
+        QFile::remove(blocker);
+    }
     // I6: chiudere la finestra principale passa da ogni finestra di scrittura (che
     // chiede conferma se ci sono modifiche): se una rifiuta, nulla si chiude.
     void testMainCloseAsksEveryComposer() {
