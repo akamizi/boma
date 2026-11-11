@@ -719,6 +719,11 @@ void MainWindow::onDecryptRequested() {
 void MainWindow::saveAttachment(int index) {
     if (!haveMsg_ || index < 0 || index >= curParsed_.attachments.size()) return;
     const Attachment a = curParsed_.attachments.at(index);
+    // Byte del messaggio e indice della parte catturati PRIMA della finestra modale:
+    // durante la scelta del file la selezione (o un aggiornamento) puo' cambiare
+    // curRaw_, e l'indice si applicherebbe ai byte di un altro messaggio.
+    const QByteArray raw = curRaw_;
+    const int part = a.partIndex;
     QString dir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
     if (dir.isEmpty()) dir = QDir::homePath();
     const QString proposed = dir + QLatin1Char('/') + MessageParser::sanitizeFilename(a.filename);
@@ -732,7 +737,7 @@ void MainWindow::saveAttachment(int index) {
     // scrittura (fino a 64 MiB, fsync) fuori dal thread GUI
     offThread<QString>(
         this,
-        [raw = curRaw_, part = a.partIndex, dest]() {
+        [raw, part, dest]() {
             QString err;
             if (!MessageParser::saveAttachment(raw, part, dest, &err) && err.isEmpty())
                 err = QObject::tr("salvataggio non riuscito");

@@ -1013,6 +1013,47 @@ private slots:
         QDir(out).removeRecursively();
         QFile::remove(p);
     }
+    // Durante la finestra (modale) di scelta del file la selezione puo' cambiare:
+    // si salva comunque l'allegato del messaggio da cui e' partita la richiesta.
+    void testSaveAttachmentUsesMessageChosenBeforeDialog() {
+        auto mk = [](const char* id, const char* subj, const char* b64) {
+            return QByteArray("From: Gina <gina@x.test>\nTo: alice@example.test\nSubject: ") + subj +
+                   "\nMessage-ID: <" + id + ">\nMIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=\"b\"\n\n"
+                   "--b\nContent-Type: text/plain\n\nTesto " + subj + "\n"
+                   "--b\nContent-Type: application/octet-stream; name=\"x.bin\"\n"
+                   "Content-Disposition: attachment; filename=\"x.bin\"\n"
+                   "Content-Transfer-Encoding: base64\n\n" + b64 + "\n--b--\n";
+        };
+        const QString p1 = dir_ + QStringLiteral("/mail/a/INBOX/cur/61.eml:2,S");
+        const QString p2 = dir_ + QStringLiteral("/mail/a/INBOX/cur/62.eml:2,S");
+        writeFile(p1, mk("m61@x", "primo6161", "UFJJTU8="));    // "PRIMO"
+        writeFile(p2, mk("m62@x", "secondo6262", "U0VDT05ETw==")); // "SECONDO"
+        listUnread({jsonMsg(p1, QStringLiteral("m61@x"), QStringLiteral("Gina"), QStringLiteral("primo6161"), false),
+                    jsonMsg(p2, QStringLiteral("m62@x"), QStringLiteral("Gina"), QStringLiteral("secondo6262"), false)});
+        MainWindow w(makeConfig(), opts());
+        Noticed n;
+        w.setNoticeCallback([&](const QString& t, const QString& x) { n.titles << t; n.texts << x; });
+        const QString out = dir_ + QStringLiteral("/scaricati2");
+        QDir().mkpath(out);
+        const QString answer = out + QStringLiteral("/x.bin");
+        w.setSaveFileCallback([&](const QString&) {
+            // mentre la finestra e' aperta l'utente passa all'altro messaggio
+            select(w, 1);
+            QTest::qWaitFor([&] { return w.messageView()->toPlainText().contains(QStringLiteral("secondo6262")); }, 10000);
+            return answer;
+        });
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        select(w, 0);
+        QVERIFY(QTest::qWaitFor([&] { return w.messageView()->toPlainText().contains(QStringLiteral("primo6161")); }, 10000));
+        w.messageView()->attachmentButton()->menu()->actions().first()->trigger();
+        QVERIFY(QTest::qWaitFor([&] { return QFile::exists(answer); }, 10000));
+        QVERIFY(w.messageView()->toPlainText().contains(QStringLiteral("secondo6262")));
+        QCOMPARE(readFile(answer), QByteArray("PRIMO"));
+        QDir(out).removeRecursively();
+        QFile::remove(p1);
+        QFile::remove(p2);
+    }
     // I5: i link si aprono solo dopo conferma che mostra la destinazione reale, e
     // solo http, https e mailto.
     void testLinksNeedConfirmationAndSafeScheme() {
