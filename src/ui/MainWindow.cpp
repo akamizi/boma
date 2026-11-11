@@ -1,6 +1,7 @@
 #include "ui/MainWindow.h"
 
 #include "ui/ReplyBuilder.h"
+#include "core/MaildirWriter.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -69,6 +70,7 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     sender_->setMsmtpProgram(opts_.msmtpProgram);
     sender_->setMuProgram(opts_.muProgram);
     sender_->setMuHome(opts_.muHome);
+    if (!opts_.unsavedDir.isEmpty()) sender_->setUnsavedDir(opts_.unsavedDir);
     if (!opts_.gpgProgram.isEmpty()) sender_->gpg().setGpgProgram(opts_.gpgProgram);
     if (!opts_.gnupgHome.isEmpty()) sender_->gpg().setGnupgHome(opts_.gnupgHome);
     model_ = new MessageListModel(config_.isEmpty() ? nullptr : index_, this);
@@ -250,6 +252,7 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     } else {
         stack_->setCurrentWidget(view_);
         applyQuery(QString());
+        checkSpecialFolders();
         if (opts_.autoSync) {
             startupPending_ = true;
             QTimer::singleShot(0, this, &MainWindow::startupSync);
@@ -261,6 +264,41 @@ MainWindow::~MainWindow() {
     // Prima di distruggere i figli (ProcessRunner ucciderebbe con SIGKILL):
     // il mbsync in corso riceve SIGTERM, resta sicuro e riprende al prossimo avvio.
     if (sync_) sync_->shutdown();
+}
+
+// I4: Inviata/Bozze/Cestino devono essere Maildir valide (MaildirWriter e mu
+// move non creano mai cartelle). Controllo fuori dal thread GUI; un account
+// ancora vuoto (prima sincronizzazione: le cartelle le crea mbsync) e' saltato.
+// L'invio da un account con Inviata non valida e' comunque rifiutato da Sender.
+void MainWindow::checkSpecialFolders() {
+    const QList<Account> accounts = config_.accounts();
+    QPointer<MainWindow> self(this);
+    offThread<QStringList>(
+        this,
+        [accounts]() {
+            QStringList bad;
+            for (const Account& a : accounts) {
+                if (a.maildirRoot.isEmpty() || SyncService::isFirstSync(a.maildirRoot)) continue;
+                const QList<QPair<QString, QString>> folders{{QObject::tr("Inviata (sentFolder)"), a.sentFolder},
+                                                              {QObject::tr("Bozze (draftsFolder)"), a.draftsFolder},
+                                                              {QObject::tr("Cestino (trashFolder)"), a.trashFolder}};
+                for (const auto& [label, f] : folders) {
+                    const QString why = MaildirWriter::checkFolder(f.isEmpty() ? QString() : QDir(a.maildirRoot).filePath(f));
+                    if (!why.isEmpty())
+                        bad << QObject::tr("%1 - %2 \"%3\": %4").arg(a.name.isEmpty() ? a.id : a.name, label, f, why);
+                }
+            }
+            return bad;
+        },
+        [self](QStringList bad) {
+            if (!self || bad.isEmpty()) return;
+            self->statusBar()->showMessage(tr("Cartelle dell'account non valide: vedi l'avviso"), 30000);
+            self->showNotice(tr("Cartelle non valide"),
+                             tr("Queste cartelle non sono Maildir utilizzabili:\n\n%1\n\n"
+                                "Finche' non le correggi nella configurazione l'invio da quell'account e' bloccato "
+                                "(nulla parte senza la copia in Inviata), le bozze non si salvano ed Elimina non funziona.")
+                                 .arg(bad.join(QLatin1Char('\n'))));
+        });
 }
 
 // ---- prima sincronizzazione ----
@@ -765,7 +803,7 @@ ComposeWindow* MainWindow::openCompose(const OutgoingMessage* prefill) {
 }
 
 void MainWindow::startSend(QPointer<ComposeWindow> c, const OutgoingMessage& msg, bool sign, bool encrypt, bool allowUnsigned) {
-    if (!c || c->property("bomaSending").toBool()) return; // mai un secondo invio
+    if (!c || c->property("bomaSending").toBool() || c->property("bomaSent").toBool()) return; // mai un secondo invio
     c->setProperty("bomaSending", true);
     c->sendButton()->setEnabled(false);
     c->statusLabel()->setText(tr("Invio in corso..."));
@@ -796,7 +834,16 @@ void MainWindow::onSendResult(QPointer<ComposeWindow> c, const OutgoingMessage& 
     case SendResult::Sent:
         statusBar()->showMessage(r.message.isEmpty() ? tr("Inviato") : tr("Inviato (avviso: %1)").arg(r.message), 15000);
         if (!r.message.isEmpty()) showNotice(tr("Inviato, con un avviso"), r.message);
-        if (c) {
+        if (c && r.copyFailed) {
+            // I4: il messaggio E' partito ma la copia in Inviata manca: la finestra resta
+            // aperta (il testo non va perso) ma segnata come inviata, mai reinviabile.
+            c->setProperty("bomaSent", true);
+            c->sendButton()->setEnabled(false);
+            c->statusLabel()->setText(r.fallbackPath.isEmpty()
+                                          ? tr("INVIATO. Copia in Inviata non salvata: copia il testo prima di chiudere.")
+                                          : tr("INVIATO. Copia in Inviata non salvata; copia di emergenza: %1").arg(r.fallbackPath));
+            c->markClean();
+        } else if (c) {
             c->markClean();
             c->close();
         }

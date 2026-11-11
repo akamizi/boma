@@ -361,6 +361,33 @@ QByteArray MessageBuilder::build(const OutgoingMessage& m, QString* error, Build
     return QByteArray(reinterpret_cast<const char*>(ba->data), int(ba->len));
 }
 
+QByteArray MessageBuilder::bccHeader(const OutgoingMessage& m, const QByteArray& eol) {
+    initGMime();
+    QList<Mailbox> bcc;
+    for (const QString& it : m.bcc) {
+        Mailbox mb;
+        if (parseMailbox(it, &mb, nullptr)) bcc.append(mb);
+    }
+    if (bcc.isEmpty()) return {};
+    InternetAddressList* list = internet_address_list_new();
+    for (const Mailbox& mb : std::as_const(bcc)) {
+        const QByteArray n = oneLine(mb.name).toUtf8(), a = mb.addr.toUtf8();
+        InternetAddress* ia = internet_address_mailbox_new(n.isEmpty() ? nullptr : n.constData(), a.constData());
+        internet_address_set_charset(ia, "utf-8");
+        internet_address_list_add(list, ia);
+        g_object_unref(ia);
+    }
+    GString* str = g_string_new("Bcc: ");
+    internet_address_list_encode(list, nullptr, str);
+    QByteArray out(str->str, qsizetype(str->len));
+    g_string_free(str, TRUE);
+    g_object_unref(list);
+    while (out.endsWith('\n') || out.endsWith('\r')) out.chop(1);
+    out.replace("\r\n", "\n");
+    out.replace("\n", eol);
+    return out + eol;
+}
+
 QStringList MessageBuilder::envelopeRecipients(const OutgoingMessage& m) {
     QStringList out;
     QSet<QString> seen;

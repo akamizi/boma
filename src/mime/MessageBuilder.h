@@ -55,6 +55,9 @@ public:
     static QByteArray build(const OutgoingMessage& msg, QString* error, BuildMode mode = BuildMode::Send);
     // to+cc+bcc: indirizzi nudi, senza duplicati (case-insensitive), elementi non validi scartati.
     static QStringList envelopeRecipients(const OutgoingMessage& msg);
+    // Intestazione "Bcc: ..." codificata (RFC 2047) e ripiegata, terminata da eol;
+    // vuota se non ci sono Bcc validi. Solo per la COPIA in Inviata, mai per l'invio.
+    static QByteArray bccHeader(const OutgoingMessage& msg, const QByteArray& eol = "\n");
 };
 
 } // namespace boma

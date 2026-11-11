@@ -27,6 +27,10 @@ struct SendResult {
     } kind = SmtpFailed;
     QStringList missing;
     QString message;
+    // Solo con Sent: il messaggio E' partito ma la copia in Inviata non e' stata
+    // scritta. fallbackPath = copia di emergenza (.eml) se salvata, altrimenti vuoto.
+    bool copyFailed = false;
+    QString fallbackPath;
 };
 
 // Invio di un messaggio: costruzione -> (cifratura) -> firma/cifratura PGP/MIME
@@ -52,16 +56,20 @@ struct SendResult {
 //   Una firma FALLITA non ripiega mai da sola sull'invio senza firma
 //   (SignFailed sempre, anche con allowUnsigned): se l'utente vuole inviare
 //   comunque, la UI richiama send() con sign=false in modo esplicito.
-// - Copia in Inviata SOLO se msmtp esce 0, nella cartella Inviata dell'account
-//   dell'identita'; se la copia fallisce l'esito e' Sent con un avviso in
-//   message (mai un secondo invio). Il callback arriva subito dopo la consegna;
+// - Prima di msmtp la cartella Inviata dell'account deve essere una Maildir
+//   scrivibile (MaildirWriter::checkFolder): altrimenti BuildFailed, nulla e'
+//   inviato. Copia in Inviata SOLO se msmtp esce 0; se la copia fallisce
+//   comunque (disco pieno, cartella sparita) l'esito e' Sent con copyFailed,
+//   un avviso in message e una copia di emergenza in unsavedDir()
+//   (fallbackPath): il messaggio inviato non va mai perso. Mai un secondo invio. Il callback arriva subito dopo la consegna;
 //   `mu index` parte dopo, a "fuoco e dimentica" su un MailIndex figlio di
 //   QCoreApplication (sopravvive al Sender); l'esito e' nel segnale
 //   reindexFinished (se il Sender e' vivo) o in un qWarning.
 // - Chiave PGP: l'identita' (indirizzo o impronta) e' risolta UNA volta in impronta
 //   (GpgService::resolveSecretKey); ambigua/non trovata = SignFailed, mai a caso.
 //   Il msmtp "esito incerto" (timeout, crash, kill) non scrive mai la copia.
-//   La copia non contiene Bcc (come cio' che e' stato inviato).
+//   La copia in Inviata contiene l'intestazione Bcc (solo la copia: i byte
+//   inviati non la contengono mai), cosi' resta traccia dei destinatari nascosti.
 // - Un solo invio alla volta per Sender: un send() durante un invio (anche
 //   dentro il callback finale) riceve Busy e non invia nulla. Lo stato "occupato"
 //   termina dopo il ritorno del callback finale.
@@ -85,6 +93,9 @@ public:
     void setMsmtpTimeoutMs(int ms) { msmtpTimeoutMs_ = ms; }
     void setMuProgram(const QString& p) { muProgram_ = p; }
     void setMuHome(const QString& h) { muHome_ = h; }
+    // Cartella delle copie di emergenza (default: <AppDataLocation>/non-salvati).
+    void setUnsavedDir(const QString& d) { unsavedDir_ = d; }
+    QString unsavedDir() const;
     GpgService& gpg() { return gpg_; }
     bool busy() const { return busy_; }
 
@@ -113,6 +124,8 @@ private:
     bool busy_ = false;
     Account account_;
     QString msmtpAccount_;
+    QByteArray bccHeader_; // solo per la copia in Inviata
+    QString unsavedDir_;
     std::function<void(SendResult)> done_;
 };
 

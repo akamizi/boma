@@ -1,6 +1,7 @@
 #include "core/MaildirWriter.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QRandomGenerator>
 #include <QDateTime>
@@ -53,6 +54,65 @@ QString uniqueBase()
 }
 } // namespace
 
+QString MaildirWriter::checkFolder(const QString& maildirFolder)
+{
+    if (maildirFolder.isEmpty())
+        return QStringLiteral("Cartella Maildir non configurata");
+    for (const char* sub : {"tmp", "new", "cur"}) {
+        const QString d = maildirFolder + QLatin1Char('/') + QLatin1String(sub);
+        if (!QFileInfo(d).isDir())
+            return QStringLiteral("Cartella Maildir non valida: manca %1").arg(d);
+        if (qstrcmp(sub, "new") != 0 && ::access(QFile::encodeName(d).constData(), W_OK | X_OK) != 0)
+            return QStringLiteral("Cartella Maildir non scrivibile: %1 (%2)").arg(d, errnoText());
+    }
+    return {};
+}
+
+QString MaildirWriter::saveFallback(const QString& dir, const QByteArray& message, QString* error)
+{
+    if (dir.isEmpty() || !QDir().mkpath(dir)) {
+        setError(error, QStringLiteral("Cartella di emergenza non creabile: %1").arg(dir));
+        return {};
+    }
+    QFile::setPermissions(dir, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        const QString path = dir + QLatin1Char('/') + uniqueBase() + QStringLiteral(".eml");
+        const QByteArray p = QFile::encodeName(path);
+        const int fd = ::open(p.constData(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+        if (fd < 0) {
+            if (errno == EEXIST)
+                continue;
+            setError(error, QStringLiteral("Impossibile creare %1: %2").arg(path, errnoText()));
+            return {};
+        }
+        qint64 off = 0;
+        bool ok = true;
+        while (off < message.size()) {
+            const ssize_t w = ::write(fd, message.constData() + off, size_t(message.size() - off));
+            if (w < 0) {
+                if (errno == EINTR)
+                    continue;
+                ok = false;
+                break;
+            }
+            off += w;
+        }
+        if (ok && ::fsync(fd) != 0)
+            ok = false;
+        const QString why = errnoText();
+        ::close(fd);
+        if (!ok) {
+            ::unlink(p.constData());
+            setError(error, QStringLiteral("Scrittura di %1 non riuscita: %2").arg(path, why));
+            return {};
+        }
+        fsyncDir(QFile::encodeName(dir));
+        return path;
+    }
+    setError(error, QStringLiteral("Nome unico non disponibile in %1").arg(dir));
+    return {};
+}
+
 void MaildirWriter::setNameGeneratorForTest(std::function<QString()> gen) { generator() = std::move(gen); }
 
 QString MaildirWriter::deliver(const QString& maildirFolder, const QByteArray& message,
@@ -60,12 +120,9 @@ QString MaildirWriter::deliver(const QString& maildirFolder, const QByteArray& m
 {
     const QString tmpDir = maildirFolder + QStringLiteral("/tmp");
     const QString curDir = maildirFolder + QStringLiteral("/cur");
-    for (const char* sub : {"tmp", "new", "cur"}) {
-        if (!QFileInfo(maildirFolder + QLatin1Char('/') + QLatin1String(sub)).isDir()) {
-            setError(error, QStringLiteral("Cartella Maildir non valida: manca %1/%2")
-                                .arg(maildirFolder, QLatin1String(sub)));
-            return {};
-        }
+    if (const QString why = checkFolder(maildirFolder); !why.isEmpty()) {
+        setError(error, why);
+        return {};
     }
 
     for (const QChar c : std::as_const(flags)) {

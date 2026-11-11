@@ -141,6 +141,7 @@ class T : public QObject {
         o.msmtpProgram = msmtp_;
         o.gnupgHome = home_;
         o.lockPath = dir_ + QStringLiteral("/lock");
+        o.unsavedDir = dir_ + QStringLiteral("/non-salvati");
         o.autoSync = false;
         return o;
     }
@@ -843,6 +844,74 @@ private slots:
         QCOMPARE(log(QStringLiteral("count")).count(QStringLiteral("run")), 1);
         QVERIFY(log(QStringLiteral("argv")).contains(QStringLiteral("--")));
         QVERIFY(!log(QStringLiteral("argv")).contains(QStringLiteral("segreto@x.test"))); // Bcc del messaggio originale mai
+    }
+    // I4: Inviata non valida segnalata all'avvio (account gia' sincronizzato).
+    void testInvalidSpecialFolderWarnsAtStartup() {
+        const QString p = dir_ + QStringLiteral("/config-bad%1.ini").arg(++n_);
+        writeFile(p, cfgText(false).replace(QStringLiteral("mbsyncChannel=a\n"),
+                                            QStringLiteral("mbsyncChannel=a\nsentFolder=Sent Messages\n")).toUtf8());
+        QString err;
+        const Config cfg = Config::load(p, &err);
+        QVERIFY2(err.isEmpty(), qPrintable(err));
+        Noticed n;
+        MainWindow w(cfg, opts());
+        w.setNoticeCallback([&](const QString& t, const QString& x) { n.titles << t; n.texts << x; });
+        w.show();
+        QVERIFY(QTest::qWaitFor([&] { return !n.titles.isEmpty(); }, 10000));
+        QCOMPARE(n.titles.first(), QStringLiteral("Cartelle non valide"));
+        QVERIFY2(n.texts.first().contains(QStringLiteral("Sent Messages")), qPrintable(n.texts.first()));
+        QVERIFY(!n.texts.first().contains(QStringLiteral("Drafts\"")));
+        // configurazione corretta: nessun avviso
+        Noticed m;
+        MainWindow ok(makeConfig(), opts());
+        ok.setNoticeCallback([&](const QString& t, const QString& x) { m.titles << t; m.texts << x; });
+        ok.show();
+        QVERIFY(waitRows(ok, 2));
+        QTest::qWait(500);
+        QVERIFY2(m.titles.isEmpty(), qPrintable(m.texts.join('|')));
+    }
+    // I4: inviato ma copia in Inviata fallita: la finestra resta aperta, segnata come
+    // inviata (non reinviabile), con il percorso della copia di emergenza.
+    void testSentButCopyFailedKeepsComposerMarkedSent() {
+        const QString sent = dir_ + QStringLiteral("/mail/a/Sent");
+        MainWindowOptions o = opts();
+        o.msmtpProgram = writeScript(dir_, QStringLiteral("msmtpbreak"),
+                                     ("#!/bin/sh\nd=$(dirname \"$0\")\necho run >> \"$d/count\"\ncat > \"$d/stdin\"\nrm -rf '" +
+                                      sent.toUtf8() + "'\nexit 0\n"));
+        MainWindow w(makeConfig(false), o);
+        Noticed n;
+        w.setNoticeCallback([&](const QString& t, const QString& x) { n.titles << t; n.texts << x; });
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        w.newButton()->click();
+        QPointer<ComposeWindow> c = firstComposer(w);
+        QVERIFY(c);
+        c->toEdit()->setText(QStringLiteral("bob@x.test"));
+        c->bodyEdit()->setPlainText(QStringLiteral("Testo importante 8080"));
+        c->sendButton()->click();
+        QVERIFY(QTest::qWaitFor([&] { return !n.titles.isEmpty(); }, 20000));
+        QTest::qWait(300);
+        for (const char* d : {"cur", "new", "tmp"}) QDir().mkpath(sent + QLatin1Char('/') + QLatin1String(d)); // per gli altri test
+        QVERIFY(c); // non chiusa
+        QVERIFY(!c->sendButton()->isEnabled());
+        QVERIFY2(c->statusLabel()->text().contains(QStringLiteral("INVIATO")), qPrintable(c->statusLabel()->text()));
+        QVERIFY(c->bodyEdit()->toPlainText().contains(QStringLiteral("8080")));
+        const QStringList saved = QDir(dir_ + QStringLiteral("/non-salvati")).entryList(QDir::Files);
+        QCOMPARE(saved.size(), 1);
+        QVERIFY(c->statusLabel()->text().contains(saved.first()));
+        QVERIFY(n.texts.first().contains(saved.first()));
+        QVERIFY(readFile(dir_ + QStringLiteral("/non-salvati/") + saved.first()).contains("Testo importante 8080"));
+        // nessun secondo invio, nemmeno forzando il segnale
+        emit c->sendRequested(c->currentMessage(), false, false);
+        c->sendButton()->setEnabled(true);
+        c->sendButton()->click();
+        QTest::qWait(500);
+        QCOMPARE(log(QStringLiteral("count")).count(QStringLiteral("run")), 1);
+        // chiudere non chiede conferma (gia' inviato)
+        c->setConfirmCallback([] { return false; });
+        c->close();
+        QVERIFY(QTest::qWaitFor([&] { return c.isNull(); }, 2000));
+        QDir(dir_ + QStringLiteral("/non-salvati")).removeRecursively();
     }
     void testSendUnsignedNeedsExplicitConfirmation() {
         MainWindow w(makeConfig(true), opts());

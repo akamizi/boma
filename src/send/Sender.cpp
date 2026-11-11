@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QDebug>
 #include <QRandomGenerator>
+#include <QStandardPaths>
 #include <QTimer>
 #include <memory>
 
@@ -142,6 +143,7 @@ void Sender::send(const OutgoingMessage& msg, bool sign, bool encrypt, std::func
         return;
     }
     busy_ = true;
+    bccHeader_.clear();
     done_ = std::move(done);
     auto fail = [this](SendResult::Kind k, const QString& m, const QStringList& missing = {}) {
         SendResult r;
@@ -157,6 +159,13 @@ void Sender::send(const OutgoingMessage& msg, bool sign, bool encrypt, std::func
         if (a.id == msg.identity.accountId) { account_ = a; found = true; break; }
     if (!found || account_.maildirRoot.isEmpty() || account_.sentFolder.isEmpty())
         return fail(SendResult::BuildFailed, tr("Account dell'identita' o cartella Inviata non configurati."));
+    // Mai inviare se la copia in Inviata non potra' essere scritta (cartella
+    // inesistente, non Maildir, non scrivibile): nulla e' ancora partito.
+    if (const QString why = MaildirWriter::checkFolder(QDir(account_.maildirRoot).filePath(account_.sentFolder));
+        !why.isEmpty())
+        return fail(SendResult::BuildFailed,
+                    tr("Cartella Inviata dell'account non utilizzabile (%1). Nulla e' stato inviato: "
+                       "correggi sentFolder nella configurazione.").arg(why));
     msmtpAccount_ = msg.identity.msmtpAccount.trimmed();
     if (!safeMsmtpAccount(msmtpAccount_))
         return fail(SendResult::BuildFailed, tr("Account msmtp dell'identita' non configurato o non valido."));
@@ -175,6 +184,7 @@ void Sender::send(const OutgoingMessage& msg, bool sign, bool encrypt, std::func
 
     Split sp;
     if (!splitMessage(built, &sp)) return fail(SendResult::BuildFailed, tr("Messaggio costruito non interpretabile."));
+    bccHeader_ = MessageBuilder::bccHeader(msg);
     if (sp.hasBcc) return fail(SendResult::BuildFailed, tr("Il messaggio costruito contiene un'intestazione Bcc."));
 
     const QString keyId = msg.identity.pgpKeyId.trimmed();
@@ -272,14 +282,35 @@ void Sender::runMsmtp(const QByteArray& message, const QStringList& recipients) 
     }
 }
 
+QString Sender::unsavedDir() const {
+    if (!unsavedDir_.isEmpty()) return unsavedDir_;
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    return base.isEmpty() ? QString() : base + QStringLiteral("/non-salvati");
+}
+
 void Sender::storeCopyAndFinish(const QByteArray& message) {
     const QString folder = QDir(account_.maildirRoot).filePath(account_.sentFolder);
+    // Copia = byte inviati + Bcc (con lo stesso fine riga del messaggio).
+    QByteArray copy = message;
+    if (!bccHeader_.isEmpty()) {
+        const qsizetype nl = message.indexOf('\n');
+        const bool crlf = nl > 0 && message.at(nl - 1) == '\r';
+        QByteArray h = bccHeader_;
+        if (crlf) h.replace("\n", "\r\n");
+        copy.prepend(h);
+    }
     QString e;
-    const QString path = MaildirWriter::deliver(folder, message, QStringLiteral("S"), &e);
+    const QString path = MaildirWriter::deliver(folder, copy, QStringLiteral("S"), &e);
     SendResult r;
     r.kind = SendResult::Sent;
     if (path.isEmpty()) {
-        r.message = tr("Messaggio inviato, ma la copia in Inviata non e' stata salvata: %1").arg(e);
+        r.copyFailed = true;
+        QString fe;
+        r.fallbackPath = MaildirWriter::saveFallback(unsavedDir(), copy, &fe);
+        r.message = tr("Messaggio INVIATO, ma la copia in Inviata non e' stata salvata: %1").arg(e);
+        r.message += r.fallbackPath.isEmpty()
+                         ? tr("\nNemmeno la copia di emergenza e' stata salvata (%1).").arg(fe)
+                         : tr("\nUna copia e' stata salvata in: %1").arg(r.fallbackPath);
         finish(std::move(r));
         return;
     }

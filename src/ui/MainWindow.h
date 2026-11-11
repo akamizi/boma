@@ -39,6 +39,7 @@ struct MainWindowOptions {
     QString gpgProgram;   // vuoto = "gpg"
     QString gnupgHome;    // vuoto = predefinito di gpg
     QString lockPath;     // vuoto = $XDG_RUNTIME_DIR o la cartella temporanea
+    QString unsavedDir;   // copie di emergenza degli inviati (vuoto = default di Sender)
     bool autoSync = true; // sincronizzazione all'avvio e periodica
 };
 
@@ -124,6 +125,7 @@ private:
     QString queueCur_;
     bool queueActive_ = false, startupPending_ = false;
 
+    void checkSpecialFolders();
     void resolveMuRoot();
     void applyMuRoot(QString root, const QString& error);
     QString muRoot_, muRootError_;

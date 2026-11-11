@@ -122,6 +122,7 @@ class T : public QObject {
                               "cat > \"$d/stdin\"\n"
                               "[ -f \"$d/sleep\" ] && exec sleep 30\n"
                               "[ -f \"$d/fail\" ] && { echo 'msmtp: authentication failed' >&2; exit 1; }\n"
+                              "[ -f \"$d/breaksent\" ] && rm -rf \"$(cat \"$d/breaksent\")\"\n"
                               "exit 0\n");
         e.mu = writeScript(d, QStringLiteral("mu"), "#!/bin/sh\nd=$(dirname \"$0\")\nprintf '%s\\n' \"$*\" >> \"$d/mu.log\"\nexit 0\n");
         e.gpg = writeScript(d, QStringLiteral("gpgwrap"),
@@ -376,13 +377,27 @@ private slots:
         const QByteArray sent = readFile(e.dir + QStringLiteral("/stdin"));
         QVERIFY(!sent.contains("segreto@example.test"));
         QVERIFY(!sent.toLower().contains("bcc:"));
+        // la copia in Inviata conserva il Bcc (solo la copia): byte inviati + intestazione Bcc
         const QByteArray copy = readFile(sentDir("a") + QLatin1Char('/') + files(sentDir("a")).first());
-        QVERIFY(!copy.contains("segreto@example.test"));
+        QVERIFY(copy.startsWith("Bcc: segreto@example.test\n"));
+        QCOMPARE(copy.mid(copy.indexOf('\n') + 1), sent);
         QVERIFY(QTest::qWaitFor([&] { return !s->busy(); }, 1000));
-        // firmato e cifrato: nemmeno li'
-        QCOMPARE(doSend(*s, msgFor(idA_, {QStringLiteral("bob@example.test")}, {QStringLiteral("alice@example.test")}), true, true).kind,
+        // firmato e cifrato: nemmeno li' nei byte inviati; la copia (CRLF) ha il Bcc
+        QCOMPARE(doSend(*s, msgFor(idA_, {QStringLiteral("bob@example.test")}, {QStringLiteral("Zoe \u00c9 <alice@example.test>")}),
+                        true, true).kind,
                  SendResult::Sent);
-        QVERIFY(!readFile(e.dir + QStringLiteral("/stdin")).toLower().contains("bcc:"));
+        const QByteArray sent2 = readFile(e.dir + QStringLiteral("/stdin"));
+        QVERIFY(!sent2.toLower().contains("bcc:"));
+        bool found = false;
+        for (const QString& f : files(sentDir("a"))) {
+            const QByteArray c = readFile(sentDir("a") + QLatin1Char('/') + f);
+            if (!c.endsWith(sent2)) continue;
+            found = true;
+            QVERIFY2(c.startsWith("Bcc: ") && c.left(c.indexOf("\r\n")).toLower().contains("=?utf-8?"), c.left(80).constData());
+            QVERIFY(c.left(c.indexOf("\r\n")).contains("<alice@example.test>"));
+            QCOMPARE(c.size(), sent2.size() + c.indexOf("\r\n") + 2);
+        }
+        QVERIFY(found);
     }
     void testSignedMessageVerifies() {
         const Env e = newEnv();
@@ -456,7 +471,10 @@ private slots:
             QVERIFY(plain.contains("\r\n"));
             QVERIFY(!plain.toLower().contains("bcc"));
             QVERIFY(readFile(e.dir + QStringLiteral("/gpg.log")).contains("--throw-keyids"));
-            QCOMPARE(readFile(sentDir("a") + QLatin1Char('/') + files(sentDir("a")).first()), sent);
+            // copia in Inviata = Bcc (solo copia) + byte inviati
+            const QByteArray copy = readFile(sentDir("a") + QLatin1Char('/') + files(sentDir("a")).first());
+            QVERIFY(copy.startsWith("Bcc: alice@example.test\r\n"));
+            QCOMPARE(copy.mid(copy.indexOf('\n') + 1), sent);
             if (sign) {
                 QCOMPARE(inner, SignatureStatus::Valid);
                 QVERIFY(who.contains(QStringLiteral("alice@example.test")));
@@ -505,14 +523,56 @@ private slots:
         QVERIFY(r.message.contains(QStringLiteral("incerto")));
         QVERIFY(files(sentDir("a")).isEmpty());
     }
+    // I4: cartella Inviata non valida -> nulla parte (prima: inviato e copia persa).
+    void testInvalidSentFolderRefusesToSend() {
+        const Env e = newEnv();
+        auto s = makeSender(e, home_);
+        const QString sent = root_.filePath(QStringLiteral("mail/a/Sent"));
+        QDir(sent).removeRecursively();
+        SendResult r = doSend(*s, msgFor(idA_, {QStringLiteral("bob@example.test")}), false, false);
+        QCOMPARE(r.kind, SendResult::BuildFailed);
+        QVERIFY2(r.message.contains(QStringLiteral("Inviata")), qPrintable(r.message));
+        QVERIFY(!QFile::exists(e.dir + QStringLiteral("/count")));
+        QVERIFY(QTest::qWaitFor([&] { return !s->busy(); }, 1000));
+        // cartella presente ma non Maildir (manca tmp)
+        QDir().mkpath(sent + QStringLiteral("/cur"));
+        QDir().mkpath(sent + QStringLiteral("/new"));
+        r = doSend(*s, msgFor(idA_, {QStringLiteral("bob@example.test")}), true, true);
+        QCOMPARE(r.kind, SendResult::BuildFailed);
+        QVERIFY(!QFile::exists(e.dir + QStringLiteral("/count")));
+        QVERIFY(!QFile::exists(e.dir + QStringLiteral("/gpg.log"))); // nemmeno gpg
+    }
+    // I4: la copia fallisce DOPO l'invio: Sent + copyFailed + copia di emergenza identica.
     void testSentCopyFailureAfterSuccessReportsSentWithWarning() {
         const Env e = newEnv();
-        QDir(root_.filePath(QStringLiteral("mail/a/Sent"))).removeRecursively();
+        const QString sent = root_.filePath(QStringLiteral("mail/a/Sent"));
+        QFile b(e.dir + QStringLiteral("/breaksent"));
+        QVERIFY(b.open(QIODevice::WriteOnly));
+        b.write(sent.toUtf8());
+        b.close();
         auto s = makeSender(e, home_);
-        const SendResult r = doSend(*s, msgFor(idA_, {QStringLiteral("bob@example.test")}), false, false);
+        const QString unsaved = e.dir + QStringLiteral("/non-salvati");
+        s->setUnsavedDir(unsaved);
+        const SendResult r = doSend(*s, msgFor(idA_, {QStringLiteral("bob@example.test")}, {QStringLiteral("nascosto@example.test")}),
+                                    false, false);
         QCOMPARE(r.kind, SendResult::Sent);
+        QVERIFY(r.copyFailed);
         QVERIFY(!r.message.isEmpty());
+        QVERIFY2(r.fallbackPath.startsWith(unsaved + QLatin1Char('/')) && r.fallbackPath.endsWith(QStringLiteral(".eml")),
+                 qPrintable(r.fallbackPath));
+        QVERIFY(r.message.contains(r.fallbackPath));
+        const QByteArray copy = readFile(r.fallbackPath);
+        QVERIFY(copy.endsWith(readFile(e.dir + QStringLiteral("/stdin"))));
+        QVERIFY(copy.startsWith("Bcc: nascosto@example.test"));
+        QCOMPARE(QFile::permissions(r.fallbackPath) & (QFile::ReadGroup | QFile::ReadOther), QFile::Permissions());
         QCOMPARE(readFile(e.dir + QStringLiteral("/count")).count("run"), 1); // mai un secondo invio
+        // ok normale: copyFailed falso
+        QVERIFY(QTest::qWaitFor([&] { return !s->busy(); }, 1000));
+        QFile::remove(e.dir + QStringLiteral("/breaksent"));
+        maildir(sent);
+        const SendResult ok = doSend(*s, msgFor(idA_, {QStringLiteral("bob@example.test")}), false, false);
+        QCOMPARE(ok.kind, SendResult::Sent);
+        QVERIFY(!ok.copyFailed && ok.fallbackPath.isEmpty());
     }
     void testReindexFailureDoesNotDelayOrChangeResult() {
         const Env e = newEnv();
