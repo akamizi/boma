@@ -7,8 +7,13 @@ programmi Unix esistenti e collaudati**, ognuno incaricato di una sola cosa. Bom
 non reimplementa IMAP, SMTP, l'indicizzazione o la crittografia: lancia i
 programmi giusti come processi separati e mostra il risultato.
 
-Stato: in sviluppo (prima versione). Le funzioni descritte sotto sono l'obiettivo
-della v1; man mano che vengono realizzate il README viene aggiornato.
+Stato: prima versione completa nelle funzioni, ma non ancora collaudata sul campo.
+Tutte le funzioni descritte sotto esistono nel codice e la suite di test passa
+(16 eseguibili di test con `ctest`). Finora però tutto è stato provato **solo con
+posta sintetica e con programmi finti** al posto di `mbsync`, `mu`, `msmtp` e `gpg`;
+le verifiche con posta, server e chiavi reali sono in corso. Non ci sono ancora
+misure di prestazioni su una casella reale: gli obiettivi di velocità e memoria
+indicati sotto sono obiettivi di progetto, non risultati misurati.
 
 ## Spirito del progetto
 
@@ -21,8 +26,9 @@ della v1; man mano che vengono realizzate il README viene aggiornato.
   gli altri. In caso di dubbio Boma si ferma e avvisa, senza "riparare" in
   silenzio. Cancellare significa spostare nel cestino sul server; Boma non
   elimina mai definitivamente la posta in automatico.
-- **Leggero e veloce**: ricerca sotto i 200 ms su 15 GB di posta, avvio sotto 1
-  secondo, meno di 150 MB di memoria a riposo. Per questo niente QML né
+- **Leggero e veloce** (obiettivo, da confermare su posta reale): ricerca sotto i
+  200 ms su 15 GB di posta, avvio sotto 1 secondo, meno di 150 MB di memoria a
+  riposo. Per questo niente QML né
   QtWebEngine: l'HTML dei messaggi è reso da `QTextBrowser`, senza caricare
   immagini remote.
 - **Copia locale completa**: tutta la posta è sul disco, anche quella vecchia,
@@ -33,13 +39,13 @@ della v1; man mano che vengono realizzate il README viene aggiornato.
 
 | Compito | Programma | Come lo usa Boma |
 |---|---|---|
-| Sincronizzazione IMAP bidirezionale | **mbsync** (pacchetto `isync`) | `mbsync -V <canale>` come processo asincrono: all'avvio, a intervalli e su richiesta; mai due insieme (blocco con `flock`). Le password IMAP le fornisce `PassCmd` nel suo file di configurazione, Boma non le vede. |
+| Sincronizzazione IMAP bidirezionale | **mbsync** (pacchetto `isync`) | `mbsync -V <canale>` come processo asincrono: all'avvio, ogni 5 minuti e su richiesta; mai due insieme (blocco con `flock`). Le password IMAP le fornisce `PassCmd` nel suo file di configurazione, Boma non le vede. |
 | Archivio dei messaggi | **Maildir** (un file per messaggio) | Copia locale; Boma ci scrive direttamente solo per Inviata e Bozze (vedi sotto). |
-| Indice e ricerca | **mu** (pacchetto `mu4e`) | `mu index` dopo ogni sincronizzazione, `mu find` per le ricerche e per le non lette, `mu move` per spostare i messaggi (ad esempio nel cestino). |
+| Indice e ricerca | **mu** (pacchetto `mu4e`) | `mu index` dopo ogni sincronizzazione, `mu find` per le ricerche e per le non lette, `mu move` per spostare i messaggi nel cestino e per segnarli come letti quando si aprono. |
 | Invio | **msmtp** | Un account msmtp per ogni identità; le credenziali le recupera `passwordeval` nella sua configurazione. |
 | Analisi e costruzione dei messaggi MIME | **GMime 3** (libreria) | Intestazioni, parti, allegati e firme; messaggi in uscita. |
-| Firma, cifratura, verifica, decifratura | **GnuPG** (`gpg`) con **gpg-agent** e **pinentry-qt** | Formato PGP/MIME. La password della chiave la chiede pinentry e la conserva gpg-agent per 5 minuti (`default-cache-ttl`); Boma non la vede mai. |
-| Interfaccia | **Qt6 Widgets** | Tre colonne (cartelle, elenco, lettura) con barra di ricerca; all'avvio mostra le non lette. |
+| Firma, cifratura, verifica, decifratura | **GnuPG** (`gpg`) con **gpg-agent** e **pinentry-qt** | Formato PGP/MIME. La password della chiave la chiede pinentry e la conserva gpg-agent per il tempo che hai configurato (consigliati 5 minuti, vedi «Configurazione»); Boma non la vede mai. |
+| Interfaccia | **Qt6 Widgets** | Tre colonne (cartelle, elenco, lettura) con barra di ricerca; all'avvio mostra le non lette. Cartelle mostrate per ogni account: Posta in arrivo, Inviata, Bozze, Cestino. |
 | Filtri in ingresso | **Sieve** sul server | Non è compito di Boma. In Boma "filtrare" significa cercare. |
 
 L'unico punto in cui Boma scrive direttamente nel Maildir è la copia dei messaggi
@@ -57,12 +63,10 @@ e `mu`.
 - Testo semplice, HTML visualizzabile senza immagini remote, allegati.
 - Più identità per account (indirizzo, firma, chiave PGP, account msmtp). La copia
   inviata va nella cartella Inviata dell'account a cui appartiene l'identità.
-- OpenPGP: firma attiva di default (disattivabile), cifratura su richiesta; spunta
-  verde per le firme valide; per i messaggi cifrati si chiede conferma prima di
-  decifrare. Boma non invia mai in chiaro in silenzio se manca una chiave, e se la
-  firma fallisce l'invio si ferma e la bozza si conserva.
-- Cancellazione = spostamento nel cestino sul server. La cancellazione definitiva
-  automatica non è prevista.
+- OpenPGP: vedi la sezione dedicata più sotto.
+- Cancellazione = spostamento nel cestino (pulsante «Elimina», tasto Canc), senza
+  conferma ma recuperabile dal cestino. La cancellazione definitiva automatica non
+  è prevista. Vedi «Cancellare i messaggi» per il limite importante.
 
 Non previsto nella v1: conversazioni, ricerche salvate, gestione delle chiavi
 (si usa direttamente `gpg`), cancellazione automatica del cestino.
@@ -89,20 +93,206 @@ ctest --test-dir build --output-on-failure
 ## Configurazione
 
 Boma non sostituisce i file di configurazione dei programmi che usa; li lascia
-dove sono.
+dove sono. Senza file di Boma l'applicazione parte e mostra una pagina di aiuto
+con un esempio minimo.
+
+### mbsync, msmtp, gpg-agent
 
 - `~/.mbsyncrc`: account IMAP, canali e cartelle da sincronizzare con `mbsync`
-  (Maildir locale), con `PassCmd` per la password.
-- `~/.msmtprc`: account SMTP usati da `msmtp` per l'invio, con `passwordeval`.
+  (Maildir locale), con `PassCmd` per la password. Il nome del canale va indicato
+  in `mbsyncChannel` nella configurazione di Boma. Per ogni account usa una
+  radice Maildir diversa (ad esempio `~/Mail/personale/` e `~/Mail/lavoro/`).
+- `~/.msmtprc`: un account SMTP per ogni identità, con `passwordeval`. Boma
+  invoca `msmtp -a <account> --read-envelope-from -- <destinatari>`.
 - `~/.gnupg/gpg-agent.conf`: per tenere la password della chiave in cache al
-  massimo 5 minuti:
+  massimo 5 minuti, con pinentry grafico (adatta il percorso di `pinentry-qt`):
 
 ```
 default-cache-ttl 300
 max-cache-ttl 300
+pinentry-program /usr/bin/pinentry-qt
 ```
 
-- File di Boma (INI), con account (`[account:<id>]`) e identità
-  (`[identity:<id>]`): per ogni account la cartella Maildir, il canale `mbsync` e
-  le cartelle Inviata, Bozze e Cestino; per ogni identità l'indirizzo, il nome, la
-  firma testuale, la chiave PGP e l'account `msmtp`.
+  Boma non legge né impone questi valori: senza di essi vale la cache predefinita
+  di gpg-agent (10 minuti, fino a 2 ore). Dopo la modifica: `gpgconf --kill gpg-agent`.
+
+### File di Boma
+
+Posizione: `boma/config.ini` nella cartella di configurazione XDG, cioè di norma
+`~/.config/boma/config.ini` (è l'unico percorso, non c'è un'opzione per
+cambiarlo). Formato INI. Nessuna password nel file. Il tilde `~` è espanso in
+`maildirRoot` e `muRoot`.
+
+`[general]` (opzionale)
+
+- `muRoot=`: radice Maildir di `mu` (vedi «Cancellare i messaggi»). Se assente
+  viene letta da `mu info store`.
+
+`[account:<id>]`: uno per account IMAP
+
+- `name=` nome mostrato (predefinito: l'id)
+- `maildirRoot=` cartella Maildir locale dell'account
+- `mbsyncChannel=` canale `mbsync` (predefinito: l'id)
+- `sentFolder=`, `draftsFolder=`, `trashFolder=` cartelle speciali, relative a
+  `maildirRoot` (predefiniti: `Sent`, `Drafts`, `Trash`)
+
+`[identity:<id>]`: una o più per account
+
+- `accountId=` obbligatorio: l'account a cui appartiene
+- `address=` obbligatorio; `displayName=` nome mostrato
+- `signature=` firma testuale; la sequenza di due caratteri `\n` diventa un a capo
+- `pgpKeyId=` identificativo o impronta della chiave PGP
+- `msmtpAccount=` nome dell'account in `~/.msmtprc`
+- `signByDefault=` `true` (predefinito) o `false`
+
+Le identità senza `address` o con `accountId` sconosciuto vengono scartate e
+l'errore compare nella barra di stato all'avvio. Le chiavi non riconosciute sono
+ignorate in silenzio.
+
+Esempio con due account indipendenti, un'identità ciascuno:
+
+```ini
+[general]
+muRoot=~/Mail
+
+[account:personale]
+name=Personale
+maildirRoot=~/Mail/personale
+mbsyncChannel=personale
+sentFolder=Sent
+draftsFolder=Drafts
+trashFolder=Trash
+
+[account:lavoro]
+name=Lavoro
+maildirRoot=~/Mail/lavoro
+mbsyncChannel=lavoro
+sentFolder=Sent
+draftsFolder=Drafts
+trashFolder=Trash
+
+[identity:personale]
+accountId=personale
+address=nome@example.org
+displayName=Nome Cognome
+signature=Nome
+pgpKeyId=0123456789ABCDEF0123456789ABCDEF01234567
+msmtpAccount=personale
+
+[identity:lavoro]
+accountId=lavoro
+address=nome.cognome@example.com
+displayName=Nome Cognome
+msmtpAccount=lavoro
+signByDefault=false
+```
+
+## Scorciatoie da tastiera
+
+Finestra principale (i tasti semplici non scattano mentre si scrive nel campo di
+ricerca):
+
+| Tasto | Azione |
+|---|---|
+| Ctrl+F oppure `/` | vai alla ricerca (campo vuoto = non lette) |
+| F5 | sincronizza ora |
+| Ctrl+N | nuovo messaggio |
+| `R` / Maiusc+`R` | rispondi / rispondi a tutti |
+| `F` | inoltra |
+| Canc | sposta nel cestino |
+
+La finestra di scrittura non ha scorciatoie proprie: Firma, Cifra, Salva bozza,
+Invia e Chiudi sono pulsanti.
+
+## Prima sincronizzazione
+
+All'avvio Boma controlla, per ogni account, se la Maildir contiene già almeno un
+messaggio. Se un account è vuoto (o la cartella non esiste) è una prima
+sincronizzazione: si apre la finestra «Prima sincronizzazione» con lo stato di
+ogni account (in attesa, in corso, completata, errore) e un pulsante «Riprova» in
+caso di errore. L'avanzamento mostra i contatori di cartelle di `mbsync`, non una
+percentuale.
+
+- La finestra si può chiudere: si nasconde soltanto e la sincronizzazione
+  continua; la si riapre dal pulsante «Prima sincronizzazione...» nella barra di
+  stato.
+- La prima sincronizzazione non ha tempo massimo (per circa 15 GB può durare
+  ore). Le sincronizzazioni successive hanno un limite di 10 minuti.
+- Gli account vengono sincronizzati uno alla volta. Un errore su un account non
+  ferma gli altri e non viene ritentato da solo: si usa «Riprova».
+- Chiudendo Boma il `mbsync` in corso riceve SIGTERM (SIGKILL dopo 3 secondi se
+  non risponde); la chiusura può quindi richiedere fino a 3 secondi in più. Al
+  riavvio `mbsync` riprende dal punto raggiunto, perché è incrementale.
+
+## Cancellare i messaggi
+
+«Elimina» (o Canc) sposta il messaggio nella cartella cestino dell'account con
+`mu move`; la sincronizzazione successiva propaga lo spostamento sul server. Non
+c'è conferma, ma il messaggio resta nel cestino.
+
+**Limite importante**: `mu` ragiona con cartelle relative alla *sua* radice
+Maildir, e Boma deve conoscerla con certezza prima di spostare qualcosa. Finché
+non è nota, Elimina è disattivata (compare un avviso e nulla viene spostato). La
+radice viene presa, in quest'ordine, da `muRoot=` in `[general]` e da
+`mu info store` (all'avvio, in modo asincrono). Se `mu info store` fallisce e
+`muRoot=` non è impostato, le viste per cartella restano utilizzabili con una
+radice stimata (il genitore comune delle Maildir degli account) e un avviso nella
+barra di stato, ma Elimina resta disattivata. Per risolvere: imposta in
+`[general]` la radice Maildir con cui è stato creato l'indice di `mu` (di solito
+la cartella che contiene le Maildir degli account, nell'esempio `~/Mail`), oppure
+correggi l'indice di `mu`.
+
+Il messaggio aperto viene segnato come letto (`mu move --flags=-N+S`) dopo la
+visualizzazione; anche questo si propaga al server alla sincronizzazione
+successiva.
+
+## OpenPGP
+
+Formato PGP/MIME, tramite `gpg`; la password della chiave la chiede pinentry e
+non passa mai da Boma.
+
+- **Firma**: attiva di default per ogni identità (`signByDefault`), disattivabile
+  nella finestra di scrittura con il pulsante «Firma». Se la firma è richiesta ma
+  l'identità non ha `pgpKeyId`, Boma non invia: chiede «Inviare SENZA firma?»
+  (risposta predefinita No) e invia senza firma solo dopo un sì esplicito. Se la
+  firma fallisce l'invio si ferma, non parte nulla e il messaggio resta nella
+  finestra di scrittura. Se invece si disattiva a mano il pulsante «Firma», il
+  messaggio parte senza firma e senza altre domande.
+- **Cifratura**: solo su richiesta (pulsante «Cifra»). Prima si verifica che ogni
+  destinatario abbia una chiave pubblica utilizzabile; se ne manca una l'invio è
+  bloccato e si elencano i destinatari senza chiave. Un messaggio per cui è stata
+  chiesta la cifratura non viene mai inviato in chiaro. Se la chiave
+  dell'identità è risolvibile il messaggio è cifrato anche per il mittente,
+  altrimenti la copia in Inviata non sarà leggibile da lui.
+- **Verifica**: per i messaggi firmati la firma è controllata all'apertura; una
+  firma valida mostra una spunta verde con il firmatario.
+- **Decifratura**: per i messaggi cifrati Boma chiede conferma prima di
+  decifrare (e a quel punto pinentry chiede la password).
+- Un invio non riuscito non viene ripetuto da solo; se l'esito di `msmtp` è
+  incerto (tempo scaduto) l'avviso invita a controllare Inviata prima di
+  riprovare.
+
+## Limiti noti
+
+- La cartella della posta in arrivo è assunta chiamarsi `INBOX` (relativa alla
+  radice dell'account).
+- Dopo l'invio la bozza resta nella cartella Bozze: va eliminata a mano.
+- Il cestino non viene mai svuotato in automatico.
+- Niente conversazioni, niente ricerche salvate, nessuna gestione delle chiavi
+  (si usa `gpg`).
+- Inoltrare non include gli allegati del messaggio originale.
+- Se una casella è davvero vuota, la finestra della prima sincronizzazione si
+  riapre a ogni avvio finché la Maildir locale non contiene almeno un messaggio
+  (vale anche per un account rimasto vuoto dopo un'interruzione).
+- `mbsync` non è lanciato in un proprio gruppo di processi: all'uscita il segnale
+  arriva al processo `mbsync`; non è verificato che raggiunga anche i suoi figli
+  (ad esempio `PassCmd` o `ssh`) con un `mbsync` reale.
+- Il controllo delle chiavi dei destinatari prima di un invio cifrato è
+  sincrono: l'interfaccia può restare ferma fino a 30 secondi.
+- Con la cifratura, l'oggetto e il numero dei destinatari restano visibili
+  (limite del formato PGP/MIME).
+- Se all'avvio `mu info store` fallisce, la radice di `mu` non viene rilevata di
+  nuovo finché Boma non viene riavviato.
+- Provato finora solo con posta sintetica e programmi finti; le verifiche con
+  posta, server e chiavi reali sono in corso e non ci sono ancora misure di
+  prestazioni su una casella vera.
