@@ -60,7 +60,24 @@ void MailActions::markRead(const QString& path, Callback cb)
             cb(false, QStringLiteral("Percorso del messaggio non assoluto: %1").arg(path));
         return;
     }
-    runMu({QStringLiteral("move"), path, QStringLiteral("--flags=-N+S")}, std::move(cb));
+    // Un solo mu per percorso: un secondo tentativo sullo stesso file, dopo che il
+    // primo l'ha gia' spostato in cur/, fallirebbe con un errore spurio.
+    const QString key = QDir::cleanPath(path);
+    auto it = m_markReadPending.find(key);
+    if (it != m_markReadPending.end()) {
+        it->append(std::move(cb));
+        return;
+    }
+    m_markReadPending.insert(key, QList<Callback>{std::move(cb)});
+    QPointer<MailActions> self(this);
+    runMu({QStringLiteral("move"), path, QStringLiteral("--flags=-N+S")}, [self, key](bool ok, QString err) {
+        if (!self)
+            return;
+        const QList<Callback> waiting = self->m_markReadPending.take(key);
+        for (const Callback& c : waiting)
+            if (c)
+                c(ok, err);
+    });
 }
 
 void MailActions::moveToTrash(const QString& path, const Account& account, Callback cb)

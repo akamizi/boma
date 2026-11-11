@@ -103,6 +103,36 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(done, 10000);
         QVERIFY2(ok, qPrintable(err));
     }
+    // Due markRead dello stesso messaggio mentre il primo attende la base dati
+    // bloccata: una sola catena di mu, nessun errore spurio per il secondo.
+    void testMarkReadSamePathDeduplicated() {
+        Env e; e.init();
+        const QString cnt = e.td.path() + "/n";
+        const QString mu = script(e.td.path(), "mu",
+            "echo x >> \"" + cnt + "\"\n"
+            // mkdir e' atomico: ordine delle chiamate certo anche se concorrenti
+            "mkdir \"" + cnt + ".1\" 2>/dev/null && { echo 'error: database locked' >&2; exit 19; }\n"
+            "mkdir \"" + cnt + ".2\" 2>/dev/null && exit 0\n"
+            "echo 'error: no such file (gia spostato)' >&2; exit 1");
+        MailActions a(nullptr, mu);
+        a.setMuRoot(e.mail);
+        int done = 0; QStringList errs; int oks = 0;
+        auto cb = [&](bool o, QString m) { ++done; if (o) ++oks; else errs << m; };
+        a.markRead(e.msg, cb);
+        a.markRead(e.msg, cb);
+        QTRY_COMPARE_WITH_TIMEOUT(done, 2, 10000);
+        QTest::qWait(600);
+        QCOMPARE(done, 2);
+        QVERIFY2(errs.isEmpty(), qPrintable(errs.join("; ")));
+        QCOMPARE(oks, 2);
+        QFile f(cnt); QVERIFY(f.open(QIODevice::ReadOnly));
+        QCOMPARE(f.readAll().count('x'), 2);
+        // finita la catena, un nuovo markRead dello stesso percorso riparte davvero
+        done = 0; errs.clear(); oks = 0;
+        a.markRead(e.msg, cb);
+        QTRY_COMPARE_WITH_TIMEOUT(done, 1, 5000);
+        QCOMPARE(errs.size(), 1);
+    }
     void testLockedDatabaseGivesUpWithClearError() {
         Env e; e.init();
         const QString cnt = e.td.path() + "/n";

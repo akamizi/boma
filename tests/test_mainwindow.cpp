@@ -1080,7 +1080,7 @@ private slots:
         w.setSaveFileCallback([&](const QString&) {
             // mentre la finestra e' aperta l'utente passa all'altro messaggio
             select(w, 1);
-            QTest::qWaitFor([&] { return w.messageView()->toPlainText().contains(QStringLiteral("secondo6262")); }, 10000);
+            (void)QTest::qWaitFor([&] { return w.messageView()->toPlainText().contains(QStringLiteral("secondo6262")); }, 10000);
             return answer;
         });
         w.show();
