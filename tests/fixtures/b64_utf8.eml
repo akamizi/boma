@@ -1,0 +1,10 @@
+From: Mario Rossi <mario@example.invalid>
+To: Anna Bianchi <anna@example.invalid>
+Date: Tue, 10 Nov 2026 10:00:00 +0100
+Message-ID: <m@example.invalid>
+MIME-Version: 1.0
+Subject: Base64 UTF-8
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: base64
+
+UGVyY2jDqSDDqCBjb3PDrA==

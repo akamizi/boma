@@ -1,0 +1,16 @@
+From: Mario Rossi <mario@example.invalid>
+To: Anna Bianchi <anna@example.invalid>
+Date: Tue, 10 Nov 2026 10:00:00 +0100
+Message-ID: <m@example.invalid>
+MIME-Version: 1.0
+Subject: Rotto
+Content-Type: multipart/mixed; boundary="nonesiste"
+
+--altro
+Content-Type: text/plain
+
+parte senza chiusura
+--altro
+Content-Type: multipart/alternative; boundary=
+
+--

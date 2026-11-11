@@ -1,0 +1,17 @@
+From: Mario Rossi <mario@example.invalid>
+To: Anna Bianchi <anna@example.invalid>
+Date: Tue, 10 Nov 2026 10:00:00 +0100
+Message-ID: <m@example.invalid>
+MIME-Version: 1.0
+Subject: Troncato
+Content-Type: multipart/mixed; boundary="mix"
+
+--mix
+Content-Type: text/plain; charset=utf-8
+
+Inizio del testo tronc
+--mix
+Content-Type: application/octet-stream
+Content-Transfer-Encoding: base64
+
+QUJD

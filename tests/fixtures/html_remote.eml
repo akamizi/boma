@@ -1,0 +1,11 @@
+From: Mario Rossi <mario@example.invalid>
+To: Anna Bianchi <anna@example.invalid>
+Date: Tue, 10 Nov 2026 10:00:00 +0100
+Message-ID: <m@example.invalid>
+MIME-Version: 1.0
+Subject: Immagine remota
+Content-Type: text/html; charset=utf-8
+
+<html><body onload="evil()"><p onclick="x()">Ciao</p><script>alert(1)</script>
+<iframe src="http://example.invalid/f"></iframe>
+<img src="http://example.invalid/x.png"><a href="javascript:alert(1)">j</a></body></html>
