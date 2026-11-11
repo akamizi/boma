@@ -17,6 +17,8 @@
 #include <QStatusBar>
 #include <QProcessEnvironment>
 #include <QTemporaryDir>
+#include <QMenu>
+#include <QToolButton>
 #include <QTest>
 #include <sys/stat.h>
 
@@ -963,6 +965,88 @@ private slots:
         QCOMPARE(log(QStringLiteral("count")).count(QStringLiteral("run")), before + 1);
         QVERIFY(QTest::qWaitFor([&] { return c.isNull(); }, 5000));
         QVERIFY(w.close());
+    }
+    // I5: "Salva allegato..." salva i byte decodificati nel file scelto; un file
+    // esistente non viene mai sovrascritto (errore chiaro, contenuto intatto).
+    void testSaveAttachmentNeverOverwrites() {
+        const QString p = dir_ + QStringLiteral("/mail/a/INBOX/cur/5.eml:2,S");
+        writeFile(p, "From: Gina <gina@x.test>\nTo: alice@example.test\nSubject: Con allegato\nMessage-ID: <m5@x>\n"
+                     "MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=\"b\"\n\n"
+                     "--b\nContent-Type: text/plain\n\nVedi allegato 5555\n"
+                     "--b\nContent-Type: application/octet-stream; name=\"../../etc/rapporto.bin\"\n"
+                     "Content-Disposition: attachment; filename=\"../../etc/rapporto.bin\"\n"
+                     "Content-Transfer-Encoding: base64\n\nAAECA2NpYW8=\n--b--\n");
+        listUnread({jsonMsg(p, QStringLiteral("m5@x"), QStringLiteral("Gina"), QStringLiteral("Con allegato"), false)});
+        MainWindow w(makeConfig(), opts());
+        Noticed n;
+        w.setNoticeCallback([&](const QString& t, const QString& x) { n.titles << t; n.texts << x; });
+        QStringList suggested;
+        const QString out = dir_ + QStringLiteral("/scaricati");
+        QDir().mkpath(out);
+        QString answer = out + QStringLiteral("/rapporto.bin");
+        w.setSaveFileCallback([&](const QString& s) { suggested << s; return answer; });
+        w.show();
+        QVERIFY(waitRows(w, 1));
+        select(w, 0);
+        QVERIFY(QTest::qWaitFor([&] { return w.messageView()->toPlainText().contains(QStringLiteral("5555")); }, 10000));
+        QToolButton* b = w.messageView()->attachmentButton();
+        QVERIFY(b->isVisibleTo(w.messageView()));
+        QCOMPARE(b->menu()->actions().size(), 1);
+        b->menu()->actions().first()->trigger();
+        QVERIFY(QTest::qWaitFor([&] { return QFile::exists(answer); }, 5000));
+        QCOMPARE(suggested.size(), 1);
+        QVERIFY2(suggested.first().endsWith(QStringLiteral("/rapporto.bin")) && !suggested.first().contains(QStringLiteral("..")),
+                 qPrintable(suggested.first()));
+        QCOMPARE(readFile(answer), QByteArray("\x00\x01\x02\x03" "ciao", 8));
+        // secondo salvataggio sullo stesso file: rifiutato, contenuto intatto
+        writeFile(answer, "MIO");
+        b->menu()->actions().first()->trigger();
+        QVERIFY(QTest::qWaitFor([&] { return !n.titles.isEmpty(); }, 5000));
+        QVERIFY2(n.texts.last().contains(QStringLiteral("esiste")), qPrintable(n.texts.last()));
+        QCOMPARE(readFile(answer), QByteArray("MIO"));
+        // annullato: niente
+        answer.clear();
+        b->menu()->actions().first()->trigger();
+        QTest::qWait(300);
+        QCOMPARE(QDir(out).entryList(QDir::Files).size(), 1);
+        QDir(out).removeRecursively();
+        QFile::remove(p);
+    }
+    // I5: i link si aprono solo dopo conferma che mostra la destinazione reale, e
+    // solo http, https e mailto.
+    void testLinksNeedConfirmationAndSafeScheme() {
+        MainWindow w(makeConfig(), opts());
+        Noticed n;
+        w.setNoticeCallback([&](const QString& t, const QString& x) { n.titles << t; n.texts << x; });
+        QList<QUrl> asked, opened;
+        bool yes = false;
+        w.setConfirmLinkCallback([&](const QUrl& u, const QString& text) {
+            asked << u;
+            n.texts << text;
+            return yes;
+        });
+        w.setOpenUrlCallback([&](const QUrl& u) { opened << u; });
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        emit w.messageView()->linkActivated(QUrl(QStringLiteral("https://banca.example/accesso")));
+        QCOMPARE(asked.size(), 1);
+        QVERIFY(n.texts.last().contains(QStringLiteral("https://banca.example/accesso")));
+        QVERIFY(opened.isEmpty()); // rifiutato
+        yes = true;
+        emit w.messageView()->linkActivated(QUrl(QStringLiteral("https://xn--pypal-4ve.example/")));
+        QCOMPARE(opened.size(), 1);
+        // dominio internazionale: la conferma mostra la forma ASCII (punycode)
+        emit w.messageView()->linkActivated(QUrl(QString::fromUtf8("https://p\xd0\xb0ypal.example/")));
+        QVERIFY2(n.texts.last().contains(QStringLiteral("xn--")), qPrintable(n.texts.last()));
+        emit w.messageView()->linkActivated(QUrl(QStringLiteral("mailto:bob@x.test")));
+        QCOMPARE(opened.size(), 3);
+        const int askedBefore = asked.size();
+        for (const char* bad : {"file:///etc/passwd", "javascript:alert(1)", "smb://host/share", "relativo.html", "data:text/html,x"}) {
+            emit w.messageView()->linkActivated(QUrl(QString::fromLatin1(bad)));
+        }
+        QCOMPARE(asked.size(), askedBefore); // nemmeno chiesto
+        QCOMPARE(opened.size(), 3);
+        QVERIFY(n.titles.contains(QStringLiteral("Link non aperto")));
     }
     void testSendUnsignedNeedsExplicitConfirmation() {
         MainWindow w(makeConfig(true), opts());

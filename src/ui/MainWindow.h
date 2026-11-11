@@ -1,4 +1,5 @@
 #pragma once
+#include <QUrl>
 
 #include "core/Config.h"
 #include "core/MailActions.h"
@@ -85,6 +86,13 @@ public:
     void setConfirmUnsignedCallback(std::function<bool()> cb) { confirmUnsigned_ = std::move(cb); }
     // Avvisi/errori che richiedono l'attenzione dell'utente (titolo, testo).
     void setNoticeCallback(std::function<void(const QString&, const QString&)> cb) { notice_ = std::move(cb); }
+    // "Salva allegato": riceve il percorso proposto, restituisce quello scelto (vuoto = annulla).
+    // Default: QFileDialog (senza la sua conferma di sovrascrittura: non si sovrascrive mai).
+    void setSaveFileCallback(std::function<QString(const QString&)> cb) { saveFile_ = std::move(cb); }
+    // Conferma prima di aprire un link (url, testo con la destinazione reale): true = apri.
+    void setConfirmLinkCallback(std::function<bool(const QUrl&, const QString&)> cb) { confirmLink_ = std::move(cb); }
+    // Apertura effettiva (default: QDesktopServices::openUrl).
+    void setOpenUrlCallback(std::function<void(const QUrl&)> cb) { openUrl_ = std::move(cb); }
 
 public slots:
     void deleteSelected();
@@ -136,7 +144,10 @@ private:
     QString muRoot_, muRootError_;
     bool muRootReliable_ = false, muRootDetected_ = false;
     void onCurrentChanged(const QModelIndex& cur);
-    void onLoaded(quint64 token, const MessageSummary& s, const ParsedMessage& pm, const QString& error);
+    void onLoaded(quint64 token, const MessageSummary& s, const ParsedMessage& pm, const QByteArray& raw,
+                  const QString& error);
+    void saveAttachment(int index);
+    void openLink(const QUrl& url);
     void markReadAfterOpen(const MessageSummary& s);
     void startVerify(quint64 token, const ParsedMessage& pm);
     void onDecryptRequested();
@@ -189,6 +200,7 @@ private:
     bool haveMsg_ = false;
     MessageSummary curSummary_;
     ParsedMessage curParsed_;
+    QByteArray curRaw_; // byte da cui e' stato analizzato curParsed_ (in chiaro dopo Decifra)
     // firma interna di un messaggio cifrato: puo' arrivare prima o dopo il testo
     bool decrypted_ = false, haveInner_ = false;
     SignatureStatus innerStatus_ = SignatureStatus::None;
@@ -198,6 +210,9 @@ private:
 
     std::function<bool()> confirmUnsigned_;
     std::function<void(const QString&, const QString&)> notice_;
+    std::function<QString(const QString&)> saveFile_;
+    std::function<bool(const QUrl&, const QString&)> confirmLink_;
+    std::function<void(const QUrl&)> openUrl_;
 };
 
 } // namespace boma

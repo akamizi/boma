@@ -5,6 +5,8 @@
 
 #include <QCloseEvent>
 #include <QCoreApplication>
+#include <QDesktopServices>
+#include <QFileDialog>
 #include <QDir>
 #include <QFile>
 #include <QHBoxLayout>
@@ -26,6 +28,7 @@ constexpr qint64 kMaxMessageBytes = 64LL * 1024 * 1024; // come MessageParser
 
 struct Loaded {
     ParsedMessage pm;
+    QByteArray raw;
     QString error;
 };
 
@@ -175,6 +178,8 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     connect(list_->selectionModel(), &QItemSelectionModel::currentChanged, this,
             [this](const QModelIndex& cur) { onCurrentChanged(cur); });
     connect(view_, &MessageView::decryptRequested, this, &MainWindow::onDecryptRequested);
+    connect(view_, &MessageView::saveAttachmentRequested, this, &MainWindow::saveAttachment);
+    connect(view_, &MessageView::linkActivated, this, &MainWindow::openLink);
     connect(newBtn_, &QPushButton::clicked, this, &MainWindow::newMessage);
     connect(replyBtn_, &QPushButton::clicked, this, &MainWindow::reply);
     connect(replyAllBtn_, &QPushButton::clicked, this, &MainWindow::replyAll);
@@ -552,14 +557,15 @@ void MainWindow::startLoad(quint64 token, const MessageSummary& s) {
                 l.error = QObject::tr("Messaggio troppo grande per essere mostrato");
                 return l;
             }
-            const QByteArray raw = f.read(kMaxMessageBytes + 1);
-            l.pm = MessageParser::parse(raw, &l.error);
+            l.raw = f.read(kMaxMessageBytes + 1);
+            l.pm = MessageParser::parse(l.raw, &l.error);
             return l;
         },
-        [this, token, s](Loaded l) { onLoaded(token, s, l.pm, l.error); });
+        [this, token, s](Loaded l) { onLoaded(token, s, l.pm, l.raw, l.error); });
 }
 
-void MainWindow::onLoaded(quint64 token, const MessageSummary& s, const ParsedMessage& pm, const QString& error) {
+void MainWindow::onLoaded(quint64 token, const MessageSummary& s, const ParsedMessage& pm, const QByteArray& raw,
+                          const QString& error) {
     if (token != selToken_) return; // selezione superata
     if (!error.isEmpty()) {
         ParsedMessage e;
@@ -571,6 +577,7 @@ void MainWindow::onLoaded(quint64 token, const MessageSummary& s, const ParsedMe
     }
     curSummary_ = s;
     curParsed_ = pm;
+    curRaw_ = raw;
     view_->show(pm);
     setHaveMessage(true);
     emit messageOpened(s.path);
@@ -642,6 +649,7 @@ void MainWindow::onDecryptRequested() {
                 [plain = std::move(plain)]() {
                     Loaded l;
                     l.pm = MessageParser::parse(plain, &l.error);
+                    l.raw = plain;
                     return l;
                 },
                 [self, token](Loaded l) {
@@ -666,6 +674,7 @@ void MainWindow::onDecryptRequested() {
                     if (o.pgpNested) inner.pgpNested = true;
                     self->decrypted_ = true;
                     self->curParsed_ = inner;
+                    self->curRaw_ = l.raw; // allegati: indici riferiti al contenuto decifrato
                     self->curParsed_.encryptedPgp = false;
                     self->view_->showDecrypted(inner);
                     if (self->haveInner_) self->view_->setSignatureResult(self->innerStatus_, self->innerSigner_);
@@ -679,6 +688,72 @@ void MainWindow::onDecryptRequested() {
             self->innerSigner_ = signer;
             if (self->decrypted_) self->view_->setSignatureResult(st, signer); // altrimenti dopo showDecrypted
         });
+}
+
+// ---- allegati e link ----
+
+void MainWindow::saveAttachment(int index) {
+    if (!haveMsg_ || index < 0 || index >= curParsed_.attachments.size()) return;
+    const Attachment a = curParsed_.attachments.at(index);
+    QString dir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    if (dir.isEmpty()) dir = QDir::homePath();
+    const QString proposed = dir + QLatin1Char('/') + MessageParser::sanitizeFilename(a.filename);
+    // La conferma di sovrascrittura di QFileDialog e' disattivata: saveAttachment non
+    // sovrascrive mai e un file esistente produce un errore chiaro.
+    const QString dest = saveFile_ ? saveFile_(proposed)
+                                   : QFileDialog::getSaveFileName(this, tr("Salva allegato"), proposed, QString(), nullptr,
+                                                                  QFileDialog::DontConfirmOverwrite);
+    if (dest.isEmpty()) return;
+    QPointer<MainWindow> self(this);
+    // scrittura (fino a 64 MiB, fsync) fuori dal thread GUI
+    offThread<QString>(
+        this,
+        [raw = curRaw_, part = a.partIndex, dest]() {
+            QString err;
+            if (!MessageParser::saveAttachment(raw, part, dest, &err) && err.isEmpty())
+                err = QObject::tr("salvataggio non riuscito");
+            return err;
+        },
+        [self, dest](QString err) {
+            if (!err.isEmpty()) {
+                self->showNotice(tr("Allegato non salvato"),
+                                 tr("L'allegato non e' stato salvato in %1: %2.\nNessun file esistente e' stato modificato.")
+                                     .arg(dest, err));
+                return;
+            }
+            self->statusBar()->showMessage(tr("Allegato salvato: %1").arg(dest), 10000);
+        });
+}
+
+void MainWindow::openLink(const QUrl& url) {
+    const QString scheme = url.scheme().toLower();
+    if (!url.isValid() || !(scheme == QLatin1String("http") || scheme == QLatin1String("https") ||
+                            scheme == QLatin1String("mailto"))) {
+        showNotice(tr("Link non aperto"),
+                   tr("Boma apre solo link http, https e mailto. Destinazione: %1")
+                       .arg(QString::fromLatin1(url.toEncoded().left(500))));
+        return;
+    }
+    // Destinazione reale, in ASCII: un dominio internazionale appare in punycode
+    // (xn--...), cosi' un dominio che imita un altro con lettere simili si vede.
+    const QString target = QString::fromLatin1(url.toEncoded(QUrl::FullyEncoded).left(2000));
+    QString text = tr("Aprire questo indirizzo?\n\n%1").arg(target);
+    if (scheme != QLatin1String("mailto")) {
+        const QString host = QString::fromLatin1(QUrl::toAce(url.host()));
+        if (!host.isEmpty()) text += tr("\n\nSito: %1").arg(host);
+    }
+    bool yes;
+    if (confirmLink_) {
+        yes = confirmLink_(url, text);
+    } else {
+        QMessageBox box(QMessageBox::Question, tr("Apri link"), text, QMessageBox::Yes | QMessageBox::No, this);
+        box.setTextFormat(Qt::PlainText);
+        box.setDefaultButton(QMessageBox::No);
+        yes = box.exec() == QMessageBox::Yes;
+    }
+    if (!yes) return;
+    if (openUrl_) openUrl_(url);
+    else QDesktopServices::openUrl(url);
 }
 
 // ---- azioni ----

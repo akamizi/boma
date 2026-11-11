@@ -5,6 +5,7 @@
 #include <QPushButton>
 #include <functional>
 #include <QTextBrowser>
+#include <QToolButton>
 #include <QUrl>
 
 namespace boma {
@@ -24,6 +25,10 @@ public:
     void showDecrypted(const ParsedMessage& m);
     void showDecryptError(const QString& error);
     QPushButton* decryptButton() const { return decryptButton_; }
+    // "Salva allegato...": un'azione per allegato; emette saveAttachmentRequested(i)
+    // (indice in message().attachments). Nulla si apre o si salva da solo.
+    QToolButton* attachmentButton() const { return attachButton_; }
+    const ParsedMessage& message() const { return msg_; }
     // Badge e avvisi sono widget FUORI dal QTextDocument: l'HTML del mittente
     // non puo' disegnarli ne' imitarli.
     QLabel* signatureBadge() const { return badge_; }
@@ -37,6 +42,7 @@ public:
 signals:
     void linkActivated(const QUrl& url);
     void decryptRequested();
+    void saveAttachmentRequested(int index);
 
 protected:
     void resizeEvent(QResizeEvent* e) override;
@@ -57,6 +63,8 @@ private:
     QLabel *badge_ = nullptr, *errLabel_ = nullptr;
     QWidget* encRow_ = nullptr;
     QPushButton* decryptButton_ = nullptr;
+    QToolButton* attachButton_ = nullptr;
+    void updateAttachments();
     std::function<bool()> confirm_;
 };
 

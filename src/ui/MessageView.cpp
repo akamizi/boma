@@ -1,4 +1,6 @@
 #include "ui/MessageView.h"
+#include <QAction>
+#include <QMenu>
 
 #include <QImage>
 #include <QHBoxLayout>
@@ -194,6 +196,12 @@ MessageView::MessageView(QWidget* parent) : QTextBrowser(parent) {
     row->addWidget(decryptButton_);
     encRow_->hide();
     lay->addWidget(encRow_);
+    attachButton_ = new QToolButton(bar_);
+    attachButton_->setText(tr("Salva allegato..."));
+    attachButton_->setPopupMode(QToolButton::InstantPopup);
+    attachButton_->setMenu(new QMenu(attachButton_));
+    attachButton_->hide();
+    lay->addWidget(attachButton_, 0, Qt::AlignLeft);
     errLabel_ = new QLabel(bar_);
     errLabel_->setTextFormat(Qt::PlainText);
     errLabel_->setWordWrap(true);
@@ -214,7 +222,9 @@ void MessageView::layoutBar() {
     errLabel_->setText(decryptError_);
     errLabel_->setVisible(!decryptError_.isEmpty());
     encRow_->setVisible(encryptedShown_);
-    const bool any = encryptedShown_ || badge_->isVisibleTo(bar_) || errLabel_->isVisibleTo(bar_);
+    attachButton_->setVisible(!encryptedShown_ && !msg_.attachments.isEmpty());
+    const bool any = encryptedShown_ || badge_->isVisibleTo(bar_) || errLabel_->isVisibleTo(bar_) ||
+                     attachButton_->isVisibleTo(bar_);
     int h = 0;
     if (any) {
         bar_->layout()->activate();
@@ -251,6 +261,7 @@ void MessageView::showDecrypted(const ParsedMessage& m) {
     signer_.clear();
     msg_ = m;
     msg_.encryptedPgp = false;
+    updateAttachments();
     render();
     layoutBar();
 }
@@ -392,8 +403,22 @@ void MessageView::show(const ParsedMessage& m) {
     encrypted_ = m.encryptedPgp ? m.rawEncrypted : QByteArray();
     encryptedShown_ = m.encryptedPgp;
     decryptButton_->setEnabled(true);
+    updateAttachments();
     render();
     layoutBar();
+}
+
+void MessageView::updateAttachments() {
+    QMenu* menu = attachButton_->menu();
+    menu->clear();
+    for (int i = 0; i < msg_.attachments.size(); ++i) {
+        const Attachment& a = msg_.attachments.at(i);
+        // testo semplice: niente mnemonici "&" dal nome scelto dal mittente
+        QString label = a.filename;
+        label.replace(QLatin1Char('&'), QStringLiteral("&&"));
+        QAction* act = menu->addAction(QStringLiteral("%1 (%2)").arg(label, QLocale().formattedDataSize(a.size)));
+        connect(act, &QAction::triggered, this, [this, i]() { emit saveAttachmentRequested(i); });
+    }
 }
 
 void MessageView::render() {
