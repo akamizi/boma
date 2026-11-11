@@ -601,6 +601,9 @@ void MainWindow::onDecryptRequested() {
                     inner.messageId = o.messageId;
                     inner.references = o.references;
                     inner.replyTo = o.replyTo;
+                    // I1: se il cifrato era annidato accanto a parti in chiaro, anche
+                    // il contenuto decifrato resta "solo in parte" (mai badge verde).
+                    if (o.pgpNested) inner.pgpNested = true;
                     self->decrypted_ = true;
                     self->curParsed_ = inner;
                     self->curParsed_.encryptedPgp = false;

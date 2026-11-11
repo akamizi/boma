@@ -686,6 +686,58 @@ private slots:
         QVERIFY(QTest::qWaitFor([&] { return w.messageView()->signatureBadge()->isVisibleTo(w.messageView()); }, 10000));
         QVERIFY(w.messageView()->signatureBadge()->text().contains(QStringLiteral("Firma valida")));
     }
+    // I1: un vecchio messaggio firmato annidato sotto un testo dell'attaccante (o
+    // dentro un cifrato) non deve mai dare il badge verde sul testo non firmato.
+    QByteArray nestedSignedEntity() {
+        const QByteArray part = "Content-Type: text/plain; charset=utf-8\r\n\r\nVecchio testo firmato 7001";
+        GpgRun r = runGpg(home_, {"--batch", "--armor", "--detach-sign", "-u", "alice@example.test"}, part);
+        if (r.code != 0) qFatal("firma: %s", r.err.constData());
+        return "Content-Type: multipart/mixed; boundary=\"mix\"\r\n\r\n"
+               "--mix\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nTESTO DELL'ATTACCANTE 6660\r\n"
+               "--mix\r\nContent-Type: multipart/signed; protocol=\"application/pgp-signature\"; micalg=pgp-sha512; boundary=\"sig\"\r\n\r\n"
+               "--sig\r\n" + part + "\r\n--sig\r\nContent-Type: application/pgp-signature\r\n\r\n" + r.out +
+               "\r\n--sig--\r\n\r\n--mix--\r\n";
+    }
+    void testNestedSignedPartNeverGivesGreenBadge() {
+        const QString p = dir_ + QStringLiteral("/mail/a/INBOX/cur/nested.eml:2,S");
+        writeFile(p, "From: Alice <alice@example.test>\r\nTo: bob@example.org\r\nSubject: Replay\r\nMessage-ID: <nest@x>\r\n"
+                     "Date: Tue, 10 Nov 2026 10:00:00 +0100\r\nMIME-Version: 1.0\r\n" + nestedSignedEntity());
+        listUnread({jsonMsg(p, QStringLiteral("nest@x"), QStringLiteral("Alice"), QStringLiteral("Replay"), false)});
+        MainWindow w(makeConfig(), opts());
+        w.show();
+        QVERIFY(waitRows(w, 1));
+        select(w, 0);
+        QVERIFY(QTest::qWaitFor([&] { return w.messageView()->toPlainText().contains(QStringLiteral("6660")); }, 10000));
+        QTest::qWait(1500); // tempo per un'eventuale verifica
+        QLabel* b = w.messageView()->signatureBadge();
+        QVERIFY2(!b->text().contains(QStringLiteral("Firma valida")), qPrintable(b->text()));
+        QVERIFY(!b->styleSheet().contains(QStringLiteral("#1a7f37")));
+        QVERIFY2(b->isVisibleTo(w.messageView()) && b->text().contains(QStringLiteral("parte")), qPrintable(b->text()));
+    }
+    void testEncryptedWithNestedSignedPartNeverGivesGreenBadge() {
+        GpgRun r = runGpg(home_, {"--batch", "--armor", "--trust-model", "always", "--encrypt", "-r", "alice@example.test"},
+                          nestedSignedEntity());
+        QVERIFY2(r.code == 0, r.err.constData());
+        const QString p = dir_ + QStringLiteral("/mail/a/INBOX/cur/nestenc.eml:2,S");
+        writeFile(p, "From: Alice <alice@example.test>\r\nTo: bob@example.org\r\nSubject: Cifrato\r\nMessage-ID: <nestenc@x>\r\n"
+                     "Date: Tue, 10 Nov 2026 10:00:00 +0100\r\nMIME-Version: 1.0\r\n"
+                     "Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; boundary=\"enc\"\r\n\r\n"
+                     "--enc\r\nContent-Type: application/pgp-encrypted\r\n\r\nVersion: 1\r\n\r\n--enc\r\n"
+                     "Content-Type: application/octet-stream\r\n\r\n" + r.out + "\r\n--enc--\r\n");
+        listUnread({jsonMsg(p, QStringLiteral("nestenc@x"), QStringLiteral("Alice"), QStringLiteral("Cifrato"), false)});
+        MainWindow w(makeConfig(), opts());
+        w.show();
+        QVERIFY(waitRows(w, 1));
+        select(w, 0);
+        QVERIFY(QTest::qWaitFor([&] { return w.messageView()->decryptButton()->isVisibleTo(w.messageView()); }, 10000));
+        w.messageView()->setConfirmCallback([] { return true; });
+        w.messageView()->decryptButton()->click();
+        QVERIFY(QTest::qWaitFor([&] { return w.messageView()->toPlainText().contains(QStringLiteral("6660")); }, 30000));
+        QTest::qWait(1500);
+        QLabel* b = w.messageView()->signatureBadge();
+        QVERIFY2(!b->text().contains(QStringLiteral("Firma valida")), qPrintable(b->text()));
+        QVERIFY(!b->styleSheet().contains(QStringLiteral("#1a7f37")));
+    }
     void testStaleVerifyResultIsDropped() {
         listUnread({jsonMsg(pathSigned_, QStringLiteral("sig1@x"), QStringLiteral("Alice"), QStringLiteral("Firmato"), false),
                     jsonMsg(pathB_, QStringLiteral("m2@x"), QStringLiteral("Frank"), QStringLiteral("Oggetto due"), false)});

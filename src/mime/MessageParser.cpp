@@ -248,7 +248,9 @@ struct Walker {
     }
 
     // hidden: parti (firma, testo cifrato) che non sono allegati da mostrare.
-    void walk(GMimeObject* o, int depth, bool hidden) {
+    // whole: questa parte e' l'intero corpo del messaggio (radice, o unico figlio
+    // di multipart con una sola parte fino alla radice).
+    void walk(GMimeObject* o, int depth, bool hidden, bool whole = true) {
         if (!o || depth > kMaxDepth) return;
         if (!isMultipart(o)) {
             leaf(o, hidden);
@@ -261,8 +263,14 @@ struct Walker {
         const QString proto = ct ? fromG(g_mime_content_type_get_parameter(ct, "protocol")).toLower() : QString();
         const bool signedPgp = type == QLatin1String("multipart/signed") && proto == QLatin1String("application/pgp-signature");
         const bool encPgp = type == QLatin1String("multipart/encrypted") && proto == QLatin1String("application/pgp-encrypted");
+        if (out && wantIndex < 0 && (signedPgp || encPgp) && !out->signedPgp && !out->encryptedPgp) {
+            // I1: firmato SOLO se multipart/signed e' l'intero corpo (radice o unico figlio)
+            // con esattamente due parti; altrimenti il testo mostrato puo' stare
+            // fuori dalla firma (es. testo dell'attaccante + vecchia parte firmata).
+            if (!whole || n != 2) out->pgpNested = true;
+        }
         if (out && wantIndex < 0) {
-            if (signedPgp && n >= 2 && !out->signedPgp && !out->encryptedPgp) {
+            if (signedPgp && whole && n == 2 && !out->signedPgp && !out->encryptedPgp) {
                 out->signedPgp = true;
                 out->rawSignedPart = raw ? exactFirstPart(*raw, boundaryOf(mp)) : QByteArray();
                 GMimeObject* sig = g_mime_multipart_get_part(mp, 1);
@@ -275,7 +283,7 @@ struct Walker {
         }
         for (int i = 0; i < n; ++i) {
             const bool h = hidden || (signedPgp && i == 1) || (encPgp && out && wantIndex < 0);
-            walk(g_mime_multipart_get_part(mp, i), depth + 1, h);
+            walk(g_mime_multipart_get_part(mp, i), depth + 1, h, whole && n == 1);
         }
     }
 };

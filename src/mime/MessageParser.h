@@ -22,7 +22,14 @@ struct ParsedMessage {
     QDateTime date;
     QString plainText, html;
     QList<Attachment> attachments;
-    bool signedPgp = false, encryptedPgp = false;
+    // signedPgp: SOLO se multipart/signed (esattamente 2 parti) e' l'intero corpo
+    // del messaggio (radice, o sotto multipart con un'unica parte): tutto il testo
+    // e gli allegati mostrati sono dentro la firma.
+    // encryptedPgp: multipart/encrypted a qualunque profondita' (decifrabile).
+    // pgpNested: c'e' una parte firmata o cifrata che NON e' l'intero corpo (o un
+    // multipart/signed con parti in piu'): il testo mostrato puo' non essere quello
+    // firmato/cifrato. Mai il badge verde: la UI mostra "firmato solo in parte".
+    bool signedPgp = false, encryptedPgp = false, pgpNested = false;
     // PGP/MIME firmato: byte esatti della prima parte come trasmessa e firma
     // decodificata. PGP/MIME cifrato: contenuto del testo cifrato.
     // Boma non verifica ne' decifra qui.

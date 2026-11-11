@@ -167,6 +167,42 @@ private slots:
         QVERIFY(e.rawEncrypted.contains("-----END PGP MESSAGE-----"));
         QVERIFY(e.plainText.isEmpty());
     }
+    // I1: firmato solo se multipart/signed e' l'intero corpo del messaggio.
+    void testNestedSignedIsOnlyPartial() {
+        const QByteArray sig = "Content-Type: multipart/signed; protocol=\"application/pgp-signature\"; boundary=\"s\"\n\n"
+                               "--s\nContent-Type: text/plain\n\nVECCHIO FIRMATO\n--s\nContent-Type: application/pgp-signature\n\n"
+                               "-----BEGIN PGP SIGNATURE-----\nx\n-----END PGP SIGNATURE-----\n--s--\n";
+        const QByteArray head = "From: a@x\nTo: b@x\nSubject: s\nMIME-Version: 1.0\n";
+        // testo dell'attaccante prima della parte firmata
+        auto m = MessageParser::parse(head + "Content-Type: multipart/mixed; boundary=\"m\"\n\n--m\nContent-Type: text/plain\n\n"
+                                             "ATTACCANTE\n--m\n" + sig + "\n--m--\n");
+        QVERIFY(!m.signedPgp);
+        QVERIFY(m.pgpNested);
+        QVERIFY(m.rawSignedPart.isEmpty() && m.rawSignature.isEmpty());
+        QVERIFY(m.plainText.contains(QStringLiteral("ATTACCANTE")));
+        // firmato in testa: valido come prima
+        auto top = MessageParser::parse(head + sig);
+        QVERIFY(top.signedPgp);
+        QVERIFY(!top.pgpNested);
+        QVERIFY(top.plainText.contains(QStringLiteral("VECCHIO FIRMATO")));
+        // multipart/signed in testa ma con una terza parte (fuori dalla firma): non firmato
+        QByteArray three = sig;
+        three.replace("--s--\n", "--s\nContent-Type: text/plain\nContent-Disposition: attachment; filename=x.txt\n\nAGGIUNTO\n--s--\n");
+        auto t = MessageParser::parse(head + three);
+        QVERIFY(!t.signedPgp);
+        QVERIFY(t.pgpNested);
+        // cifrato annidato sotto un testo in chiaro: decifrabile ma segnalato come annidato
+        const QByteArray enc = "Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; boundary=\"e\"\n\n"
+                               "--e\nContent-Type: application/pgp-encrypted\n\nVersion: 1\n\n--e\nContent-Type: application/octet-stream\n\n"
+                               "-----BEGIN PGP MESSAGE-----\nx\n-----END PGP MESSAGE-----\n--e--\n";
+        auto e = MessageParser::parse(head + "Content-Type: multipart/mixed; boundary=\"m\"\n\n--m\nContent-Type: text/plain\n\n"
+                                             "ATTACCANTE\n--m\n" + enc + "\n--m--\n");
+        QVERIFY(e.encryptedPgp);
+        QVERIFY(e.pgpNested);
+        auto etop = MessageParser::parse(head + enc);
+        QVERIFY(etop.encryptedPgp);
+        QVERIFY(!etop.pgpNested);
+    }
     void testRemoteImagesAreNotLoaded() {
         QTcpServer server;
         QVERIFY(server.listen(QHostAddress::LocalHost));

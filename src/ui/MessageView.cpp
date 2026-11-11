@@ -265,6 +265,18 @@ void MessageView::showDecryptError(const QString& error) {
 void MessageView::updateBadge() {
     const char* green = "color:#1a7f37;font-weight:bold"; // solo per Valid
     QString text, style;
+    if (msg_.pgpNested) {
+        // I1: parte firmata/cifrata annidata accanto a parti non protette. Qualunque
+        // esito della verifica riguarda solo QUELLA parte: mai il badge verde.
+        text = QStringLiteral("\u26A0 ") +
+               tr("Firmato o cifrato solo in parte: il testo mostrato non e' verificato");
+        if (sigStatus_ != SignatureStatus::None && !signer_.isEmpty())
+            text += QStringLiteral(" (") + tr("firma di una parte: ") + signer_ + QLatin1Char(')');
+        badge_->setText(text);
+        badge_->setStyleSheet(QStringLiteral("color:#b26a00;font-weight:bold"));
+        badge_->setVisible(true);
+        return;
+    }
     switch (sigStatus_) {
     case SignatureStatus::None:
         break;
