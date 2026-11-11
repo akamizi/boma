@@ -97,6 +97,11 @@ public slots:
     // Mostra (ricreandolo se serve) il dialogo della prima sincronizzazione.
     void showFirstRunDialog();
 
+protected:
+    // Mai chiudere durante un invio; ogni finestra di scrittura aperta viene chiusa
+    // (e chiede conferma se ha modifiche): se una rifiuta, nulla si chiude.
+    void closeEvent(QCloseEvent* e) override;
+
 signals:
     // Il messaggio e' stato mostrato (segnato come letto solo DOPO questo segnale).
     void messageOpened(const QString& path);

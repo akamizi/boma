@@ -913,6 +913,57 @@ private slots:
         QVERIFY(QTest::qWaitFor([&] { return c.isNull(); }, 2000));
         QDir(dir_ + QStringLiteral("/non-salvati")).removeRecursively();
     }
+    // I6: chiudere la finestra principale passa da ogni finestra di scrittura (che
+    // chiede conferma se ci sono modifiche): se una rifiuta, nulla si chiude.
+    void testMainCloseAsksEveryComposer() {
+        MainWindow w(makeConfig(false), opts());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        w.newButton()->click();
+        w.newButton()->click();
+        QCOMPARE(w.composers().size(), 2);
+        QPointer<ComposeWindow> clean = w.composers().at(0), dirty = w.composers().at(1);
+        dirty->bodyEdit()->setPlainText(QStringLiteral("non perdermi"));
+        int asked = 0;
+        bool answer = false;
+        dirty->setConfirmCallback([&] { ++asked; return answer; });
+        QVERIFY(!w.close());
+        QCOMPARE(asked, 1);
+        QVERIFY(w.isVisible());
+        QVERIFY(dirty);
+        QVERIFY(dirty->isVisible());
+        answer = true;
+        QVERIFY(w.close());
+        QCOMPARE(asked, 2);
+        QVERIFY(QTest::qWaitFor([&] { return dirty.isNull() && clean.isNull(); }, 2000));
+    }
+    // I6: mai chiudere durante un invio (msmtp in corso).
+    void testMainCloseRefusedWhileSending() {
+        MainWindowOptions o = opts();
+        o.msmtpProgram = writeScript(dir_, QStringLiteral("msmtpslow"),
+                                     "#!/bin/sh\nd=$(dirname \"$0\")\ncat > \"$d/stdin\"\nsleep 2\necho run >> \"$d/count\"\nexit 0\n");
+        MainWindow w(makeConfig(false), o);
+        Noticed n;
+        w.setNoticeCallback([&](const QString& t, const QString& x) { n.titles << t; n.texts << x; });
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        const int before = log(QStringLiteral("count")).count(QStringLiteral("run"));
+        w.newButton()->click();
+        QPointer<ComposeWindow> c = firstComposer(w);
+        QVERIFY(c);
+        c->toEdit()->setText(QStringLiteral("bob@x.test"));
+        c->bodyEdit()->setPlainText(QStringLiteral("in viaggio"));
+        c->sendButton()->click();
+        QVERIFY(QTest::qWaitFor([&] { return w.sender()->busy(); }, 5000));
+        QVERIFY(!w.close());
+        QVERIFY(w.isVisible());
+        QVERIFY(!n.titles.isEmpty());
+        QVERIFY2(n.texts.last().contains(QStringLiteral("invio")), qPrintable(n.texts.last()));
+        QVERIFY(QTest::qWaitFor([&] { return !w.sender()->busy(); }, 20000));
+        QCOMPARE(log(QStringLiteral("count")).count(QStringLiteral("run")), before + 1);
+        QVERIFY(QTest::qWaitFor([&] { return c.isNull(); }, 5000));
+        QVERIFY(w.close());
+    }
     void testSendUnsignedNeedsExplicitConfirmation() {
         MainWindow w(makeConfig(true), opts());
         int asked = 0;

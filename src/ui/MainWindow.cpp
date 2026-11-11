@@ -3,6 +3,7 @@
 #include "ui/ReplyBuilder.h"
 #include "core/MaildirWriter.h"
 
+#include <QCloseEvent>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -264,6 +265,27 @@ MainWindow::~MainWindow() {
     // Prima di distruggere i figli (ProcessRunner ucciderebbe con SIGKILL):
     // il mbsync in corso riceve SIGTERM, resta sicuro e riprende al prossimo avvio.
     if (sync_) sync_->shutdown();
+}
+
+void MainWindow::closeEvent(QCloseEvent* e) {
+    if (sender_ && sender_->busy()) {
+        e->ignore();
+        showNotice(tr("Invio in corso"),
+               tr("Un messaggio e' in fase di invio. Attendi la fine dell'invio prima di chiudere Boma."));
+        return;
+    }
+    QList<QPointer<ComposeWindow>> open;
+    for (ComposeWindow* c : composers())
+        open << c;
+    for (const QPointer<ComposeWindow>& c : open) {
+        if (c && !c->close()) {
+            e->ignore();
+            c->raise();
+            c->activateWindow();
+            return;
+        }
+    }
+    QMainWindow::closeEvent(e);
 }
 
 // I4: Inviata/Bozze/Cestino devono essere Maildir valide (MaildirWriter e mu
