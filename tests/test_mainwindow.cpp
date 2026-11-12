@@ -17,6 +17,7 @@
 #include <QStatusBar>
 #include <QProcessEnvironment>
 #include <QTemporaryDir>
+#include "ui/MessageDelegate.h"
 #include <QMenu>
 #include <QSignalSpy>
 #include <QToolButton>
@@ -366,6 +367,53 @@ private slots:
         QVERIFY(menu->findChild<QAction*>("markAllRead"));
         QVERIFY(menu->findChild<QAction*>("emptyFolder"));
         delete menu;
+    }
+    void testCheckboxClickChecksWithoutOpeningMessage() {
+        MainWindow w(makeConfig(), optsRoot());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        QVERIFY(!w.bulkBar()->isVisible());
+        const QRect row = w.listView()->visualRect(w.model()->index(0, 0));
+        const QPoint pt = MessageDelegate::checkRect(row).center();
+        QTest::mouseClick(w.listView()->viewport(), Qt::LeftButton, {}, pt);
+        QCOMPARE(w.model()->checkedCount(), 1);
+        QVERIFY(w.bulkBar()->isVisible());
+        QVERIFY(!w.listView()->currentIndex().isValid()); // il messaggio non si apre
+        QTest::qWait(300);
+        QVERIFY(!log(QStringLiteral("mu.log")).contains(QStringLiteral("--flags=-N+S")));
+        QTest::mouseClick(w.listView()->viewport(), Qt::LeftButton, {}, pt);
+        QCOMPARE(w.model()->checkedCount(), 0);
+        QVERIFY(!w.bulkBar()->isVisible());
+    }
+    void testDeleteCheckedAsksThenMovesOnlyChecked() {
+        MainWindow w(makeConfig(), optsRoot());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        QString asked;
+        bool answer = false;
+        w.setConfirmDestructiveCallback([&](const QString&, const QString& t) { asked = t; return answer; });
+        w.model()->setData(w.model()->index(1, 0), true, MessageListModel::CheckedRole);
+        const QString path = w.model()->summary(1).path;
+        w.deleteChecked();
+        QVERIFY(!asked.isEmpty());
+        QTest::qWait(300);
+        QVERIFY(!moves().contains("/Trash")); // rifiutato
+        QCOMPARE(w.model()->rowCount(), 2);
+        answer = true;
+        w.deleteChecked();
+        QVERIFY(QTest::qWaitFor([&] { return moves().contains(QStringLiteral("%1 /a/Trash").arg(path)) && !w.bulkBusy(); }, 10000));
+        QVERIFY(waitRows(w, 1));
+        QCOMPARE(w.model()->checkedCount(), 0);
+        QVERIFY(QFile::exists(path));
+    }
+    void testMarkCheckedReadMarksOnlyChecked() {
+        MainWindow w(makeConfig(), optsRoot());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        w.model()->setData(w.model()->index(0, 0), true, MessageListModel::CheckedRole);
+        w.markCheckedRead();
+        QVERIFY(QTest::qWaitFor([&] { return !w.bulkBusy(); }, 10000));
+        QCOMPARE(countLines(log(QStringLiteral("mu.log")), QStringLiteral("--flags=-N+S")), 1);
     }
     void testMarkFolderReadMarksEveryUnread() {
         writeFile(dir_ + QStringLiteral("/plain.txt"), QStringLiteral("%1/Trash/cur/a\n%1/Trash/cur/b\n").arg(dir_ + "/mail/a").toUtf8());

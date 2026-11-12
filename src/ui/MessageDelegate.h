@@ -12,6 +12,8 @@ public:
     using QStyledItemDelegate::QStyledItemDelegate;
     void paint(QPainter* p, const QStyleOptionViewItem& o, const QModelIndex& i) const override;
     QSize sizeHint(const QStyleOptionViewItem& o, const QModelIndex& i) const override;
+    // Rettangolo della casella di selezione dentro il rettangolo di una riga.
+    static QRect checkRect(const QRect& row);
     static QString formatDate(const QDateTime& d, const QDateTime& now = QDateTime::currentDateTime());
     static QString formatSize(qint64 bytes);
 };

@@ -17,11 +17,14 @@ void MessageListModel::reset()
     ++m_generation;
     m_rows.clear();
     m_seen.clear();
+    const bool hadChecked = !m_checked.isEmpty();
+    m_checked.clear();
     m_offset = 0;
     m_exhausted = false;
     m_truncated = false;
     m_loading = false;
     endResetModel();
+    if (hadChecked) emit checkedChanged(0);
 }
 
 void MessageListModel::markReadLocal(int row, const QString& newPath)
@@ -31,6 +34,7 @@ void MessageListModel::markReadLocal(int row, const QString& newPath)
     m_rows[row].unread = false;
     if (!newPath.isEmpty() && newPath != m_rows[row].path) {
         m_seen.remove(m_rows[row].path);
+        if (m_checked.remove(m_rows[row].path)) m_checked.insert(newPath);
         m_rows[row].path = newPath;
         m_seen.insert(newPath);
     }
@@ -43,12 +47,46 @@ void MessageListModel::removeAt(int row)
     if (row < 0 || row >= m_rows.size())
         return;
     beginRemoveRows({}, row, row);
+    const bool wasChecked = m_checked.remove(m_rows[row].path);
     m_seen.remove(m_rows[row].path);
     m_rows.removeAt(row);
     endRemoveRows();
+    if (wasChecked) emit checkedChanged(int(m_checked.size()));
     // le pagine successive si spostano di una riga
     if (m_offset > 0)
         --m_offset;
+}
+
+QList<MessageSummary> MessageListModel::checkedSummaries() const
+{
+    QList<MessageSummary> out;
+    for (const MessageSummary& m : m_rows)
+        if (m_checked.contains(m.path)) out << m;
+    return out;
+}
+
+void MessageListModel::clearChecked()
+{
+    if (m_checked.isEmpty()) return;
+    m_checked.clear();
+    if (!m_rows.isEmpty()) emit dataChanged(index(0), index(int(m_rows.size()) - 1), {CheckedRole});
+    emit checkedChanged(0);
+}
+
+bool MessageListModel::setData(const QModelIndex& idx, const QVariant& v, int role)
+{
+    if (role != CheckedRole || !idx.isValid() || idx.row() >= m_rows.size()) return false;
+    const QString& p = m_rows.at(idx.row()).path;
+    if (v.toBool()) m_checked.insert(p);
+    else m_checked.remove(p);
+    emit dataChanged(idx, idx, {CheckedRole});
+    emit checkedChanged(int(m_checked.size()));
+    return true;
+}
+
+Qt::ItemFlags MessageListModel::flags(const QModelIndex& idx) const
+{
+    return QAbstractListModel::flags(idx);
 }
 
 int MessageListModel::rowCount(const QModelIndex& parent) const
@@ -72,6 +110,7 @@ QVariant MessageListModel::data(const QModelIndex& idx, int role) const
     case AccountIdRole: return m.accountId;
     case FlaggedRole: return m.flagged;
     case SizeRole: return m.size;
+    case CheckedRole: return m_checked.contains(m.path);
     }
     return {};
 }

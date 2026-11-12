@@ -4,6 +4,7 @@
 #include <QApplication>
 #include <QLocale>
 #include <QPainter>
+#include <QStyleOptionButton>
 
 namespace boma {
 
@@ -25,6 +26,10 @@ QString MessageDelegate::formatDate(const QDateTime& d, const QDateTime& now) {
     if (d.date().year() == now.date().year())
         return QStringLiteral("%1 %2, %3").arg(d.date().day()).arg(loc.monthName(d.date().month(), QLocale::ShortFormat)).arg(d.time().toString(QStringLiteral("HH:mm")));
     return loc.toString(d.date(), QLocale::ShortFormat);
+}
+
+QRect MessageDelegate::checkRect(const QRect& r) {
+    return QRect(r.left() + 12, r.center().y() - 9, 18, 18);
 }
 
 QSize MessageDelegate::sizeHint(const QStyleOptionViewItem& o, const QModelIndex&) const {
@@ -54,7 +59,15 @@ void MessageDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
     bold.setBold(unread);
     const QFontMetrics fm(opt.font), fb(bold);
     const int pad = 10, h = fm.height();
-    const QRect in = r.adjusted(pad + 4, 6, -pad, -6);
+    const QRect in = r.adjusted(pad + 4 + 28, 6, -pad, -6);
+    {
+        QStyleOptionButton cb;
+        cb.rect = checkRect(r);
+        cb.state = QStyle::State_Enabled | (i.data(MessageListModel::CheckedRole).toBool() ? QStyle::State_On : QStyle::State_Off);
+        cb.palette = pal;
+        const QWidget* w = opt.widget;
+        (w ? w->style() : QApplication::style())->drawControl(QStyle::CE_CheckBox, &cb, p, w);
+    }
     const int l1 = in.top(), l2 = in.top() + h + 4;
 
     // linea 1: data (e stella) a destra, mittente a sinistra

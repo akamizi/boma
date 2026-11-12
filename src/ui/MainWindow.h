@@ -74,6 +74,10 @@ public:
     QPushButton* replyAllButton() const { return replyAllBtn_; }
     QPushButton* forwardButton() const { return fwdBtn_; }
     QPushButton* deleteButton() const { return delBtn_; }
+    // Operazioni sui messaggi selezionati con le caselle (barra sopra l'elenco).
+    QWidget* bulkBar() const { return bulkBar_; }
+    void markCheckedRead();
+    void deleteChecked();
     Sender* sender() const { return sender_; }
     SyncService* syncService() const { return sync_; }
     // Finestre di scrittura aperte.
@@ -174,6 +178,8 @@ private:
     QStackedWidget* stack_;
     MessageView* view_;
     QTextBrowser* help_;
+    QWidget* bulkBar_ = nullptr;
+    QLabel* bulkLabel_ = nullptr;
     QPushButton *newBtn_, *replyBtn_, *replyAllBtn_, *fwdBtn_, *delBtn_, *syncBtn_, *settingsBtn_;
     std::function<bool(const Config&, Config*)> settingsCb_;
     void updateEmptyState();
@@ -210,6 +216,7 @@ private:
     bool bulkBusy_ = false;
     std::function<bool(const QString&, const QString&)> confirmDestructive_;
     bool bulkAllowed();
+    bool eventFilter(QObject* o, QEvent* e) override;
 
     std::function<bool()> confirmUnsigned_;
     std::function<void(const QString&, const QString&)> notice_;

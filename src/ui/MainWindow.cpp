@@ -14,6 +14,7 @@
 #include <QFile>
 #include <QHBoxLayout>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QScrollBar>
 #include <QShortcut>
 #include <QSplitter>
@@ -134,7 +135,37 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     rl->addWidget(stack_, 1);
 
     split->addWidget(folders_);
-    split->addWidget(list_);
+    auto* listPane = new QWidget(split);
+    auto* lpl = new QVBoxLayout(listPane);
+    lpl->setContentsMargins(0, 0, 0, 0);
+    lpl->setSpacing(0);
+    bulkBar_ = new QWidget(listPane);
+    bulkBar_->setObjectName(QStringLiteral("bulkBar"));
+    auto* bbl = new QHBoxLayout(bulkBar_);
+    bbl->setContentsMargins(6, 4, 6, 4);
+    bulkLabel_ = new QLabel(bulkBar_);
+    auto* bulkRead = new QPushButton(tr("Segna come letti"), bulkBar_);
+    bulkRead->setObjectName(QStringLiteral("bulkRead"));
+    auto* bulkDel = new QPushButton(tr("Elimina"), bulkBar_);
+    bulkDel->setObjectName(QStringLiteral("bulkDelete"));
+    auto* bulkClear = new QPushButton(tr("Deseleziona"), bulkBar_);
+    bulkClear->setObjectName(QStringLiteral("bulkClear"));
+    bbl->addWidget(bulkLabel_, 1);
+    bbl->addWidget(bulkRead);
+    bbl->addWidget(bulkDel);
+    bbl->addWidget(bulkClear);
+    bulkBar_->hide();
+    lpl->addWidget(bulkBar_);
+    lpl->addWidget(list_, 1);
+    connect(bulkRead, &QPushButton::clicked, this, &MainWindow::markCheckedRead);
+    connect(bulkDel, &QPushButton::clicked, this, &MainWindow::deleteChecked);
+    connect(bulkClear, &QPushButton::clicked, model_, &MessageListModel::clearChecked);
+    connect(model_, &MessageListModel::checkedChanged, this, [this](int n) {
+        bulkBar_->setVisible(n > 0);
+        bulkLabel_->setText(tr("%n selezionati", nullptr, n));
+    });
+    list_->viewport()->installEventFilter(this);
+    split->addWidget(listPane);
     split->addWidget(right);
     split->setStretchFactor(0, 1);
     split->setStretchFactor(1, 2);
@@ -873,6 +904,126 @@ void MainWindow::openLink(const QUrl& url) {
     if (!yes) return;
     if (openUrl_) openUrl_(url);
     else QDesktopServices::openUrl(url);
+}
+
+// Un clic sulla casella di una riga la spunta senza selezionare (e quindi aprire,
+// segnando come letto) il messaggio.
+bool MainWindow::eventFilter(QObject* o, QEvent* e) {
+    if (o == list_->viewport() && (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::MouseButtonRelease ||
+                                   e->type() == QEvent::MouseButtonDblClick)) {
+        auto* me = static_cast<QMouseEvent*>(e);
+        const QModelIndex idx = list_->indexAt(me->position().toPoint());
+        if (idx.isValid() && me->button() == Qt::LeftButton &&
+            MessageDelegate::checkRect(list_->visualRect(idx)).adjusted(-4, -4, 4, 4).contains(me->position().toPoint())) {
+            if (e->type() == QEvent::MouseButtonRelease)
+                model_->setData(idx, !idx.data(MessageListModel::CheckedRole).toBool(), MessageListModel::CheckedRole);
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(o, e);
+}
+
+void MainWindow::markCheckedRead() {
+    const QList<MessageSummary> sel = model_->checkedSummaries();
+    if (sel.isEmpty() || !bulkAllowed()) return;
+    bulkBusy_ = true;
+    struct State { QList<MessageSummary> items; int i = 0, failed = 0; QString firstError; };
+    auto st = std::make_shared<State>();
+    st->items = sel;
+    QPointer<MainWindow> self(this);
+    auto step = std::make_shared<std::function<void()>>();
+    *step = [self, st, step]() {
+        if (!self) return;
+        if (st->i >= st->items.size()) {
+            self->bulkBusy_ = false;
+            self->refreshList();
+            const int done = int(st->items.size()) - st->failed;
+            self->statusBar()->showMessage(st->failed ? tr("%1 segnati come letti, %2 non riusciti (%3)").arg(done).arg(st->failed).arg(st->firstError)
+                                                      : tr("%1 messaggi segnati come letti").arg(done), 10000);
+            return;
+        }
+        self->statusBar()->showMessage(tr("Segno come letti %1/%2...").arg(st->i + 1).arg(st->items.size()));
+        self->actions_->markRead(st->items.at(st->i).path, [self, st, step](bool ok, QString e) {
+            if (!self) return;
+            if (!ok) {
+                if (!st->failed) st->firstError = e;
+                ++st->failed;
+            }
+            ++st->i;
+            (*step)();
+        });
+    };
+    (*step)();
+}
+
+void MainWindow::deleteChecked() {
+    const QList<MessageSummary> sel = model_->checkedSummaries();
+    if (sel.isEmpty() || !bulkAllowed()) return;
+    if (!muRootDetected_ && !config_.isEmpty()) {
+        statusBar()->showMessage(tr("Cancella disponibile dopo il rilevamento della radice mu"), 8000);
+        return;
+    }
+    if (!muRootReliable_) {
+        showNotice(tr("Elimina"), tr("La radice Maildir di mu non e' stata determinata in modo affidabile: per sicurezza nulla viene spostato."));
+        return;
+    }
+    const QString text = tr("Spostare nel cestino %n messaggi selezionati?", nullptr, int(sel.size()));
+    bool yes;
+    if (confirmDestructive_) yes = confirmDestructive_(tr("Elimina"), text);
+    else yes = QMessageBox::question(this, tr("Elimina"), text, QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) == QMessageBox::Yes;
+    if (!yes) return;
+    bulkBusy_ = true;
+    struct State { QList<MessageSummary> items; int i = 0, failed = 0; QString firstError; };
+    auto st = std::make_shared<State>();
+    st->items = sel;
+    QPointer<MainWindow> self(this);
+    auto step = std::make_shared<std::function<void()>>();
+    *step = [self, st, step]() {
+        if (!self) return;
+        if (st->i >= st->items.size()) {
+            self->bulkBusy_ = false;
+            const int done = int(st->items.size()) - st->failed;
+            self->statusBar()->showMessage(st->failed ? tr("%1 spostati nel cestino, %2 non riusciti (%3)").arg(done).arg(st->failed).arg(st->firstError)
+                                                      : tr("%1 messaggi spostati nel cestino").arg(done), 10000);
+            self->scheduleUnreadCounts();
+            return;
+        }
+        const MessageSummary s = st->items.at(st->i);
+        const Account acc = self->accountFor(s.accountId);
+        if (acc.id.isEmpty()) {
+            if (!st->failed) st->firstError = tr("account non riconosciuto");
+            ++st->failed;
+            ++st->i;
+            (*step)();
+            return;
+        }
+        self->statusBar()->showMessage(tr("Sposto nel cestino %1/%2...").arg(st->i + 1).arg(st->items.size()));
+        self->actions_->moveToTrash(s.path, acc, [self, st, step, s](bool ok, QString e) {
+            if (!self) return;
+            if (!ok) {
+                if (!st->failed) st->firstError = e;
+                ++st->failed;
+            } else {
+                const int row = self->rowForPath(s.path);
+                if (row >= 0) {
+                    const bool wasCurrent = self->list_->currentIndex().isValid() && self->list_->currentIndex().row() == row;
+                    if (wasCurrent) {
+                        {
+                            QSignalBlocker b(self->list_->selectionModel());
+                            self->model_->removeAt(row);
+                            self->list_->selectionModel()->clear();
+                        }
+                        self->clearViewer();
+                    } else {
+                        self->model_->removeAt(row);
+                    }
+                }
+            }
+            ++st->i;
+            (*step)();
+        });
+    };
+    (*step)();
 }
 
 // ---- azioni ----

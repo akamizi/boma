@@ -61,6 +61,9 @@ scritto e sincronizzato su disco in `tmp/`, poi pubblicato in `cur/` con `link()
 - Elenco a due righe: mittente e data (relativa: «2 ore fa», «ieri alle 18:02»),
   oggetto e dimensione; stella per i messaggi contrassegnati, graffetta per gli
   allegati; le non lette sono in grassetto, con sfondo e barra laterale evidenziati.
+- Selezione multipla: la casella a sinistra di ogni riga (senza aprire il messaggio)
+  fa comparire sopra l'elenco una barra con «Segna come letti», «Elimina» (nel
+  cestino, con conferma) e «Deseleziona».
 - Menu contestuale (tasto destro) su ogni cartella: «Segna tutti come letti»
   (tramite `mu move`) e «Svuota la casella» (cancellazione DEFINITIVA dei file in
   `cur/` e `new/`, con conferma che indica il numero di messaggi; con `Expunge`

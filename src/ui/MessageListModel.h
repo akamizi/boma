@@ -21,7 +21,8 @@ public:
         PathRole,
         AccountIdRole,
         FlaggedRole,
-        SizeRole
+        SizeRole,
+        CheckedRole
     };
     static constexpr int PageSize = 200;
     // Finestra massima richiesta a mu (il costo cresce con la profondita').
@@ -48,6 +49,13 @@ public:
     // ...oppure e' tolta dall'elenco (messaggio spostato nel cestino).
     void removeAt(int row);
 
+    // Selezione multipla (casella a sinistra di ogni riga), per percorso.
+    int checkedCount() const { return int(m_checked.size()); }
+    QList<MessageSummary> checkedSummaries() const;
+    void clearChecked();
+    bool setData(const QModelIndex& idx, const QVariant& v, int role) override;
+    Qt::ItemFlags flags(const QModelIndex& idx) const override;
+
     int rowCount(const QModelIndex& parent = {}) const override;
     QVariant data(const QModelIndex& idx, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
@@ -55,6 +63,7 @@ public:
     void fetchMore(const QModelIndex& parent) override;
 
 signals:
+    void checkedChanged(int count);
     // Una pagina e' stata applicata (o e' fallita: error non vuoto).
     void pageLoaded(int added, const QString& error);
 
@@ -63,7 +72,7 @@ private:
     QPointer<MailIndex> m_index;
     QString m_query;
     QList<MessageSummary> m_rows;
-    QSet<QString> m_seen;
+    QSet<QString> m_seen, m_checked;
     int m_offset = 0; // risultati gia' richiesti a mu (incl. duplicati scartati)
     bool m_exhausted = false, m_loading = false, m_truncated = false;
     int m_maxWindow = kMaxWindow;
