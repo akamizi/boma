@@ -23,6 +23,7 @@ public:
     QStandardItemModel* itemModel() const { return model_; }
     // Query di una cartella "maildir:\"/<rel>\"", relativa alla radice di mu.
     // Vuota se la Maildir dell'account non e' sotto la radice.
+    static QStringList scanFolders(const QString& maildirRoot);
     static QString folderQuery(const QString& muRoot, const QString& maildirRoot, const QString& folder);
 
 signals:

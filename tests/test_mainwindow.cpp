@@ -303,6 +303,19 @@ private slots:
         QCOMPARE(n.titles.size(), 1);
         firstComposer(w)->close();
     }
+    void testFolderPaneListsAllMaildirs() {
+        const QString r = dir_ + QStringLiteral("/scan");
+        for (const char* d : {"INBOX", "Clienti/Rossi", ".Archivio.2020", "Sent"})
+            for (const char* s : {"cur", "new", "tmp"}) QDir().mkpath(r + QLatin1Char('/') + QLatin1String(d) + QLatin1Char('/') + QLatin1String(s));
+        QDir().mkpath(r + QStringLiteral("/Vuota")); // non e' una Maildir
+        const QStringList f = FolderPane::scanFolders(r);
+        QVERIFY(f.contains("Clienti/Rossi"));
+        QVERIFY(f.contains(".Archivio.2020"));
+        QVERIFY(f.contains("INBOX") && f.contains("Sent"));
+        QVERIFY(!f.contains("Vuota"));
+        QVERIFY(!f.contains("INBOX/cur"));
+        QVERIFY(FolderPane::scanFolders("/nonexistent").isEmpty());
+    }
     void testStartsShowingUnread() {
         MainWindow w(makeConfig(), opts());
         w.show();

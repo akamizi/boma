@@ -2,10 +2,37 @@
 
 #include "core/MailIndex.h"
 
+#include <QDir>
+#include <QFileInfo>
+#include <QSet>
+
 namespace boma {
 
 QString FolderPane::folderQuery(const QString& muRoot, const QString& maildirRoot, const QString& folder) {
     return MailIndex::maildirQuery(muRoot, maildirRoot, folder);
+}
+
+// Tutte le Maildir (cartelle con cur/new/tmp) sotto la radice dell'account, come
+// percorsi relativi: annidate (SubFolders Verbatim) o in stile Maildir++ (".A.B").
+// Non entra mai in cur/new/tmp e limita profondita' e numero.
+QStringList FolderPane::scanFolders(const QString& root) {
+    QStringList out;
+    const QDir base(root);
+    if (root.trimmed().isEmpty() || !base.exists()) return out;
+    auto isMaildir = [](const QDir& d) { return QFileInfo(d.filePath(QStringLiteral("cur"))).isDir(); };
+    auto walk = [&](auto&& self, const QString& rel, int depth) -> void {
+        if (depth > 8 || out.size() >= 2000) return;
+        const QDir d(base.filePath(rel));
+        const QStringList subs = d.entryList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden, QDir::Name | QDir::IgnoreCase);
+        for (const QString& n : subs) {
+            if (n == QLatin1String("cur") || n == QLatin1String("new") || n == QLatin1String("tmp")) continue;
+            const QString r = rel.isEmpty() ? n : rel + QLatin1Char('/') + n;
+            if (isMaildir(QDir(base.filePath(r)))) out << r;
+            self(self, r, depth + 1);
+        }
+    };
+    walk(walk, QString(), 0);
+    return out;
 }
 
 FolderPane::FolderPane(const Config& config, QWidget* parent) : QTreeView(parent), config_(config) {
@@ -43,6 +70,11 @@ void FolderPane::setMuRoot(const QString& muRoot) {
         add(tr("Inviata"), a.sentFolder);
         add(tr("Bozze"), a.draftsFolder);
         add(tr("Cestino"), a.trashFolder);
+        if (!muRoot.isEmpty()) { // le altre cartelle presenti su disco
+            QSet<QString> shown{QStringLiteral("INBOX"), a.sentFolder, a.draftsFolder, a.trashFolder};
+            for (const QString& f : scanFolders(a.maildirRoot))
+                if (!shown.contains(f)) add(f, f);
+        }
         model_->appendRow(top);
     }
     expandAll();
