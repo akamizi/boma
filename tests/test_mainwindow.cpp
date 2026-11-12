@@ -316,6 +316,31 @@ private slots:
         QVERIFY(!f.contains("INBOX/cur"));
         QVERIFY(FolderPane::scanFolders("/nonexistent").isEmpty());
     }
+    void testFolderPaneKeepsHierarchy() {
+        const QString r = dir_ + QStringLiteral("/gerarchia");
+        for (const char* d : {"INBOX", "Clienti/Rossi", ".Arch.2020"})
+            for (const char* s : {"cur", "new", "tmp"}) QDir().mkpath(r + QLatin1Char('/') + QLatin1String(d) + QLatin1Char('/') + QLatin1String(s));
+        Config c = Config::load(dir_ + QStringLiteral("/h.ini"), nullptr);
+        QFile f(dir_ + QStringLiteral("/h.ini"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write(QStringLiteral("[account:g]\nname=G\nmaildirRoot=%1\nmbsyncChannel=g\n").arg(r).toUtf8());
+        f.close();
+        c = Config::load(dir_ + QStringLiteral("/h.ini"), nullptr);
+        FolderPane p(c);
+        p.setMuRoot(dir_);
+        auto* m = qobject_cast<QStandardItemModel*>(p.model());
+        QStandardItem* acc = m->item(1);
+        auto child = [](QStandardItem* it, const QString& t) -> QStandardItem* {
+            for (int i = 0; i < it->rowCount(); ++i) if (it->child(i)->text() == t) return it->child(i);
+            return nullptr;
+        };
+        QStandardItem* cl = child(acc, "Clienti");
+        QVERIFY(cl);
+        QVERIFY(!cl->data(Qt::UserRole + 2).toBool()); // non e' una Maildir: non selezionabile
+        QVERIFY(child(cl, "Rossi") && child(cl, "Rossi")->data(Qt::UserRole + 2).toBool());
+        QStandardItem* ar = child(acc, "Arch");
+        QVERIFY(ar && child(ar, "2020")); // Maildir++ .Arch.2020
+    }
     void testStartsShowingUnread() {
         MainWindow w(makeConfig(), opts());
         w.show();

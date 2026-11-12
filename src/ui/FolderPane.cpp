@@ -3,6 +3,7 @@
 #include "core/MailIndex.h"
 
 #include <QDir>
+#include <QHash>
 #include <QFileInfo>
 #include <QSet>
 
@@ -57,14 +58,31 @@ void FolderPane::setMuRoot(const QString& muRoot) {
     for (const Account& a : config_.accounts()) {
         auto* top = new QStandardItem(a.name.isEmpty() ? a.id : a.name);
         top->setData(a.id, Qt::UserRole + 3);
+        // Albero: "A/B" annidato e ".A.B" (Maildir++) diventano A > B. I nodi
+        // intermedi che non sono Maildir non sono selezionabili.
+        QHash<QString, QStandardItem*> nodes;
         auto add = [&](const QString& label, const QString& folder) {
             if (muRoot.isEmpty() || folder.trimmed().isEmpty()) return;
             const QString q = folderQuery(muRoot, a.maildirRoot, folder);
             if (q.isEmpty()) return;
-            auto* it = new QStandardItem(label);
-            it->setData(q, QueryRole);
-            it->setData(true, FolderRole);
-            top->appendRow(it);
+            QStringList seg;
+            for (const QString& part : folder.split(QLatin1Char('/'), Qt::SkipEmptyParts))
+                seg += part.startsWith(QLatin1Char('.')) ? part.split(QLatin1Char('.'), Qt::SkipEmptyParts) : QStringList{part};
+            if (seg.isEmpty()) return;
+            QStandardItem* parent = top;
+            QString key;
+            for (int i = 0; i < seg.size(); ++i) {
+                key += QLatin1Char('\x1f') + seg.at(i);
+                QStandardItem*& n = nodes[key];
+                if (!n) {
+                    n = new QStandardItem(seg.at(i));
+                    parent->appendRow(n);
+                }
+                parent = n;
+            }
+            parent->setText(label.isEmpty() ? seg.last() : label);
+            parent->setData(q, QueryRole);
+            parent->setData(true, FolderRole);
         };
         add(tr("Posta in arrivo"), QStringLiteral("INBOX"));
         add(tr("Inviata"), a.sentFolder);
@@ -73,7 +91,7 @@ void FolderPane::setMuRoot(const QString& muRoot) {
         if (!muRoot.isEmpty()) { // le altre cartelle presenti su disco
             QSet<QString> shown{QStringLiteral("INBOX"), a.sentFolder, a.draftsFolder, a.trashFolder};
             for (const QString& f : scanFolders(a.maildirRoot))
-                if (!shown.contains(f)) add(f, f);
+                if (!shown.contains(f)) add(QString(), f);
         }
         model_->appendRow(top);
     }
