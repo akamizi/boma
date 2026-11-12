@@ -143,9 +143,7 @@ class T : public QObject {
         o.mbsyncProgram = mbsync_;
         o.msmtpProgram = msmtp_;
         o.gnupgHome = home_;
-        o.lockPath = dir_ + QStringLiteral("/lock");
         o.unsavedDir = dir_ + QStringLiteral("/non-salvati");
-        o.autoSync = false;
         return o;
     }
     MainWindowOptions optsRoot() const { // radice di mu nota: Elimina abilitato
@@ -239,8 +237,9 @@ private slots:
                                    QStringLiteral("Oggetto due"), QStringLiteral("m2@x"), QStringLiteral("Corpo due 2222")));
         writeFile(pathSigned_, signedEml());
         writeFile(pathEnc_, encryptedEml());
-        for (const char* d : {"Sent", "Drafts", "Trash"})
-            for (const char* s : {"cur", "new", "tmp"}) QDir().mkpath(a + QLatin1Char('/') + QLatin1String(d) + QLatin1Char('/') + QLatin1String(s));
+        for (const QString& acc : {a, dir_ + QStringLiteral("/mail/b")})
+            for (const char* d : {"Sent", "Drafts", "Trash"})
+                for (const char* s : {"cur", "new", "tmp"}) QDir().mkpath(acc + QLatin1Char('/') + QLatin1String(d) + QLatin1Char('/') + QLatin1String(s));
     }
     void cleanupTestCase() { killAgent(home_); }
     void init() {
@@ -470,7 +469,7 @@ private slots:
         writeFile(dir_ + QStringLiteral("/mba"), "x");
         w.syncNow();
         QVERIFY(QTest::qWaitFor([&] { return log(QStringLiteral("mu.log")).contains(QStringLiteral("index")); }, 10000));
-        QVERIFY(w.statusLabel()->text().contains(QStringLiteral("non riuscita")));
+        QVERIFY(w.statusLabel()->text().contains(QStringLiteral("non riuscito")));
     }
     void testFullyFailedSyncDoesNotReindex() {
         MainWindow w(makeConfig(), opts());
@@ -478,7 +477,7 @@ private slots:
         QVERIFY(waitRows(w, 2));
         resetLogs();
         w.syncNow();
-        QVERIFY(QTest::qWaitFor([&] { return w.statusLabel()->text().contains(QStringLiteral("non riuscita")); }, 10000));
+        QVERIFY(QTest::qWaitFor([&] { return w.statusLabel()->text().contains(QStringLiteral("non riuscito")); }, 10000));
         QTest::qWait(300);
         QVERIFY(!log(QStringLiteral("mu.log")).contains(QStringLiteral("index")));
     }
@@ -636,17 +635,16 @@ private slots:
         QVERIFY(w.deleteButton()->isEnabled()); // di nuovo utilizzabile
         QCOMPARE(w.model()->rowCount(), 2);
     }
-    void testStartsWithoutNetworkAndShowsOfflineState() {
-        MainWindowOptions o = opts();
-        o.autoSync = true;
+    void testStartDoesNotRunMbsyncAndListIsShown() {
         QElapsedTimer t;
         t.start();
-        MainWindow w(makeConfig(), o);
+        MainWindow w(makeConfig(), opts());
         w.show();
         QVERIFY2(t.elapsed() < 3000, "avvio bloccante");
-        QVERIFY(QTest::qWaitFor([&] { return w.statusLabel()->text().contains(QStringLiteral("ffline")); }, 10000));
-        QVERIFY(waitRows(w, 2)); // l'elenco c'e' comunque
-        QVERIFY(w.statusBar()->isVisibleTo(&w));
+        QVERIFY(waitRows(w, 2)); // l'elenco c'e' subito, senza sincronizzare
+        QTest::qWait(300);
+        QVERIFY(!QFile::exists(dir_ + QStringLiteral("/mbsync.log")) || log(QStringLiteral("mbsync.log")).isEmpty());
+        QVERIFY(!log(QStringLiteral("mu.log")).contains(QStringLiteral("index")));
     }
     void testStartsWithEmptyConfigShowsSetupHelp() {
         const QString p = dir_ + QStringLiteral("/vuota.ini");

@@ -8,6 +8,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QString>
+#include <QThreadPool>
 #include <QStringList>
 #include <functional>
 
@@ -122,6 +123,9 @@ private:
     QString muProgram_ = QStringLiteral("mu"), muHome_;
     ProcessRunner runner_;
     bool busy_ = false;
+    // Controlli delle chiavi gpg (fino a 30 s) fuori dal thread GUI. Dichiarato per
+    // ultimo: alla distruzione attende il lavoro in corso prima di liberare gpg_.
+    QThreadPool keyPool_;
     Account account_;
     QString msmtpAccount_;
     QByteArray bccHeader_; // solo per la copia in Inviata

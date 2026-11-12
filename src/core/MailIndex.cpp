@@ -89,16 +89,33 @@ void MailIndex::search(const QString& query, int offset, int limit, SearchCallba
             cb({}, QStringLiteral("Parametri di paginazione non validi"));
         return;
     }
+    // Pagine successive della stessa ricerca: servite dalla copia letta alla prima
+    // pagina (offset 0, sempre rifatta da mu), cosi' non si rilegge e rianalizza
+    // ogni volta tutto il prefisso (costo quadratico).
+    const int need = offset + limit;
+    if (offset > 0 && m_cacheValid && m_cacheQuery == query && (m_cacheComplete || m_cache.size() >= need)) {
+        QList<MessageSummary> page = m_cache.mid(offset, limit);
+        // Sempre asincrono, come la risposta di mu: chi chiama non e' rientrato.
+        QTimer::singleShot(0, this, [page = std::move(page), cb = std::move(cb)]() mutable {
+            if (cb)
+                cb(std::move(page), QString());
+        });
+        return;
+    }
+    const int fetch = qMax(need, kCacheChunk);
+    if (offset == 0)
+        m_cacheValid = false;
     QStringList args = baseArgs(QStringLiteral("find"));
     args << QStringLiteral("--format=json") << QStringLiteral("--skip-dups")
          << QStringLiteral("--sortfield=date") << QStringLiteral("--reverse")
-         << QStringLiteral("--maxnum=%1").arg(offset + limit);
+         << QStringLiteral("--maxnum=%1").arg(fetch);
     // "--" : la query non deve mai essere letta come opzione.
     args << QStringLiteral("--") << query;
     m_runner.run(m_mu, args, std::chrono::seconds(60),
-                 [this, offset, limit, cb = std::move(cb)](ProcessResult r) {
+                 [this, offset, limit, fetch, query, cb = std::move(cb)](ProcessResult r) {
                      QList<MessageSummary> list;
                      QString err;
+                     bool store = false;
                      if (r.crashed || r.timedOut || r.exitCode == -1) {
                          err = QString::fromUtf8(r.err).trimmed();
                          if (err.isEmpty())
@@ -118,11 +135,18 @@ void MailIndex::search(const QString& query, int offset, int limit, SearchCallba
                      } else {
                          list = parse(r.out, &err);
                          if (err.isEmpty()) {
+                             m_cache = list;
+                             m_cacheQuery = query;
+                             m_cacheComplete = list.size() < fetch;
+                             m_cacheValid = true;
+                             store = true;
                              list = list.mid(offset, limit);
                          } else {
                              list.clear();
                          }
                      }
+                     if (!store && offset == 0)
+                         m_cacheValid = false;
                      if (cb)
                          cb(std::move(list), err);
                  });

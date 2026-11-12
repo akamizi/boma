@@ -9,7 +9,6 @@
 #include "mime/MessageParser.h"
 #include "send/Sender.h"
 #include "ui/ComposeWindow.h"
-#include "ui/FirstRunDialog.h"
 #include "ui/FolderPane.h"
 #include "ui/MessageListModel.h"
 #include "ui/MessageView.h"
@@ -39,9 +38,7 @@ struct MainWindowOptions {
     QString msmtpProgram = QStringLiteral("msmtp");
     QString gpgProgram;   // vuoto = "gpg"
     QString gnupgHome;    // vuoto = predefinito di gpg
-    QString lockPath;     // vuoto = $XDG_RUNTIME_DIR o la cartella temporanea
     QString unsavedDir;   // copie di emergenza degli inviati (vuoto = default di Sender)
-    bool autoSync = true; // sincronizzazione all'avvio e periodica
 };
 
 // Finestra a tre colonne: account/cartelle | elenco | lettura. Tutto il lavoro
@@ -75,9 +72,6 @@ public:
     QPushButton* deleteButton() const { return delBtn_; }
     Sender* sender() const { return sender_; }
     SyncService* syncService() const { return sync_; }
-    // Prima sincronizzazione guidata (nullo se non serve o se il dialogo e' stato distrutto).
-    FirstRunDialog* firstRunDialog() const { return firstRun_; }
-    QPushButton* firstRunButton() const { return firstBtn_; }
     // Finestre di scrittura aperte.
     QList<ComposeWindow*> composers() const;
 
@@ -102,8 +96,6 @@ public slots:
     void newMessage();
     void syncNow();
     void focusSearch();
-    // Mostra (ricreandolo se serve) il dialogo della prima sincronizzazione.
-    void showFirstRunDialog();
 
 protected:
     // Mai chiudere durante un invio; ogni finestra di scrittura aperta viene chiusa
@@ -115,29 +107,6 @@ signals:
     void messageOpened(const QString& path);
 
 private:
-    // Prima sincronizzazione. Un account la richiede se la sua Maildir non ha
-    // alcun file di messaggio (SyncService::isFirstSync; controllo asincrono che
-    // si ferma al primo file). Non serve un marcatore su disco: la ripresa dopo
-    // un'interruzione la da' mbsync stesso (incrementale), e finche' l'account e'
-    // ancora vuoto al prossimo avvio il dialogo riappare; con la Maildir gia'
-    // parzialmente piena si prosegue con una sincronizzazione normale. Il dialogo
-    // e' solo una vista: la sincronizzazione e' di SyncService, pilotata qui,
-    // un account alla volta (la serializzazione e il flock restano di SyncService).
-    void startupSync();
-    void beginStartupQueue(const QStringList& firstIds);
-    void runNextQueued();
-    void retryFirstRun(const QString& id);
-    void setFirstState(const QString& id, const FirstRunState& st);
-    void updateFirstRunUi();
-    FirstRunDialog* ensureFirstRunDialog();
-    QPointer<FirstRunDialog> firstRun_;
-    QPushButton* firstBtn_ = nullptr;
-    QMap<QString, FirstRunState> firstStates_; // account in prima sincronizzazione
-    QStringList firstIds_;                      // ordine di visualizzazione
-    QStringList queue_;                         // account ancora da sincronizzare all'avvio
-    QString queueCur_;
-    bool queueActive_ = false, startupPending_ = false;
-
     void checkSpecialFolders();
     void resolveMuRoot();
     void applyMuRoot(QString root, const QString& error);
@@ -156,6 +125,7 @@ private:
     void onPageLoaded(int added, const QString& error);
     void clearViewer();
     void startLoad(quint64 token, const MessageSummary& s);
+    void runReindex();
     void reindexAndRefresh(std::function<void()> done = {});
     void onSyncState(SyncService::State st, const QString& accountId, const QString& message);
     void compose(ReplyMode mode);
@@ -206,7 +176,7 @@ private:
     SignatureStatus innerStatus_ = SignatureStatus::None;
     QString innerSigner_;
     QDateTime lastSync_;
-    bool syncWasRunning_ = false;
+    bool reindexing_ = false;
 
     std::function<bool()> confirmUnsigned_;
     std::function<void(const QString&, const QString&)> notice_;
