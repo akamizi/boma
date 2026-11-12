@@ -192,6 +192,8 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
         auto* s = new QShortcut(k, this);
         connect(s, &QShortcut::activated, this, slot);
     };
+    // Ctrl+Q chiude la finestra: passa da closeEvent (invio in corso, bozze aperte).
+    sc(QKeySequence(QKeySequence::Quit), [this]() { close(); });
     sc(QKeySequence(QKeySequence::Find), &MainWindow::focusSearch);
     sc(QKeySequence(Qt::Key_Slash), &MainWindow::focusSearch);
     sc(QKeySequence(Qt::Key_Delete), &MainWindow::deleteSelected);

@@ -210,6 +210,7 @@ ricerca):
 | Ctrl+F oppure `/` | vai alla ricerca (campo vuoto = non lette) |
 | F5 | aggiorna ora (`mbsync` + `mu index`) |
 | Ctrl+N | nuovo messaggio |
+| Ctrl+Q | chiudi Boma (come la X della finestra: chiede se c'è un invio o una bozza aperta) |
 | `R` / Maiusc+`R` | rispondi / rispondi a tutti |
 | `F` | inoltra |
 | Canc | sposta nel cestino |
