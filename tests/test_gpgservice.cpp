@@ -118,6 +118,21 @@ class T : public QObject {
     }
 
 private slots:
+    void testParseSecretKeys() {
+        const QByteArray out =
+            "sec:u:255:22:AAAA1111AAAA1111:1700000000:::u:::scESC:::+:::23::0:\n"
+            "fpr:::::::::AAAA1111AAAA1111AAAA1111AAAA1111AAAA1111:\n"
+            "uid:u::::1700000000::HASH::Alice <alice@example.test>::::::::::0:\n"
+            "ssb:u:255:18:BBBB:1700000000::::::e:::+:::23:\n"
+            "fpr:::::::::BBBB2222BBBB2222BBBB2222BBBB2222BBBB2222:\n"
+            "sec:e:255:22:CCCC1111CCCC1111:1600000000:1650000000::u:::scESC:::+:::23::0:\n"
+            "fpr:::::::::CCCC1111CCCC1111CCCC1111CCCC1111CCCC1111:\n"
+            "uid:e::::1600000000::H2::Scaduta <old@example.test>::::::::::0:\n";
+        const auto k = GpgService::parseSecretKeys(out);
+        QCOMPARE(k.size(), 1); // la scaduta e' esclusa
+        QCOMPARE(k.at(0).fingerprint, QString("AAAA1111AAAA1111AAAA1111AAAA1111AAAA1111"));
+        QCOMPARE(k.at(0).uids, QStringList{"Alice <alice@example.test>"});
+    }
     void initTestCase() {
         QVERIFY2(root_.isValid(), "directory temporanea non creata");
         chmod(root_.path().toLocal8Bit().constData(), 0700);

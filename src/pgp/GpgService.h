@@ -13,6 +13,12 @@ namespace boma {
 
 enum class SignatureStatus { None, Valid, Invalid, UnknownKey, ExpiredKey, RevokedKey };
 
+// Chiave segreta utilizzabile per firmare (per la scelta nelle Impostazioni).
+struct SecretKeyInfo {
+    QString fingerprint;
+    QStringList uids; // "Nome <indirizzo>"
+};
+
 struct GpgAgentInfo {
     bool available = false;   // gpgconf ha risposto e le opzioni sono state lette
     int defaultCacheTtl = 600; // secondi (valore effettivo; 600 se non impostato)
@@ -102,6 +108,11 @@ public:
     // chiave segreta utilizzabile (non scaduta/revocata/disabilitata, capace di firmare) con un uid
     // esattamente uguale (case-insensitive). Zero o piu' corrispondenze: stringa vuota e *error. Bloccante.
     QString resolveSecretKey(const QString& keyId, QString* error);
+    // Elenco delle chiavi segrete utilizzabili per firmare (non scadute/revocate/
+    // disabilitate, capaci di firmare). Bloccante come resolveSecretKey: fuori dal thread GUI.
+    // false se gpg non risponde.
+    bool listSecretKeys(QList<SecretKeyInfo>* out);
+    static QList<SecretKeyInfo> parseSecretKeys(const QByteArray& colons);
     static QStringList secretFingerprintsForAddress(const QByteArray& colons, const QString& address);
     // Indirizzi (nudi) per i quali NON esiste una chiave pubblica utilizzabile
     // per la cifratura. BLOCCANTE (un solo `gpg --list-keys --with-colons`, timeout

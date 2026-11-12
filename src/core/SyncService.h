@@ -27,6 +27,8 @@ public:
     SyncService(ProcessRunner* runner, const Config& config, QObject* parent = nullptr);
     ~SyncService() override;
 
+    // Nuova configurazione (account). Solo a sincronizzazione ferma.
+    void setConfig(const Config& c) { if (m_state != Running) m_config = c; }
     void syncAll();
     State state() const { return m_state; }
     // Almeno un account ha completato la sincronizzazione nel giro corrente/ultimo

@@ -249,6 +249,60 @@ private slots:
         listSearch({jsonMsg(pathB_, QStringLiteral("m2@x"), QStringLiteral("Frank"), QStringLiteral("Oggetto due"), false)});
     }
 
+    void testSettingsApplyLiveAndSave() {
+        MainWindowOptions o = opts();
+        o.configPath = dir_ + QStringLiteral("/live.ini");
+        MainWindow w(makeConfig(), o);
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        const int rowsBefore = w.folderPane()->model()->rowCount();
+        w.setSettingsCallback([](const Config& cur, Config* out) {
+            *out = cur;
+            QList<Account> a = cur.accounts();
+            a.removeLast(); // resta solo "a"
+            QList<Identity> ids;
+            for (const Identity& i : cur.identities()) if (i.accountId == a.first().id) ids << i;
+            out->setAccounts(a);
+            out->setIdentities(ids);
+            return true;
+        });
+        w.openSettings();
+        const Config saved = Config::load(o.configPath, nullptr);
+        QCOMPARE(saved.accounts().size(), 1);
+        QVERIFY(QFile::exists(o.configPath));
+        QVERIFY(w.folderPane()->model()->rowCount() < rowsBefore); // un account in meno nell'albero
+        QVERIFY(w.syncButton()->isEnabled());
+    }
+    void testSettingsEmptyConfigShowsHelpAndDisablesActions() {
+        MainWindowOptions o = opts();
+        o.configPath = dir_ + QStringLiteral("/vuota.ini");
+        MainWindow w(makeConfig(), o);
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        w.setSettingsCallback([](const Config&, Config* out) { *out = Config(); return true; });
+        w.openSettings();
+        QVERIFY(w.setupHelp()->isVisibleTo(&w));
+        QVERIFY(!w.syncButton()->isEnabled());
+        QCOMPARE(w.model()->rowCount(), 0);
+    }
+    void testSettingsRefusedWhileComposing() {
+        MainWindowOptions o = opts();
+        o.configPath = dir_ + QStringLiteral("/rifiuto.ini");
+        MainWindow w(makeConfig(), o);
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        bool called = false;
+        w.setSettingsCallback([&](const Config&, Config*) { called = true; return false; });
+        w.newButton()->click();
+        QVERIFY(firstComposer(w));
+        Noticed n;
+        w.setNoticeCallback([&](const QString& t, const QString& x) { n.titles << t; n.texts << x; });
+        w.openSettings();
+        QVERIFY(!called);
+        QVERIFY(!QFile::exists(o.configPath));
+        QCOMPARE(n.titles.size(), 1);
+        firstComposer(w)->close();
+    }
     void testStartsShowingUnread() {
         MainWindow w(makeConfig(), opts());
         w.show();

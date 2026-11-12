@@ -545,6 +545,45 @@ QStringList GpgService::secretFingerprintsForAddress(const QByteArray& colons, c
     return out;
 }
 
+QList<SecretKeyInfo> GpgService::parseSecretKeys(const QByteArray& colons) {
+    QList<SecretKeyInfo> out;
+    SecretKeyInfo cur;
+    bool inKey = false, ok = false, haveFpr = false;
+    auto bad = [](const QByteArray& v) { return v == "e" || v == "r" || v == "i" || v == "d" || v == "n"; };
+    auto flush = [&]() {
+        if (inKey && ok && !cur.fingerprint.isEmpty()) out << cur;
+        inKey = ok = haveFpr = false;
+        cur = SecretKeyInfo();
+    };
+    for (const QByteArray& line : colons.split('\n')) {
+        const QList<QByteArray> f = line.split(':');
+        if (f.size() < 2) continue;
+        const QByteArray& t = f.at(0);
+        const QByteArray st = f.at(1).left(1);
+        if (t == "sec") {
+            flush();
+            inKey = true;
+            const QByteArray caps = f.size() > 11 ? f.at(11) : QByteArray();
+            ok = !bad(st) && !caps.contains('D') && (caps.contains('s') || caps.contains('S'));
+        } else if (t == "fpr" && inKey && !haveFpr) {
+            haveFpr = true;
+            cur.fingerprint = f.size() > 9 ? QString::fromLatin1(f.at(9)) : QString();
+        } else if (t == "uid" && inKey && st != "r" && st != "e" && st != "i" && f.size() > 9) {
+            const QString u = QString::fromUtf8(f.at(9)).trimmed();
+            if (!u.isEmpty()) cur.uids << u;
+        }
+    }
+    flush();
+    return out;
+}
+
+bool GpgService::listSecretKeys(QList<SecretKeyInfo>* out) {
+    QByteArray raw;
+    if (!runList({QStringLiteral("--list-secret-keys")}, &raw)) return false;
+    if (out) *out = parseSecretKeys(raw);
+    return true;
+}
+
 QString GpgService::resolveSecretKey(const QString& keyId, QString* error) {
     auto fail = [&](const QString& m) { if (error) *error = m; return QString(); };
     const QString k = keyId.trimmed();

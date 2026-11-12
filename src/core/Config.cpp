@@ -2,6 +2,9 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QRegularExpression>
+#include <QSet>
 #include <QSettings>
 #include <QStandardPaths>
 
@@ -85,6 +88,84 @@ Config Config::load(const QString& path, QString* error) {
 
     if (error) *error = errors.join("; ");
     return c;
+}
+
+static QString unexpandHome(const QString& p) {
+    const QString h = QDir::homePath();
+    if (p == h) return QStringLiteral("~");
+    if (p.startsWith(h + QLatin1Char('/'))) return QStringLiteral("~") + p.mid(h.size());
+    return p;
+}
+
+static bool validName(const QString& id) {
+    static const QRegularExpression re(QStringLiteral("^[A-Za-z0-9_.-]+$"));
+    return re.match(id).hasMatch();
+}
+
+QStringList Config::validate() const {
+    QStringList e;
+    QSet<QString> accIds, idIds;
+    for (const Account& a : m_accounts) {
+        if (a.id.isEmpty() || !validName(a.id))
+            e << QObject::tr("Account \"%1\": l'identificativo deve contenere solo lettere, cifre, '_', '-' e '.'").arg(a.id);
+        else if (accIds.contains(a.id))
+            e << QObject::tr("Account \"%1\": identificativo duplicato").arg(a.id);
+        accIds.insert(a.id);
+        if (a.maildirRoot.trimmed().isEmpty()) e << QObject::tr("Account \"%1\": manca la radice Maildir").arg(a.id);
+        if (a.mbsyncChannel.trimmed().isEmpty()) e << QObject::tr("Account \"%1\": manca il canale mbsync").arg(a.id);
+    }
+    for (const Identity& i : m_identities) {
+        if (i.id.isEmpty() || !validName(i.id))
+            e << QObject::tr("Identita' \"%1\": l'identificativo deve contenere solo lettere, cifre, '_', '-' e '.'").arg(i.id);
+        else if (idIds.contains(i.id))
+            e << QObject::tr("Identita' \"%1\": identificativo duplicato").arg(i.id);
+        idIds.insert(i.id);
+        if (i.address.trimmed().isEmpty()) e << QObject::tr("Identita' \"%1\": manca l'indirizzo").arg(i.id);
+        if (!accIds.contains(i.accountId)) e << QObject::tr("Identita' \"%1\": account sconosciuto").arg(i.id);
+    }
+    return e;
+}
+
+bool Config::save(const QString& path, QString* error) const {
+    auto fail = [&](const QString& m) { if (error) *error = m; return false; };
+    if (error) error->clear();
+    const QStringList problems = validate();
+    if (!problems.isEmpty()) return fail(problems.join(QStringLiteral("; ")));
+    if (!QDir().mkpath(QFileInfo(path).absolutePath())) return fail(QObject::tr("Impossibile creare la cartella di %1").arg(path));
+    if (QFile::exists(path)) {
+        const QString bak = path + QStringLiteral(".bak");
+        QFile::remove(bak);
+        if (!QFile::copy(path, bak)) return fail(QObject::tr("Impossibile salvare la copia %1").arg(bak));
+    }
+    QSettings s(path, QSettings::IniFormat);
+    for (const QString& g : s.childGroups())
+        if (g.startsWith(QLatin1String("account:")) || g.startsWith(QLatin1String("identity:"))) s.remove(g);
+    for (const Account& a : m_accounts) {
+        s.beginGroup(QStringLiteral("account:") + a.id);
+        s.setValue(QStringLiteral("name"), a.name);
+        s.setValue(QStringLiteral("maildirRoot"), unexpandHome(a.maildirRoot.trimmed()));
+        s.setValue(QStringLiteral("mbsyncChannel"), a.mbsyncChannel.trimmed());
+        s.setValue(QStringLiteral("sentFolder"), a.sentFolder);
+        s.setValue(QStringLiteral("draftsFolder"), a.draftsFolder);
+        s.setValue(QStringLiteral("trashFolder"), a.trashFolder);
+        s.endGroup();
+    }
+    for (const Identity& i : m_identities) {
+        s.beginGroup(QStringLiteral("identity:") + i.id);
+        s.setValue(QStringLiteral("accountId"), i.accountId);
+        s.setValue(QStringLiteral("address"), i.address.trimmed());
+        s.setValue(QStringLiteral("displayName"), i.displayName);
+        QString sig = i.signature;
+        sig.replace(QStringLiteral("\r\n"), QStringLiteral("\n")).replace(QLatin1Char('\n'), QStringLiteral("\\n"));
+        s.setValue(QStringLiteral("signature"), sig);
+        s.setValue(QStringLiteral("pgpKeyId"), i.pgpKeyId.trimmed());
+        s.setValue(QStringLiteral("msmtpAccount"), i.msmtpAccount.trimmed());
+        s.setValue(QStringLiteral("signByDefault"), i.signByDefault);
+        s.endGroup();
+    }
+    s.sync();
+    if (s.status() != QSettings::NoError) return fail(QObject::tr("Scrittura di %1 non riuscita").arg(path));
+    return true;
 }
 
 QList<Identity> Config::identities(const QString& accountId) const {

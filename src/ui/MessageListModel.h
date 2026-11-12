@@ -27,6 +27,8 @@ public:
 
     explicit MessageListModel(MailIndex* index, QObject* parent = nullptr);
 
+    // Cambia l'indice (nullptr = nessun account configurato) e azzera il modello.
+    void setIndex(MailIndex* index) { m_index = index; reset(); }
     // Azzera il modello e la prossima fetchMore parte dalla prima pagina.
     void setQuery(const QString& query);
     // Come setQuery con la query corrente.

@@ -74,6 +74,96 @@ private slots:
         Config c = Config::load(p, nullptr);
         QCOMPARE(c.identities("a").at(0).signature, QString("-- \nMario\nAkabit"));
     }
+    void testSaveMakesBackupOfPreviousFile() {
+        QTemporaryDir d;
+        QString p = write(d, "[account:a]\nname=Prima\nmaildirRoot=/m/a\nmbsyncChannel=a\n");
+        Config c = Config::load(p, nullptr);
+        QList<Account> acc = c.accounts();
+        acc[0].name = "Dopo";
+        c.setAccounts(acc);
+        QString err;
+        QVERIFY2(c.save(p, &err), qPrintable(err));
+        QFile bak(p + ".bak");
+        QVERIFY(bak.open(QIODevice::ReadOnly));
+        QVERIFY(bak.readAll().contains("Prima"));
+        QCOMPARE(Config::load(p, nullptr).accounts().at(0).name, QString("Dopo"));
+    }
+    void testSaveThenLoadGivesSameData() {
+        QTemporaryDir d;
+        QString p = d.filePath("config.ini");
+        Config c;
+        Account a;
+        a.id = "a"; a.name = "A"; a.maildirRoot = QDir::homePath() + "/Mail/a"; a.mbsyncChannel = "ca";
+        a.sentFolder = "Sent"; a.draftsFolder = "Drafts"; a.trashFolder = "Trash";
+        c.setAccounts({a});
+        Identity i;
+        i.id = "i"; i.accountId = "a"; i.address = "i@a.it"; i.displayName = "I";
+        i.signature = "-- \nMario, Akabit"; i.pgpKeyId = "K"; i.msmtpAccount = "m"; i.signByDefault = false;
+        c.setIdentities({i});
+        QString err;
+        QVERIFY2(c.save(p, &err), qPrintable(err));
+        QFile f(p); QVERIFY(f.open(QIODevice::ReadOnly));
+        QVERIFY(f.readAll().contains("maildirRoot=~/Mail/a")); // sotto la home: scritto con "~"
+        Config r = Config::load(p, &err);
+        QVERIFY(err.isEmpty());
+        QCOMPARE(r.accounts().size(), 1);
+        QCOMPARE(r.accounts().at(0).maildirRoot, a.maildirRoot);
+        QCOMPARE(r.accounts().at(0).mbsyncChannel, QString("ca"));
+        QCOMPARE(r.identities("a").size(), 1);
+        const Identity g = r.identities("a").at(0);
+        QCOMPARE(g.signature, i.signature);
+        QCOMPARE(g.pgpKeyId, QString("K"));
+        QCOMPARE(g.msmtpAccount, QString("m"));
+        QVERIFY(!g.signByDefault);
+    }
+    void testSaveKeepsGeneralAndRemovesDeletedAccounts() {
+        QTemporaryDir d;
+        QString p = write(d,
+            "[general]\nmuRoot=/srv/mail\n[account:a]\nname=A\nmaildirRoot=/m/a\nmbsyncChannel=a\n"
+            "[account:old]\nname=Old\nmaildirRoot=/m/o\nmbsyncChannel=o\n"
+            "[identity:i]\naccountId=a\naddress=i@a.it\n[identity:o]\naccountId=old\naddress=o@o.it\n");
+        Config c = Config::load(p, nullptr);
+        QList<Account> acc;
+        for (const Account& a : c.accounts()) if (a.id != "old") acc << a;
+        QList<Identity> ids;
+        for (const Identity& i : c.identities()) if (i.accountId != "old") ids << i;
+        c.setAccounts(acc);
+        c.setIdentities(ids);
+        QVERIFY(c.save(p));
+        Config r = Config::load(p, nullptr);
+        QCOMPARE(r.muRoot(), QString("/srv/mail"));
+        QCOMPARE(r.accounts().size(), 1);
+        QCOMPARE(r.identities("old").size(), 0);
+    }
+    void testValidateRejectsBadConfigs() {
+        Config c;
+        Account a; a.id = "a"; a.maildirRoot = "/m"; a.mbsyncChannel = "c";
+        Account dup = a;
+        c.setAccounts({a, dup});
+        QVERIFY(!c.validate().isEmpty()); // id duplicato
+        Account bad = a; bad.id = "a/b";
+        c.setAccounts({bad});
+        QVERIFY(!c.validate().isEmpty()); // carattere non ammesso
+        Account noRoot = a; noRoot.maildirRoot.clear();
+        c.setAccounts({noRoot});
+        QVERIFY(!c.validate().isEmpty());
+        c.setAccounts({a});
+        Identity i; i.id = "i"; i.accountId = "zzz"; i.address = "x@y.it";
+        c.setIdentities({i});
+        QVERIFY(!c.validate().isEmpty()); // account sconosciuto
+        i.accountId = "a"; i.address.clear();
+        c.setIdentities({i});
+        QVERIFY(!c.validate().isEmpty()); // senza indirizzo
+        i.address = "x@y.it";
+        c.setIdentities({i});
+        QVERIFY(c.validate().isEmpty());
+        QString err;
+        QTemporaryDir d;
+        c.setIdentities({});
+        c.setAccounts({dup, dup});
+        QVERIFY(!c.save(d.filePath("x.ini"), &err));
+        QVERIFY(!QFile::exists(d.filePath("x.ini"))); // niente file se non valida
+    }
 };
 
 QTEST_APPLESS_MAIN(TestConfig)

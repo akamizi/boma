@@ -1,6 +1,7 @@
 #pragma once
 #include <QList>
 #include <QString>
+#include <QStringList>
 
 namespace boma {
 
@@ -48,6 +49,20 @@ public:
     bool isEmpty() const { return m_accounts.isEmpty(); }
     // [general] muRoot=...  radice Maildir di mu (opzionale; "~" espanso). Vuota = da `mu info store`.
     QString muRoot() const { return m_muRoot; }
+    QList<Identity> identities() const { return m_identities; }
+
+    // Modifica (per la finestra Impostazioni). setIdentities non controlla nulla:
+    // la validita' e' di validate().
+    void setAccounts(const QList<Account>& a) { m_accounts = a; }
+    void setIdentities(const QList<Identity>& i) { m_identities = i; }
+    // Errori che impedirebbero un salvataggio sensato (id vuoti o duplicati, caratteri
+    // non ammessi nei nomi di sezione, Maildir mancante, identita' senza indirizzo o
+    // con account sconosciuto). Vuota = valida.
+    QStringList validate() const;
+    // Salva account e identita' in `path`, lasciando le altre chiavi del file (come
+    // [general] muRoot). Prima copia il file esistente in `path`.bak. QSettings non
+    // conserva i commenti. Scrive i percorsi sotto la home come "~/...".
+    bool save(const QString& path, QString* error = nullptr) const;
 
 private:
     QList<Account> m_accounts;

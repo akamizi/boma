@@ -16,6 +16,8 @@ class FolderPane : public QTreeView {
     Q_OBJECT
 public:
     explicit FolderPane(const Config& config, QWidget* parent = nullptr);
+    // Nuova configurazione: va seguita da setMuRoot per ricostruire l'albero.
+    void setConfig(const Config& config) { config_ = config; }
     // (Ri)costruisce le cartelle con la radice di mu data.
     void setMuRoot(const QString& muRoot);
     QStandardItemModel* itemModel() const { return model_; }

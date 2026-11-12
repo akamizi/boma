@@ -38,6 +38,9 @@ struct MainWindowOptions {
     QString msmtpProgram = QStringLiteral("msmtp");
     QString gpgProgram;   // vuoto = "gpg"
     QString gnupgHome;    // vuoto = predefinito di gpg
+    QString configPath;   // file di Boma da salvare dalle Impostazioni (vuoto = Config::defaultPath())
+    QString mbsyncConfig; // ~/.mbsyncrc per i controlli delle Impostazioni (vuoto = predefinito)
+    QString msmtpConfig;  // ~/.msmtprc (vuoto = predefinito)
     QString unsavedDir;   // copie di emergenza degli inviati (vuoto = default di Sender)
 };
 
@@ -66,6 +69,7 @@ public:
     QTextBrowser* setupHelp() const { return help_; }
     QLabel* statusLabel() const { return syncLabel_; }
     QPushButton* newButton() const { return newBtn_; }
+    QPushButton* syncButton() const { return syncBtn_; }
     QPushButton* replyButton() const { return replyBtn_; }
     QPushButton* replyAllButton() const { return replyAllBtn_; }
     QPushButton* forwardButton() const { return fwdBtn_; }
@@ -96,6 +100,18 @@ public slots:
     void newMessage();
     void syncNow();
     void focusSearch();
+    // Finestra Impostazioni: salva il file di Boma e applica la nuova configurazione
+    // a caldo. Rifiutata durante un invio, una sincronizzazione o con finestre di
+    // scrittura aperte (conservano la configurazione con cui sono nate).
+    void openSettings();
+    // Applica una configurazione senza riavviare (usata da openSettings).
+    void applyConfig(const Config& config);
+public:
+    QPushButton* settingsButton() const { return settingsBtn_; }
+    // Sostituibile nei test: riceve la configurazione attuale e restituisce la nuova
+    // (Config vuota con ok=false = annullato).
+    void setSettingsCallback(std::function<bool(const Config& current, Config* out)> cb) { settingsCb_ = std::move(cb); }
+public slots:
 
 protected:
     // Mai chiudere durante un invio; ogni finestra di scrittura aperta viene chiusa
@@ -152,7 +168,9 @@ private:
     QStackedWidget* stack_;
     MessageView* view_;
     QTextBrowser* help_;
-    QPushButton *newBtn_, *replyBtn_, *replyAllBtn_, *fwdBtn_, *delBtn_, *syncBtn_;
+    QPushButton *newBtn_, *replyBtn_, *replyAllBtn_, *fwdBtn_, *delBtn_, *syncBtn_, *settingsBtn_;
+    std::function<bool(const Config&, Config*)> settingsCb_;
+    void updateEmptyState();
     QLabel* syncLabel_;
     QProgressBar* progress_;
 

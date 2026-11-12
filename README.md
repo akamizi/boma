@@ -129,6 +129,22 @@ pinentry-program /usr/bin/pinentry-qt
   Boma non legge né impone questi valori: senza di essi vale la cache predefinita
   di gpg-agent (10 minuti, fino a 2 ore). Dopo la modifica: `gpgconf --kill gpg-agent`.
 
+### Finestra Impostazioni
+
+Il pulsante «Impostazioni» (Ctrl+,) modifica il **solo file di Boma**: account,
+identità, cartelle speciali, canale mbsync, account msmtp e chiave PGP. Il
+pulsante «Verifica» controlla in **sola lettura** che il canale esista in
+`~/.mbsyncrc`, l'account in `~/.msmtprc`, le cartelle Inviata/Bozze/Cestino, che
+la chiave sia utilizzabile con `gpg` e la cache di gpg-agent. Boma non scrive mai
+i file di mbsync, msmtp o gpg.
+
+Al salvataggio la configurazione è applicata subito, senza riavviare. Il file
+precedente resta in `config.ini.bak`; i commenti del file non sono conservati
+(le chiavi di `[general]`, come `muRoot`, sì). L'identificativo di un account o
+di un'identità esistente non si cambia. Le Impostazioni si rifiutano di aprirsi
+durante un invio, un aggiornamento o con finestre di scrittura aperte (queste
+conservano la configurazione con cui sono nate).
+
 ### File di Boma
 
 Posizione: `boma/config.ini` nella cartella di configurazione XDG, cioè di norma
@@ -210,6 +226,7 @@ ricerca):
 | Ctrl+F oppure `/` | vai alla ricerca (campo vuoto = non lette) |
 | F5 | aggiorna ora (`mbsync` + `mu index`) |
 | Ctrl+N | nuovo messaggio |
+| Ctrl+, | apri le Impostazioni |
 | Ctrl+Q | chiudi Boma (come la X della finestra: chiede se c'è un invio o una bozza aperta) |
 | `R` / Maiusc+`R` | rispondi / rispondi a tutti |
 | `F` | inoltra |

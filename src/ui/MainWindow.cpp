@@ -2,6 +2,7 @@
 
 #include "ui/ReplyBuilder.h"
 #include "core/MaildirWriter.h"
+#include "ui/SettingsDialog.h"
 
 #include <QCloseEvent>
 #include <QCoreApplication>
@@ -83,8 +84,11 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     search_->setClearButtonEnabled(true);
     syncBtn_ = new QPushButton(tr("Aggiorna"), central);
     syncBtn_->setToolTip(tr("Scarica la posta e aggiorna l'elenco (F5)"));
+    settingsBtn_ = new QPushButton(tr("Impostazioni"), central);
+    settingsBtn_->setToolTip(tr("Account, identita', mbsync, msmtp e PGP (Ctrl+,)"));
     searchRow->addWidget(search_, 1);
     searchRow->addWidget(syncBtn_);
+    searchRow->addWidget(settingsBtn_);
     top->addLayout(searchRow);
 
     auto* split = new QSplitter(central);
@@ -175,6 +179,7 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     connect(fwdBtn_, &QPushButton::clicked, this, &MainWindow::forward);
     connect(delBtn_, &QPushButton::clicked, this, &MainWindow::deleteSelected);
     connect(syncBtn_, &QPushButton::clicked, this, &MainWindow::syncNow);
+    connect(settingsBtn_, &QPushButton::clicked, this, &MainWindow::openSettings);
     connect(sync_, &SyncService::stateChanged, this, &MainWindow::onSyncState);
     // All'uscita il mbsync in corso e' fermato con SIGTERM (mai lasciato orfano);
     // il contesto `this` scollega la callback se la finestra sparisce prima.
@@ -202,12 +207,23 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     sc(QKeySequence(Qt::Key_F), &MainWindow::forward);
     sc(QKeySequence(QKeySequence::New), &MainWindow::newMessage);
     sc(QKeySequence(Qt::Key_F5), &MainWindow::syncNow);
+    sc(QKeySequence(Qt::CTRL | Qt::Key_Comma), &MainWindow::openSettings);
 
     // ---- avvio: nessun lavoro sincrono ----
     resolveMuRoot();
-    if (config_.isEmpty()) {
+    updateEmptyState();
+    if (!config_.isEmpty()) {
+        applyQuery(QString());
+        checkSpecialFolders();
+    }
+}
+
+void MainWindow::updateEmptyState() {
+    const bool empty = config_.isEmpty();
+    if (empty) {
         help_->setHtml(tr("<h2>Benvenuto in Boma</h2><p>Nessun account configurato.</p>"
-                          "<p>Crea il file <b>%1</b> con almeno un account e una identit&agrave;, ad esempio:</p>"
+                          "<p>Premi <b>Impostazioni</b> (Ctrl+,) per aggiungere un account e una identit&agrave;, "
+                          "oppure crea a mano il file <b>%1</b>, ad esempio:</p>"
                           "<pre>[account:personale]\nname=Personale\nmaildirRoot=~/Mail/personale\n"
                           "mbsyncChannel=personale\nsentFolder=Sent\ndraftsFolder=Drafts\ntrashFolder=Trash\n\n"
                           "[identity:principale]\naccountId=personale\naddress=io@example.org\n"
@@ -216,14 +232,67 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
                           .arg(Config::defaultPath().toHtmlEscaped()));
         stack_->setCurrentWidget(help_);
         syncLabel_->setText(tr("Nessun account configurato"));
-        search_->setEnabled(false);
-        syncBtn_->setEnabled(false);
-        newBtn_->setEnabled(false);
     } else {
         stack_->setCurrentWidget(view_);
-        applyQuery(QString());
+        if (syncLabel_->text() == tr("Nessun account configurato")) syncLabel_->setText(tr("Non ancora sincronizzato"));
+    }
+    search_->setEnabled(!empty);
+    syncBtn_->setEnabled(!empty);
+    newBtn_->setEnabled(!empty);
+}
+
+void MainWindow::applyConfig(const Config& c) {
+    config_ = c;
+    index_->setAccounts(c.accounts());
+    sender_->setAccounts(c.accounts());
+    sync_->setConfig(c);
+    folders_->setConfig(c);
+    actions_->setMuRoot(QString()); // finche' la radice non e' riconfermata, Elimina resta disattivato
+    muRootDetected_ = false;
+    muRootReliable_ = false;
+    muRootError_.clear();
+    muRoot_.clear();
+    folders_->setMuRoot(QString());
+    model_->setIndex(c.isEmpty() ? nullptr : index_);
+    clearViewer();
+    resolveMuRoot();
+    updateEmptyState();
+    if (!c.isEmpty()) {
+        applyQuery(search_->text().trimmed());
         checkSpecialFolders();
     }
+}
+
+void MainWindow::openSettings() {
+    if (sender_->busy()) {
+        showNotice(tr("Impostazioni"), tr("Un messaggio e' in fase di invio: attendi la fine dell'invio."));
+        return;
+    }
+    if (sync_->state() == SyncService::Running || reindexing_) {
+        showNotice(tr("Impostazioni"), tr("Un aggiornamento e' in corso: attendi che finisca."));
+        return;
+    }
+    if (!composers().isEmpty()) {
+        showNotice(tr("Impostazioni"), tr("Chiudi prima le finestre di scrittura aperte: conservano la configurazione con cui sono state aperte."));
+        return;
+    }
+    Config nc;
+    if (settingsCb_) {
+        if (!settingsCb_(config_, &nc)) return;
+    } else {
+        const SettingsEnvironment env{opts_.mbsyncConfig, opts_.msmtpConfig, opts_.gpgProgram, opts_.gnupgHome};
+        SettingsDialog dlg(config_, env, this);
+        if (dlg.exec() != QDialog::Accepted) return;
+        nc = dlg.result();
+    }
+    QString err;
+    const QString path = opts_.configPath.isEmpty() ? Config::defaultPath() : opts_.configPath;
+    if (!nc.save(path, &err)) {
+        showNotice(tr("Impostazioni"), tr("Salvataggio non riuscito: %1").arg(err));
+        return;
+    }
+    applyConfig(nc);
+    statusBar()->showMessage(tr("Impostazioni salvate"), 5000);
 }
 
 MainWindow::~MainWindow() {
