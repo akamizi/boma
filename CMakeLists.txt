@@ -35,7 +35,7 @@ add_library(boma_core STATIC
     src/ui/ComposeWindow.cpp
 )
 target_include_directories(boma_core PUBLIC src)
-target_link_libraries(boma_core PUBLIC Qt6::Widgets PkgConfig::GMIME)
+target_link_libraries(boma_core PUBLIC Qt6::Widgets Qt6::Network PkgConfig::GMIME)
 
 add_executable(boma src/main.cpp)
 target_link_libraries(boma PRIVATE boma_core)

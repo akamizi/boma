@@ -1,6 +1,9 @@
 #include "ui/MessageView.h"
 #include <QAction>
 #include <QMenu>
+#include <QNetworkReply>
+#include <QScrollBar>
+#include <QNetworkRequest>
 #include <QSettings>
 
 #include <QImage>
@@ -25,9 +28,19 @@ const QSet<QString>& blockedTags() {
     return s;
 }
 
-bool isSafeUrlValue(QString v) {
+// cid: (immagini incorporate nel messaggio) e, solo se l'utente le ha abilitate per
+// questo messaggio, http(s): per l'attributo src dei tag. Mai altrove.
+struct UrlPolicy {
+    bool cid = false, remote = false;
+};
+
+bool isSafeUrlValue(QString v, const QString& attr = QString(), UrlPolicy pol = {}) {
     v.remove(QRegularExpression(QStringLiteral("[\\s\\x00-\\x1f]")));
-    return v.startsWith(QLatin1String("data:image/"), Qt::CaseInsensitive);
+    if (v.startsWith(QLatin1String("data:image/"), Qt::CaseInsensitive)) return true;
+    if (attr != QLatin1String("src")) return false;
+    if (pol.cid && v.startsWith(QLatin1String("cid:"), Qt::CaseInsensitive)) return true;
+    return pol.remote && (v.startsWith(QLatin1String("https://"), Qt::CaseInsensitive) ||
+                          v.startsWith(QLatin1String("http://"), Qt::CaseInsensitive));
 }
 
 bool isWs(QChar c) { return c.isSpace() || c.unicode() < 0x20; }
@@ -50,7 +63,7 @@ QString tagName(const QString& tag, bool* closing, qsizetype* after) {
 }
 
 // Riscrive un singolo tag togliendo gli attributi pericolosi. Tempo lineare.
-QString cleanTag(const QString& tag) {
+QString cleanTag(const QString& tag, UrlPolicy pol = {}) {
     bool closing = false;
     qsizetype i = 0;
     const QString name = tagName(tag, &closing, &i);
@@ -96,7 +109,7 @@ QString cleanTag(const QString& tag) {
         if (an.startsWith(QLatin1String("on"))) continue;
         if ((an == QLatin1String("src") || an == QLatin1String("background") || an == QLatin1String("srcset") ||
              an == QLatin1String("poster") || an == QLatin1String("data") || an == QLatin1String("action") ||
-             an == QLatin1String("formaction")) && !isSafeUrlValue(val))
+             an == QLatin1String("formaction")) && !isSafeUrlValue(val, an, pol))
             continue;
         if (an == QLatin1String("href")) {
             QString c = val;
@@ -166,9 +179,12 @@ QVariant allowedResource(int type, const QUrl& name) {
 class SafeDocument : public QTextDocument {
 public:
     using QTextDocument::QTextDocument;
+    std::function<QVariant(int, const QUrl&)> resolver;
 
 protected:
-    QVariant loadResource(int type, const QUrl& name) override { return allowedResource(type, name); }
+    QVariant loadResource(int type, const QUrl& name) override {
+        return resolver ? resolver(type, name) : allowedResource(type, name);
+    }
 };
 
 } // namespace
@@ -183,6 +199,88 @@ void MessageView::setPreferHtml(bool on) {
     s.setValue(QStringLiteral("view/preferHtml"), on);
 }
 
+void MessageView::cancelFetches() {
+    ++fetchGen_;
+    pendingFetches_ = 0;
+}
+
+void MessageView::resetRemote() {
+    cancelFetches();
+    remoteAllowed_ = false;
+    remoteCache_.clear();
+    inlineCache_.clear();
+    remoteUrls_.clear();
+    remoteBtn_->setEnabled(true);
+    remoteBtn_->setText(tr("Carica immagini remote"));
+    // indirizzi http(s) negli src, ripuliti dal sanitizer solo se non abilitati
+    static const QRegularExpression re(QStringLiteral("<img\\b[^>]*?\\bsrc\\s*=\\s*[\"']?(https?://[^\"'\\s>]+)"),
+                                       QRegularExpression::CaseInsensitiveOption);
+    auto it = re.globalMatch(msg_.html.left(2000000));
+    while (it.hasNext() && remoteUrls_.size() < 40) {
+        const QString u = it.next().captured(1);
+        if (!remoteUrls_.contains(u)) remoteUrls_ << u;
+    }
+}
+
+QVariant MessageView::resolveResource(int type, const QUrl& name) {
+    if (type != QTextDocument::ImageResource) return {};
+    const int maxW = qMax(100, viewport()->width() - 30);
+    auto fit = [maxW](QImage img) { return img.width() > maxW ? img.scaledToWidth(maxW, Qt::SmoothTransformation) : img; };
+    if (name.scheme().compare(QLatin1String("data"), Qt::CaseInsensitive) == 0) return allowedResource(type, name);
+    if (name.scheme().compare(QLatin1String("cid"), Qt::CaseInsensitive) == 0) {
+        const QString cid = name.path(QUrl::FullyDecoded).toLower();
+        const QByteArray data = msg_.inlineImages.value(cid);
+        if (data.isEmpty()) return {};
+        QImage img = inlineCache_.value(cid);
+        if (img.isNull() && img.loadFromData(data)) inlineCache_.insert(cid, img);
+        return img.isNull() ? QVariant() : QVariant(fit(img));
+    }
+    if (remoteAllowed_) {
+        const QImage img = remoteCache_.value(name.toString());
+        if (!img.isNull()) return fit(img);
+    }
+    return {};
+}
+
+void MessageView::startRemoteFetch() {
+    if (!nam_) nam_ = new QNetworkAccessManager(this); // senza cookie, senza cache su disco
+    const quint64 gen = ++fetchGen_;
+    pendingFetches_ = 0;
+    for (const QString& u : std::as_const(remoteUrls_)) {
+        const QUrl url(u);
+        if (!url.isValid() || (url.scheme() != QLatin1String("http") && url.scheme() != QLatin1String("https"))) continue;
+        QNetworkRequest rq(url);
+        rq.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+        rq.setTransferTimeout(20000);
+        rq.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Boma"));
+        QNetworkReply* r = nam_->get(rq);
+        ++pendingFetches_;
+        connect(r, &QNetworkReply::readyRead, r, [r]() {
+            if (r->bytesAvailable() > 5 * 1024 * 1024) r->abort(); // immagini enormi: no
+        });
+        connect(r, &QNetworkReply::finished, this, [this, r, gen, u]() {
+            r->deleteLater();
+            if (gen != fetchGen_) return; // messaggio cambiato nel frattempo
+            if (r->error() == QNetworkReply::NoError) {
+                QImage img;
+                const QByteArray data = r->read(5 * 1024 * 1024 + 1);
+                if (data.size() <= 5 * 1024 * 1024 && img.loadFromData(data)) remoteCache_.insert(u, img);
+            }
+            if (--pendingFetches_ <= 0) {
+                pendingFetches_ = 0;
+                const int sc = verticalScrollBar()->value();
+                render();
+                layoutBar();
+                verticalScrollBar()->setValue(sc);
+            }
+        });
+    }
+    if (pendingFetches_ == 0) {
+        render();
+        layoutBar();
+    }
+}
+
 bool MessageView::showingHtml() const {
     if (encryptedShown_) return false;
     if (msg_.html.isEmpty()) return false;
@@ -191,7 +289,9 @@ bool MessageView::showingHtml() const {
 
 MessageView::MessageView(QWidget* parent) : QTextBrowser(parent) {
     defaultHtml_ = preferHtml();
-    setDocument(new SafeDocument(this));
+    auto* doc = new SafeDocument(this);
+    doc->resolver = [this](int t, const QUrl& u) { return resolveResource(t, u); };
+    setDocument(doc);
     setOpenLinks(false);
     setOpenExternalLinks(false);
     connect(this, &QTextBrowser::anchorClicked, this, &MessageView::linkActivated);
@@ -229,6 +329,18 @@ MessageView::MessageView(QWidget* parent) : QTextBrowser(parent) {
         render();
         layoutBar();
     });
+    remoteBtn_ = new QPushButton(tr("Carica immagini remote"), bar_);
+    remoteBtn_->setObjectName(QStringLiteral("remoteImages"));
+    remoteBtn_->setToolTip(tr("Scarica le immagini dai server indicati nel messaggio. "
+                              "Il mittente puo' cosi' sapere che e quando l'hai letto."));
+    remoteBtn_->hide();
+    lay->addWidget(remoteBtn_, 0, Qt::AlignLeft);
+    connect(remoteBtn_, &QPushButton::clicked, this, [this]() {
+        remoteAllowed_ = true;
+        remoteBtn_->setEnabled(false);
+        remoteBtn_->setText(tr("Caricamento immagini..."));
+        startRemoteFetch();
+    });
     errLabel_ = new QLabel(bar_);
     errLabel_->setTextFormat(Qt::PlainText);
     errLabel_->setWordWrap(true);
@@ -252,9 +364,11 @@ void MessageView::layoutBar() {
     const bool both = !encryptedShown_ && !msg_.html.isEmpty() && !msg_.plainText.isEmpty();
     htmlToggle_->setText(wantHtml_ ? tr("Mostra come testo") : tr("Mostra HTML"));
     htmlToggle_->setVisible(both);
+    remoteBtn_->setVisible(showingHtml() && !remoteUrls_.isEmpty() && (!remoteAllowed_ || pendingFetches_ > 0));
     attachButton_->setVisible(!encryptedShown_ && !msg_.attachments.isEmpty());
     const bool any = encryptedShown_ || badge_->isVisibleTo(bar_) || errLabel_->isVisibleTo(bar_) ||
-                     attachButton_->isVisibleTo(bar_) || htmlToggle_->isVisibleTo(bar_);
+                     attachButton_->isVisibleTo(bar_) || htmlToggle_->isVisibleTo(bar_) ||
+                     remoteBtn_->isVisibleTo(bar_);
     int h = 0;
     if (any) {
         bar_->layout()->activate();
@@ -292,6 +406,7 @@ void MessageView::showDecrypted(const ParsedMessage& m) {
     msg_ = m;
     msg_.encryptedPgp = false;
     updateAttachments();
+    resetRemote();
     wantHtml_ = defaultHtml_;
     render();
     layoutBar();
@@ -374,6 +489,11 @@ void MessageView::updateBadge() {
 
 // Scansione in un solo passaggio (tempo lineare: ogni ricerca avanza sempre).
 QString MessageView::sanitizeHtml(const QString& s, qsizetype* consumed) {
+    return sanitizeHtmlImpl(s, consumed, false, false);
+}
+
+QString MessageView::sanitizeHtmlImpl(const QString& s, qsizetype* consumed, bool allowCid, bool allowRemote) {
+    const UrlPolicy pol{allowCid, allowRemote};
     constexpr int kMaxTags = 20000; // oltre, il layout non e' piu' limitato: si tronca
     int tags = 0;
     if (consumed) *consumed = s.size();
@@ -439,13 +559,13 @@ QString MessageView::sanitizeHtml(const QString& s, qsizetype* consumed) {
                 if (!body.contains(QLatin1String("url("), Qt::CaseInsensitive) &&
                     !body.contains(QLatin1String("@import"), Qt::CaseInsensitive) &&
                     !body.contains(QLatin1String("expression("), Qt::CaseInsensitive)) {
-                    out += cleanTag(tag) + body + QLatin1String("</style>");
+                    out += cleanTag(tag, pol) + body + QLatin1String("</style>");
                 }
             }
             i = end;
             continue;
         }
-        out += cleanTag(tag);
+        out += cleanTag(tag, pol);
     }
     return out;
 }
@@ -458,6 +578,7 @@ void MessageView::show(const ParsedMessage& m) {
     encrypted_ = m.encryptedPgp ? m.rawEncrypted : QByteArray();
     encryptedShown_ = m.encryptedPgp;
     decryptButton_->setEnabled(true);
+    resetRemote();
     wantHtml_ = defaultHtml_;
     updateAttachments();
     render();
@@ -515,7 +636,7 @@ void MessageView::render() {
         const bool cut = m.html.size() > kMaxBody;
         const QString t = cut ? m.html.left(kMaxBody) : m.html;
         qsizetype used = 0;
-        h += sanitizeHtml(t, &used);
+        h += sanitizeHtmlImpl(t, &used, true, remoteAllowed_);
         if (cut || used < t.size()) h += note(t.left(used));
     }
     setHtml(h);
@@ -524,7 +645,7 @@ void MessageView::render() {
 // Politica di privacy: nessuna risorsa esterna, mai. Solo immagini data: gia'
 // incluse nel messaggio. Nessun accesso alla rete ne' al disco.
 QVariant MessageView::loadResource(int type, const QUrl& name) {
-    return allowedResource(type, name);
+    return resolveResource(type, name);
 }
 
 } // namespace boma

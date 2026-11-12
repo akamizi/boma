@@ -1,6 +1,7 @@
 #pragma once
 #include <QByteArray>
 #include <QDateTime>
+#include <QHash>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -22,6 +23,9 @@ struct ParsedMessage {
     QDateTime date;
     QString plainText, html;
     QList<Attachment> attachments;
+    // Immagini incorporate (Content-ID senza <>, minuscolo) per i riferimenti "cid:" dell'HTML.
+    // Limiti: 8 MiB per immagine, 32 MiB e 64 immagini in tutto.
+    QHash<QString, QByteArray> inlineImages;
     // signedPgp: SOLO se multipart/signed (esattamente 2 parti) e' l'intero corpo
     // del messaggio (radice, o sotto multipart con un'unica parte): tutto il testo
     // e gli allegati mostrati sono dentro la firma.

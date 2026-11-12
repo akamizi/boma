@@ -213,6 +213,7 @@ struct Walker {
     int wantIndex = -1;
     GMimeObject* found = nullptr;
     bool plainSet = false, htmlSet = false;
+    qint64 inlineBytes = 0;
 
     static bool isAttachmentLike(GMimeObject* o, const QString& type) {
         GMimeContentDisposition* cd = g_mime_object_get_content_disposition(o);
@@ -237,6 +238,15 @@ struct Walker {
             a.size = partContent(o).size();
             a.partIndex = idx;
             out->attachments.append(a);
+            if (type.startsWith(QLatin1String("image/")) && out->inlineImages.size() < 64) {
+                const char* cid = g_mime_object_get_content_id(o);
+                if (cid && *cid) {
+                    const QByteArray data = partContent(o);
+                    inlineBytes += data.size();
+                    if (data.size() <= 8 * 1024 * 1024 && inlineBytes <= 32 * 1024 * 1024)
+                        out->inlineImages.insert(fromG(cid).toLower(), data);
+                }
+            }
             return;
         }
         const bool isHtml = type == QLatin1String("text/html");

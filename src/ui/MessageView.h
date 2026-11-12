@@ -1,7 +1,11 @@
 #pragma once
 #include "mime/MessageParser.h"
 #include "pgp/GpgService.h"
+#include <QHash>
+#include <QImage>
 #include <QLabel>
+#include <QNetworkAccessManager>
+#include <QPointer>
 #include <QPushButton>
 #include <functional>
 #include <QTextBrowser>
@@ -25,6 +29,12 @@ public:
     static void setPreferHtml(bool on);
     void reloadPreference() { defaultHtml_ = preferHtml(); }
     QPushButton* htmlToggleButton() const { return htmlToggle_; }
+    // Immagini remote (http/https): MAI caricate da sole (tracciamento). Il pulsante le
+    // scarica per il solo messaggio corrente; il sito del mittente vede l'indirizzo IP.
+    QPushButton* remoteImagesButton() const { return remoteBtn_; }
+    bool remoteImagesLoaded() const { return remoteAllowed_ && pendingFetches_ == 0; }
+    // Sostituibile nei test; default: rete reale.
+    void setNetworkAccessManager(QNetworkAccessManager* nam) { nam_ = nam; }
     bool showingHtml() const;
 
     // Esito della verifica della firma (badge nell'intestazione). show() lo azzera.
@@ -47,6 +57,8 @@ public:
     void setConfirmCallback(std::function<bool()> cb) { confirm_ = std::move(cb); }
     // consumed (opzionale): caratteri di input elaborati (< size se troncato per numero di tag).
     static QString sanitizeHtml(const QString& html, qsizetype* consumed = nullptr);
+    // Come sanitizeHtml, ma lascia passare src="cid:..." e/o src="http(s)://..." (solo src).
+    static QString sanitizeHtmlImpl(const QString& html, qsizetype* consumed, bool allowCid, bool allowRemote);
 
 signals:
     void linkActivated(const QUrl& url);
@@ -73,7 +85,18 @@ private:
     QWidget* encRow_ = nullptr;
     QPushButton* decryptButton_ = nullptr;
     QToolButton* attachButton_ = nullptr;
-    QPushButton* htmlToggle_ = nullptr;
+    QPushButton *htmlToggle_ = nullptr, *remoteBtn_ = nullptr;
+    QNetworkAccessManager* nam_ = nullptr;
+    bool remoteAllowed_ = false;
+    int pendingFetches_ = 0;
+    quint64 fetchGen_ = 0;
+    QStringList remoteUrls_;
+    QHash<QString, QImage> remoteCache_;
+    QHash<QString, QImage> inlineCache_;
+    QVariant resolveResource(int type, const QUrl& name);
+    void startRemoteFetch();
+    void cancelFetches();
+    void resetRemote();
     bool defaultHtml_ = false, htmlOverride_ = false, wantHtml_ = false;
     void updateAttachments();
     std::function<bool()> confirm_;

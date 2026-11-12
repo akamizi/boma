@@ -66,7 +66,11 @@ scritto e sincronizzato su disco in `tmp/`, poi pubblicato in `cur/` con `link()
   cestino, con conferma) e «Deseleziona».
 - Messaggi mostrati in testo semplice per default; se esiste anche la parte HTML un
   pulsante nella barra del messaggio alterna testo/HTML, e nelle Impostazioni si puo'
-  scegliere l'HTML come predefinito. L'HTML e' sempre ripulito e senza contenuti remoti.
+  scegliere l'HTML come predefinito. L'HTML e' sempre ripulito.
+  Le immagini incorporate nel messaggio (`cid:`) si vedono; quelle remote (http/https)
+  NON si scaricano mai da sole (il mittente saprebbe che e quando leggi): il pulsante
+  «Carica immagini remote» le scarica per il solo messaggio aperto (max 5 MiB l'una,
+  40 per messaggio, senza cookie).
 - Menu contestuale (tasto destro) su ogni cartella: «Segna tutti come letti»
   (tramite `mu move`) e «Svuota la casella» (cancellazione DEFINITIVA dei file in
   `cur/` e `new/`, con conferma che indica il numero di messaggi; con `Expunge`
