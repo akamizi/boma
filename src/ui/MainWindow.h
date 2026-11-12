@@ -177,6 +177,12 @@ private:
     quint64 selToken_ = 0;
     // apertura con debounce (M10): scorrendo l'elenco si analizza solo la riga su cui ci si ferma
     QTimer* openTimer_ = nullptr;
+    // Conteggio dei non letti per cartella: raggruppa le richieste, una query mu alla volta.
+    QTimer* countTimer_ = nullptr;
+    bool counting_ = false, countDirty_ = false;
+    quint64 countGen_ = 0;
+    void scheduleUnreadCounts();
+    void runUnreadCounts();
     MessageSummary pendingSummary_;
     quint64 pendingToken_ = 0;
     // azioni in corso (M4)

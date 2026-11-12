@@ -192,6 +192,38 @@ void MailIndex::unread(int offset, int limit, SearchCallback cb)
     search(unreadQuery(), offset, limit, std::move(cb));
 }
 
+void MailIndex::countUnread(const QString& query, std::function<void(int, QString)> cb)
+{
+    const QString q = query.trimmed().isEmpty()
+                          ? unreadQuery()
+                          : QStringLiteral("(%1) AND flag:unread AND NOT flag:trashed").arg(query);
+    QStringList args = baseArgs(QStringLiteral("find"));
+    args << QStringLiteral("--format=plain") << QStringLiteral("--fields=l") << QStringLiteral("--skip-dups")
+         << QStringLiteral("--") << q;
+    m_runner.run(m_mu, args, std::chrono::seconds(60), [cb = std::move(cb)](ProcessResult r) {
+        int n = -1;
+        QString err;
+        if (r.crashed || r.timedOut || r.exitCode == -1) {
+            err = QString::fromUtf8(r.err).trimmed();
+            if (err.isEmpty())
+                err = QStringLiteral("mu: non eseguibile");
+        } else if (r.exitCode == 2) {
+            n = 0; // nessuna corrispondenza
+        } else if (r.exitCode != 0) {
+            err = QString::fromUtf8(r.err).trimmed();
+            if (err.isEmpty())
+                err = QStringLiteral("mu: errore (codice %1)").arg(r.exitCode);
+        } else {
+            n = 0;
+            for (const QByteArray& l : r.out.split('\n'))
+                if (!l.trimmed().isEmpty())
+                    ++n;
+        }
+        if (cb)
+            cb(n, err);
+    });
+}
+
 void MailIndex::reindex(const QString&, Callback cb)
 {
     reindexAttempt(std::move(cb), std::chrono::milliseconds(0), std::chrono::milliseconds(250));

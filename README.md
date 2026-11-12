@@ -248,6 +248,15 @@ ricerca):
 La finestra di scrittura non ha scorciatoie proprie: Firma, Cifra, Salva bozza,
 Invia e Chiudi sono pulsanti.
 
+## Cartelle e non letti
+
+Il pannello delle cartelle mostra tutte le Maildir di ogni account con la loro
+gerarchia. Le cartelle con messaggi non letti sono in grassetto con il numero,
+«Nome (N)»; account e cartelle intermedie mostrano la somma dei figli. I conteggi
+(una query `mu find` per cartella, una alla volta) si aggiornano dopo l'indicizzazione,
+quando si legge o si cestina un messaggio e al cambio di configurazione. Il cestino
+non conta.
+
 ## Aggiornamento della posta
 
 Boma non sincronizza né all'avvio né a intervalli: lo fa il cron (consigliato:

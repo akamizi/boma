@@ -213,7 +213,7 @@ private slots:
         mu_ = writeScript(dir_, QStringLiteral("mu"),
                           "#!/bin/sh\nd=$(dirname \"$0\")\nprintf '%s\\n' \"$*\" >> \"$d/mu.log\"\n"
                           "case \"$1\" in\n"
-                          " find) case \"$*\" in *flag:unread*) cat \"$d/unread.json\";; *) cat \"$d/search.json\";; esac;;\n"
+                          " find) case \"$*\" in *format=plain*) cat \"$d/plain.txt\" 2>/dev/null; exit 0;; *flag:unread*) cat \"$d/unread.json\";; *) cat \"$d/search.json\";; esac;;\n"
                           " move) [ -f \"$d/slow\" ] && sleep 1; exit 0;;\n info) [ -f \"$d/slowinfo\" ] && sleep 1; [ -f \"$d/info.txt\" ] && cat \"$d/info.txt\" || exit 1;;\n *) exit 0;;\nesac\n");
         mbsync_ = writeScript(dir_, QStringLiteral("mbsync"),
                               "#!/bin/sh\nd=$(dirname \"$0\")\necho \"$*\" >> \"$d/mbsync.log\"\n"
@@ -340,6 +340,17 @@ private slots:
         QVERIFY(child(cl, "Rossi") && child(cl, "Rossi")->data(Qt::UserRole + 2).toBool());
         QStandardItem* ar = child(acc, "Arch");
         QVERIFY(ar && child(ar, "2020")); // Maildir++ .Arch.2020
+    }
+    void testUnreadCountsShownOnFolders() {
+        writeFile(dir_ + QStringLiteral("/plain.txt"), "/x/1\n/x/2\n/x/3\n");
+        MainWindow w(makeConfig(), optsRoot());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        auto* m = w.folderPane()->itemModel();
+        QVERIFY(QTest::qWaitFor([&] { return m->item(0)->text() == QStringLiteral("Non lette (3)"); }, 10000));
+        QVERIFY(m->item(0)->font().bold());
+        QVERIFY(m->item(1)->text().contains(QStringLiteral("(")));     // account: somma dei figli
+        QFile::remove(dir_ + QStringLiteral("/plain.txt"));
     }
     void testStartsShowingUnread() {
         MainWindow w(makeConfig(), opts());

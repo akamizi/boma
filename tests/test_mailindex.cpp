@@ -44,6 +44,18 @@ private slots:
         QTest::qWaitFor([&] { return done; }, 120000);
         QVERIFY2(ok, qPrintable(err));
     }
+    void testCountUnreadMatchesList() {
+        int n = -2; QString err; bool done = false;
+        idx->countUnread({}, [&](int c, QString e) { n = c; err = e; done = true; });
+        QVERIFY(QTest::qWaitFor([&] { return done; }, 60000));
+        QVERIFY2(err.isEmpty(), qPrintable(err));
+        QCOMPARE(n, (N + 2) / 3);
+        done = false;
+        idx->countUnread(QStringLiteral("subject:questoNonEsisteMai12345"), [&](int c, QString e) { n = c; err = e; done = true; });
+        QVERIFY(QTest::qWaitFor([&] { return done; }, 60000));
+        QCOMPARE(n, 0); // nessuna corrispondenza non e' un errore
+        QVERIFY(err.isEmpty());
+    }
     void testUnreadReturnsOnlyUnread() {
         auto r = runSearch(*idx, {}, 0, 5000, true);
         QVERIFY2(r.error.isEmpty(), qPrintable(r.error));

@@ -161,6 +161,10 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
         searchTimer_->stop();
         applyQuery(q);
     });
+    countTimer_ = new QTimer(this);
+    countTimer_->setSingleShot(true);
+    countTimer_->setInterval(300);
+    connect(countTimer_, &QTimer::timeout, this, &MainWindow::runUnreadCounts);
     openTimer_ = new QTimer(this);
     openTimer_->setSingleShot(true);
     openTimer_->setInterval(100);
@@ -416,7 +420,44 @@ void MainWindow::applyQuery(const QString& query) {
 // Dopo la sincronizzazione: l'elenco viene riletto ma la selezione (e lo scorrimento)
 // restano. La selezione non emette segnali durante il reset: il messaggio aperto non
 // viene riletto ne' richiuso; se dopo la prima pagina non c'e' piu', il visore si svuota.
+void MainWindow::scheduleUnreadCounts() {
+    if (config_.isEmpty()) return;
+    countTimer_->start();
+}
+
+void MainWindow::runUnreadCounts() {
+    if (config_.isEmpty()) return;
+    if (counting_) { // un giro e' in corso: ne segue un altro con i dati nuovi
+        countDirty_ = true;
+        return;
+    }
+    counting_ = true;
+    countDirty_ = false;
+    const quint64 gen = ++countGen_;
+    auto queries = std::make_shared<QStringList>(folders_->countableQueries());
+    auto results = std::make_shared<QHash<QString, int>>();
+    QPointer<MainWindow> self(this);
+    auto step = std::make_shared<std::function<void(int)>>();
+    *step = [self, gen, queries, results, step](int i) {
+        if (!self) return;
+        if (gen != self->countGen_ || i >= queries->size()) {
+            if (gen == self->countGen_) self->folders_->setUnreadCounts(*results);
+            self->counting_ = false;
+            if (self->countDirty_) self->scheduleUnreadCounts();
+            return;
+        }
+        const QString q = queries->at(i);
+        self->index_->countUnread(q, [self, q, results, step, i](int n, QString) {
+            if (!self) return;
+            if (n >= 0) results->insert(q, n);
+            (*step)(i + 1);
+        });
+    };
+    (*step)(0);
+}
+
 void MainWindow::refreshList() {
+    scheduleUnreadCounts();
     keepPending_ = haveMsg_ && !curSummary_.path.isEmpty();
     keepPath_ = curSummary_.path;
     keepScroll_ = list_->verticalScrollBar()->value();
@@ -539,6 +580,7 @@ void MainWindow::markReadAfterOpen(const MessageSummary& s) {
         }
         auto apply = [self, s](const QString& newPath) {
             if (!self) return;
+            self->scheduleUnreadCounts();
             const int row = self->rowForPath(s.path);
             if (row >= 0) self->model_->markReadLocal(row, newPath);
             if (self->curSummary_.path == s.path) {
@@ -763,6 +805,7 @@ void MainWindow::deleteSelected() {
             }
         }
         self->statusBar()->showMessage(tr("Spostato nel cestino"), 5000);
+        self->scheduleUnreadCounts();
     });
 }
 
@@ -995,6 +1038,7 @@ void MainWindow::applyMuRoot(QString root, const QString& error)
     const bool changed = index_->muRoot() != root;
     index_->setMuRoot(root);
     if (changed && model_->query().isEmpty()) refreshList();
+    scheduleUnreadCounts();
     if (!warning.isEmpty()) statusBar()->showMessage(warning);
 }
 

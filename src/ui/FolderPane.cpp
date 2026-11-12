@@ -4,6 +4,7 @@
 
 #include <QDir>
 #include <QHash>
+#include <functional>
 #include <QFileInfo>
 #include <QSet>
 
@@ -95,7 +96,49 @@ void FolderPane::setMuRoot(const QString& muRoot) {
         }
         model_->appendRow(top);
     }
+    // etichetta di base di ogni nodo (il testo mostrato puo' avere il conteggio)
+    std::function<void(QStandardItem*)> mark = [&](QStandardItem* it) {
+        it->setData(it->text(), Qt::UserRole + 5);
+        for (int i = 0; i < it->rowCount(); ++i) mark(it->child(i));
+    };
+    for (int i = 0; i < model_->rowCount(); ++i) mark(model_->item(i));
     expandAll();
+}
+
+QStringList FolderPane::countableQueries() const {
+    QStringList out;
+    std::function<void(QStandardItem*)> walk = [&](QStandardItem* it) {
+        if (it->data(Qt::UserRole + 2).toBool()) out << it->data(Qt::UserRole + 1).toString();
+        for (int i = 0; i < it->rowCount(); ++i) walk(it->child(i));
+    };
+    for (int i = 0; i < model_->rowCount(); ++i) walk(model_->item(i));
+    return out;
+}
+
+void FolderPane::setUnreadCounts(const QHash<QString, int>& byQuery) {
+    // -1 = sconosciuto
+    std::function<int(QStandardItem*)> apply = [&](QStandardItem* it) -> int {
+        int sum = 0;
+        bool known = false;
+        for (int i = 0; i < it->rowCount(); ++i) {
+            const int c = apply(it->child(i));
+            if (c >= 0) { sum += c; known = true; }
+        }
+        int n = -1;
+        if (it->data(Qt::UserRole + 2).toBool()) {
+            const QString q = it->data(Qt::UserRole + 1).toString();
+            n = byQuery.contains(q) ? byQuery.value(q) : -1;
+        } else if (known) {
+            n = sum;
+        }
+        const QString base = it->data(Qt::UserRole + 5).toString();
+        it->setText(n > 0 ? QStringLiteral("%1 (%2)").arg(base).arg(n) : base);
+        QFont f = it->font();
+        f.setBold(n > 0);
+        it->setFont(f);
+        return n;
+    };
+    for (int i = 0; i < model_->rowCount(); ++i) apply(model_->item(i));
 }
 
 } // namespace boma
