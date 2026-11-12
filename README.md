@@ -138,6 +138,11 @@ pulsante «Verifica» controlla in **sola lettura** che il canale esista in
 la chiave sia utilizzabile con `gpg` e la cache di gpg-agent. Boma non scrive mai
 i file di mbsync, msmtp o gpg.
 
+Nella stessa finestra si sceglie l'**aspetto**: stile Qt (Fusion, Windows, ...)
+e schema colori (sistema, chiaro, scuro; lo schema richiede Qt 6.8 o successivo).
+È una preferenza dell'interfaccia, salvata a parte in `~/.config/Boma/Boma.conf`
+e applicata subito.
+
 Al salvataggio la configurazione è applicata subito, senza riavviare. Il file
 precedente resta in `config.ini.bak`; i commenti del file non sono conservati
 (le chiavi di `[general]`, come `muRoot`, sì). L'identificativo di un account o

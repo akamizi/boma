@@ -13,6 +13,7 @@ add_library(boma_core STATIC
     src/core/Config.cpp
     src/core/ConfigCheck.cpp
     src/ui/SettingsDialog.cpp
+    src/ui/Theme.cpp
     src/core/ProcessRunner.cpp
     src/core/MaildirWriter.cpp
     src/core/MailActions.cpp

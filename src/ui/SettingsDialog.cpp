@@ -116,6 +116,28 @@ SettingsDialog::SettingsDialog(const Config& config, const SettingsEnvironment& 
     results_->setMinimumHeight(110);
     rl->addWidget(results_, 1);
 
+    auto* themeRow = new QHBoxLayout;
+    themeStyle_ = new QComboBox(right);
+    themeStyle_->addItem(tr("Predefinito"), QString());
+    for (const QString& k : Theme::availableStyles()) themeStyle_->addItem(k, k);
+    themeScheme_ = new QComboBox(right);
+    themeScheme_->addItem(tr("Segui il sistema"), QStringLiteral("system"));
+    themeScheme_->addItem(tr("Chiaro"), QStringLiteral("light"));
+    themeScheme_->addItem(tr("Scuro"), QStringLiteral("dark"));
+    themeScheme_->setEnabled(Theme::schemeSupported());
+    if (!Theme::schemeSupported()) themeScheme_->setToolTip(tr("Richiede Qt 6.8 o successivo"));
+    {
+        const Theme cur = Theme::load();
+        themeStyle_->setCurrentIndex(qMax(0, themeStyle_->findData(cur.style)));
+        themeScheme_->setCurrentIndex(qMax(0, themeScheme_->findData(cur.scheme)));
+    }
+    themeRow->addWidget(new QLabel(tr("Aspetto: stile"), right));
+    themeRow->addWidget(themeStyle_);
+    themeRow->addWidget(new QLabel(tr("colori"), right));
+    themeRow->addWidget(themeScheme_);
+    themeRow->addStretch(1);
+    rl->addLayout(themeRow);
+
     split->addWidget(left);
     split->addWidget(right);
     split->setStretchFactor(1, 1);
@@ -354,6 +376,11 @@ void SettingsDialog::accept() {
         return;
     }
     error_->clear();
+    Theme t;
+    t.style = themeStyle_->currentData().toString();
+    t.scheme = themeScheme_->currentData().toString();
+    t.save();
+    t.apply(); // subito, anche se poi il salvataggio degli account fallisse
     QDialog::accept();
 }
 

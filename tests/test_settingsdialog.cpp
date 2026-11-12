@@ -1,4 +1,6 @@
 #include <QtTest>
+#include <QApplication>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QFile>
 #include "ui/SettingsDialog.h"
@@ -50,6 +52,18 @@ private slots:
         QCOMPARE(r.identities("personale").at(0).msmtpAccount, QString("lavoro"));
         QCOMPARE(d.accountList()->item(0)->text(), QString("Casa (personale)"));
     }
+    void testThemeIsSavedOnAccept() {
+        SettingsDialog d(sample(), env());
+        QVERIFY(d.styleCombo()->count() >= 2);
+        d.schemeCombo()->setCurrentIndex(d.schemeCombo()->findData("dark"));
+        d.styleCombo()->setCurrentIndex(d.styleCombo()->findData("Fusion"));
+        d.accept();
+        QCOMPARE(d.result().accounts().size(), 1);
+        const Theme t = Theme::load();
+        QCOMPARE(t.scheme, QString("dark"));
+        QCOMPARE(t.style, QString("Fusion"));
+        Theme().save(); // ripristina
+    }
     void testChannelAndMsmtpListsComeFromFiles() {
         SettingsDialog d(sample(), env());
         QStringList ch, ms;
@@ -76,5 +90,12 @@ private slots:
         QVERIFY(r.validate().isEmpty());
     }
 };
-QTEST_MAIN(T)
+int main(int argc, char** argv) {
+    QStandardPaths::setTestModeEnabled(true); // QSettings di prova, non quelle dell'utente
+    QApplication app(argc, argv);
+    QApplication::setOrganizationName("BomaTest");
+    QApplication::setApplicationName("BomaTest");
+    T t;
+    return QTest::qExec(&t, argc, argv);
+}
 #include "test_settingsdialog.moc"

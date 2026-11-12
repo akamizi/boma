@@ -2,6 +2,7 @@
 #include "core/Config.h"
 #include "core/ConfigCheck.h"
 #include "pgp/GpgService.h"
+#include "ui/Theme.h"
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
@@ -53,6 +54,8 @@ public:
     QLineEdit* addressEdit() const { return idAddress_; }
     QComboBox* msmtpCombo() const { return idMsmtp_; }
     QComboBox* keyCombo() const { return idKey_; }
+    QComboBox* styleCombo() const { return themeStyle_; }
+    QComboBox* schemeCombo() const { return themeScheme_; }
     QLabel* errorLabel() const { return error_; }
     QDialogButtonBox* buttons() const { return buttons_; }
     bool checksRunning() const { return checking_; }
@@ -102,6 +105,7 @@ private:
     QPlainTextEdit* idSignature_;
     QComboBox *idMsmtp_, *idKey_;
     QCheckBox* idSign_;
+    QComboBox *themeStyle_, *themeScheme_;
     QTextBrowser* results_;
     QLabel* error_;
     QDialogButtonBox* buttons_;
