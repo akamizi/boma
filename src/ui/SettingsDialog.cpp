@@ -1,4 +1,5 @@
 #include "ui/SettingsDialog.h"
+#include "ui/MessageView.h"
 
 #include "core/MsmtpConfig.h"
 #include "ui/MsmtpDialog.h"
@@ -145,6 +146,11 @@ SettingsDialog::SettingsDialog(const Config& config, const SettingsEnvironment& 
     themeRow->addWidget(themeScheme_);
     themeRow->addStretch(1);
     rl->addLayout(themeRow);
+    preferHtml_ = new QCheckBox(tr("Mostra i messaggi in HTML quando disponibile (predefinito: testo)"), right);
+    preferHtml_->setToolTip(tr("Le immagini e i contenuti remoti non vengono mai scaricati. "
+                               "Con un messaggio aperto un pulsante permette di cambiare vista."));
+    preferHtml_->setChecked(MessageView::preferHtml());
+    rl->addWidget(preferHtml_);
 
     split->addWidget(left);
     split->addWidget(right);
@@ -409,6 +415,7 @@ void SettingsDialog::accept() {
     Theme t;
     t.style = themeStyle_->currentData().toString();
     t.scheme = themeScheme_->currentData().toString();
+    MessageView::setPreferHtml(preferHtml_->isChecked());
     t.save();
     t.apply(); // subito, anche se poi il salvataggio degli account fallisse
     QDialog::accept();

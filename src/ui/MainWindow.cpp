@@ -327,6 +327,7 @@ void MainWindow::openSettings() {
         if (dlg.exec() != QDialog::Accepted) return;
         nc = dlg.result();
     }
+    view_->reloadPreference();
     QString err;
     const QString path = opts_.configPath.isEmpty() ? Config::defaultPath() : opts_.configPath;
     if (!nc.save(path, &err)) {

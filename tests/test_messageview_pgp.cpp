@@ -1,5 +1,9 @@
 #include "ui/MessageView.h"
+#include <QStandardPaths>
+#include <QApplication>
 #include <QPushButton>
+#include <QStandardPaths>
+#include <QApplication>
 #include <QSignalSpy>
 #include <QTest>
 
@@ -161,5 +165,12 @@ private slots:
     }
 };
 
-QTEST_MAIN(T)
+int main(int argc, char** argv) {
+    QStandardPaths::setTestModeEnabled(true); // QSettings di prova, non quelle dell'utente
+    QApplication app(argc, argv);
+    QApplication::setOrganizationName("BomaTest");
+    QApplication::setApplicationName("BomaTest");
+    T t;
+    return QTest::qExec(&t, argc, argv);
+}
 #include "test_messageview_pgp.moc"

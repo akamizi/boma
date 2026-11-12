@@ -57,6 +57,7 @@ public:
     QPushButton* msmtpButton() const { return msmtpBtn_; }
     QComboBox* styleCombo() const { return themeStyle_; }
     QComboBox* schemeCombo() const { return themeScheme_; }
+    QCheckBox* preferHtmlBox() const { return preferHtml_; }
     QLabel* errorLabel() const { return error_; }
     QDialogButtonBox* buttons() const { return buttons_; }
     bool checksRunning() const { return checking_; }
@@ -110,6 +111,7 @@ private:
     QCheckBox* idSign_;
     QPushButton* msmtpBtn_;
     QComboBox *themeStyle_, *themeScheme_;
+    QCheckBox* preferHtml_ = nullptr;
     QTextBrowser* results_;
     QLabel* error_;
     QDialogButtonBox* buttons_;

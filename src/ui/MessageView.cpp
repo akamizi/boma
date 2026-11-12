@@ -1,6 +1,7 @@
 #include "ui/MessageView.h"
 #include <QAction>
 #include <QMenu>
+#include <QSettings>
 
 #include <QImage>
 #include <QHBoxLayout>
@@ -172,7 +173,24 @@ protected:
 
 } // namespace
 
+bool MessageView::preferHtml() {
+    QSettings s;
+    return s.value(QStringLiteral("view/preferHtml"), false).toBool();
+}
+
+void MessageView::setPreferHtml(bool on) {
+    QSettings s;
+    s.setValue(QStringLiteral("view/preferHtml"), on);
+}
+
+bool MessageView::showingHtml() const {
+    if (encryptedShown_) return false;
+    if (msg_.html.isEmpty()) return false;
+    return msg_.plainText.isEmpty() || wantHtml_;
+}
+
 MessageView::MessageView(QWidget* parent) : QTextBrowser(parent) {
+    defaultHtml_ = preferHtml();
     setDocument(new SafeDocument(this));
     setOpenLinks(false);
     setOpenExternalLinks(false);
@@ -202,6 +220,15 @@ MessageView::MessageView(QWidget* parent) : QTextBrowser(parent) {
     attachButton_->setMenu(new QMenu(attachButton_));
     attachButton_->hide();
     lay->addWidget(attachButton_, 0, Qt::AlignLeft);
+    htmlToggle_ = new QPushButton(bar_);
+    htmlToggle_->setObjectName(QStringLiteral("htmlToggle"));
+    htmlToggle_->hide();
+    lay->addWidget(htmlToggle_, 0, Qt::AlignLeft);
+    connect(htmlToggle_, &QPushButton::clicked, this, [this]() {
+        wantHtml_ = !wantHtml_;
+        render();
+        layoutBar();
+    });
     errLabel_ = new QLabel(bar_);
     errLabel_->setTextFormat(Qt::PlainText);
     errLabel_->setWordWrap(true);
@@ -222,9 +249,12 @@ void MessageView::layoutBar() {
     errLabel_->setText(decryptError_);
     errLabel_->setVisible(!decryptError_.isEmpty());
     encRow_->setVisible(encryptedShown_);
+    const bool both = !encryptedShown_ && !msg_.html.isEmpty() && !msg_.plainText.isEmpty();
+    htmlToggle_->setText(wantHtml_ ? tr("Mostra come testo") : tr("Mostra HTML"));
+    htmlToggle_->setVisible(both);
     attachButton_->setVisible(!encryptedShown_ && !msg_.attachments.isEmpty());
     const bool any = encryptedShown_ || badge_->isVisibleTo(bar_) || errLabel_->isVisibleTo(bar_) ||
-                     attachButton_->isVisibleTo(bar_);
+                     attachButton_->isVisibleTo(bar_) || htmlToggle_->isVisibleTo(bar_);
     int h = 0;
     if (any) {
         bar_->layout()->activate();
@@ -262,6 +292,7 @@ void MessageView::showDecrypted(const ParsedMessage& m) {
     msg_ = m;
     msg_.encryptedPgp = false;
     updateAttachments();
+    wantHtml_ = defaultHtml_;
     render();
     layoutBar();
 }
@@ -427,6 +458,7 @@ void MessageView::show(const ParsedMessage& m) {
     encrypted_ = m.encryptedPgp ? m.rawEncrypted : QByteArray();
     encryptedShown_ = m.encryptedPgp;
     decryptButton_->setEnabled(true);
+    wantHtml_ = defaultHtml_;
     updateAttachments();
     render();
     layoutBar();
@@ -473,7 +505,7 @@ void MessageView::render() {
     };
     if (encryptedShown_) {
         // il corpo cifrato non si mostra mai
-    } else if (!m.plainText.isEmpty()) {
+    } else if (!m.plainText.isEmpty() && !(wantHtml_ && !m.html.isEmpty())) {
         const bool cut = m.plainText.size() > kMaxBody;
         const QString t = cut ? m.plainText.left(kMaxBody) : m.plainText;
         h += QStringLiteral("<pre style=\"white-space: pre-wrap; font-family: monospace;\">") + esc(t) +

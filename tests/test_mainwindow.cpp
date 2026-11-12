@@ -1,5 +1,9 @@
 #include "mime/MessageParser.h"
+#include <QStandardPaths>
+#include <QApplication>
 #include "ui/ComposeWindow.h"
+#include <QStandardPaths>
+#include <QApplication>
 #include "core/MailIndex.h"
 #include "ui/MainWindow.h"
 #include "ui/ReplyBuilder.h"
@@ -1439,5 +1443,12 @@ private slots:
     }
 };
 
-QTEST_MAIN(T)
+int main(int argc, char** argv) {
+    QStandardPaths::setTestModeEnabled(true); // QSettings di prova, non quelle dell'utente
+    QApplication app(argc, argv);
+    QApplication::setOrganizationName("BomaTest");
+    QApplication::setApplicationName("BomaTest");
+    T t;
+    return QTest::qExec(&t, argc, argv);
+}
 #include "test_mainwindow.moc"

@@ -18,6 +18,15 @@ public:
     explicit MessageView(QWidget* parent = nullptr);
     void show(const ParsedMessage& m);
 
+    // Preferenza "mostra in HTML quando il messaggio ha anche la parte HTML" (default:
+    // testo). Sta in QSettings (view/preferHtml); vale per i messaggi aperti dopo la
+    // modifica. Il pulsante nella barra la inverte per il solo messaggio corrente.
+    static bool preferHtml();
+    static void setPreferHtml(bool on);
+    void reloadPreference() { defaultHtml_ = preferHtml(); }
+    QPushButton* htmlToggleButton() const { return htmlToggle_; }
+    bool showingHtml() const;
+
     // Esito della verifica della firma (badge nell'intestazione). show() lo azzera.
     void setSignatureResult(SignatureStatus status, const QString& signer);
     // Messaggi cifrati: il pulsante "Decifra" chiede conferma e poi emette decryptRequested().
@@ -64,6 +73,8 @@ private:
     QWidget* encRow_ = nullptr;
     QPushButton* decryptButton_ = nullptr;
     QToolButton* attachButton_ = nullptr;
+    QPushButton* htmlToggle_ = nullptr;
+    bool defaultHtml_ = false, htmlOverride_ = false, wantHtml_ = false;
     void updateAttachments();
     std::function<bool()> confirm_;
 };

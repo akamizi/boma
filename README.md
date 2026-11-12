@@ -64,6 +64,9 @@ scritto e sincronizzato su disco in `tmp/`, poi pubblicato in `cur/` con `link()
 - Selezione multipla: la casella a sinistra di ogni riga (senza aprire il messaggio)
   fa comparire sopra l'elenco una barra con «Segna come letti», «Elimina» (nel
   cestino, con conferma) e «Deseleziona».
+- Messaggi mostrati in testo semplice per default; se esiste anche la parte HTML un
+  pulsante nella barra del messaggio alterna testo/HTML, e nelle Impostazioni si puo'
+  scegliere l'HTML come predefinito. L'HTML e' sempre ripulito e senza contenuti remoti.
 - Menu contestuale (tasto destro) su ogni cartella: «Segna tutti come letti»
   (tramite `mu move`) e «Svuota la casella» (cancellazione DEFINITIVA dei file in
   `cur/` e `new/`, con conferma che indica il numero di messaggi; con `Expunge`
