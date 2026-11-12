@@ -14,7 +14,8 @@ namespace boma {
 struct MessageSummary {
     QString path, messageId, from, subject;
     QDateTime date;
-    bool unread = false, hasAttachment = false;
+    bool unread = false, hasAttachment = false, flagged = false;
+    qint64 size = 0; // byte
     QString accountId;
 };
 

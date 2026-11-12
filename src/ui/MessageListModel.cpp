@@ -70,6 +70,8 @@ QVariant MessageListModel::data(const QModelIndex& idx, int role) const
     case HasAttachmentRole: return m.hasAttachment;
     case PathRole: return m.path;
     case AccountIdRole: return m.accountId;
+    case FlaggedRole: return m.flagged;
+    case SizeRole: return m.size;
     }
     return {};
 }

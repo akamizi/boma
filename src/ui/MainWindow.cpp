@@ -1,5 +1,6 @@
 #include "ui/MainWindow.h"
 
+#include "ui/MessageDelegate.h"
 #include "ui/ReplyBuilder.h"
 #include "core/FolderCleaner.h"
 #include "core/MaildirWriter.h"
@@ -97,6 +98,7 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     list_ = new QListView(split);
     list_->setModel(model_);
     list_->setUniformItemSizes(true);
+    list_->setItemDelegate(new MessageDelegate(list_));
     list_->setSelectionMode(QAbstractItemView::SingleSelection);
     list_->setEditTriggers(QAbstractItemView::NoEditTriggers);
 

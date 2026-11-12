@@ -19,7 +19,9 @@ public:
         UnreadRole,
         HasAttachmentRole,
         PathRole,
-        AccountIdRole
+        AccountIdRole,
+        FlaggedRole,
+        SizeRole
     };
     static constexpr int PageSize = 200;
     // Finestra massima richiesta a mu (il costo cresce con la profondita').

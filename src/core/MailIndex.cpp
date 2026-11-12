@@ -69,10 +69,13 @@ QList<MessageSummary> MailIndex::parse(const QByteArray& json, QString* error) c
         const QJsonValue d = o.value(QStringLiteral(":date-unix"));
         if (d.isDouble())
             m.date = QDateTime::fromSecsSinceEpoch(qint64(d.toDouble()));
+        m.size = qint64(o.value(QStringLiteral(":size")).toDouble());
         for (const QJsonValue& f : o.value(QStringLiteral(":flags")).toArray()) {
             const QString s = f.toString();
             if (s == QLatin1String("unread") || s == QLatin1String("new"))
                 m.unread = true;
+            else if (s == QLatin1String("flagged"))
+                m.flagged = true;
             else if (s == QLatin1String("attach"))
                 m.hasAttachment = true;
         }
