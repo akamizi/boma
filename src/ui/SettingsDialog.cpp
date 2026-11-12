@@ -1,5 +1,7 @@
 #include "ui/SettingsDialog.h"
 
+#include "core/MsmtpConfig.h"
+#include "ui/MsmtpDialog.h"
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -19,6 +21,7 @@ SettingsDialog::SettingsDialog(const Config& config, const SettingsEnvironment& 
     const QString mbRc = env_.mbsyncConfig.isEmpty() ? ConfigCheck::mbsyncConfigPath() : env_.mbsyncConfig;
     const QString msRc = env_.msmtpConfig.isEmpty() ? ConfigCheck::msmtpConfigPath() : env_.msmtpConfig;
     channels_ = ConfigCheck::mbsyncChannels(ConfigCheck::readFile(mbRc, &haveMbsyncRc_));
+    msmtpPath_ = msRc.isEmpty() ? QDir::homePath() + QStringLiteral("/.msmtprc") : msRc;
     msmtpAccounts_ = ConfigCheck::msmtpAccounts(ConfigCheck::readFile(msRc, &haveMsmtpRc_));
 
     auto* root = new QVBoxLayout(this);
@@ -100,7 +103,12 @@ SettingsDialog::SettingsDialog(const Config& config, const SettingsEnvironment& 
     idf->addRow(tr("Indirizzo"), idAddress_);
     idf->addRow(tr("Nome"), idName_);
     idf->addRow(tr("Firma testuale"), idSignature_);
-    idf->addRow(tr("Account msmtp"), idMsmtp_);
+    msmtpBtn_ = new QPushButton(tr("Server di invio..."), idBox);
+    msmtpBtn_->setToolTip(tr("Modifica host, porta, TLS e utente di questo account in ~/.msmtprc"));
+    auto* msRow = new QHBoxLayout;
+    msRow->addWidget(idMsmtp_, 1);
+    msRow->addWidget(msmtpBtn_);
+    idf->addRow(tr("Account msmtp"), msRow);
     idf->addRow(tr("Chiave PGP"), idKey_);
     idf->addRow(QString(), idSign_);
     il->addLayout(idf);
@@ -158,6 +166,7 @@ SettingsDialog::SettingsDialog(const Config& config, const SettingsEnvironment& 
     connect(addIdentity_, &QPushButton::clicked, this, &SettingsDialog::addIdentity);
     connect(removeIdentity_, &QPushButton::clicked, this, &SettingsDialog::removeIdentity);
     connect(checkBtn_, &QPushButton::clicked, this, &SettingsDialog::runChecks);
+    connect(msmtpBtn_, &QPushButton::clicked, this, &SettingsDialog::editMsmtp);
     connect(browse, &QPushButton::clicked, this, [this]() {
         const QString d = QFileDialog::getExistingDirectory(this, tr("Radice Maildir"), accRoot_->text());
         if (!d.isEmpty()) accRoot_->setText(d);
@@ -197,7 +206,7 @@ void SettingsDialog::setFormsEnabled() {
     for (QWidget* w : QList<QWidget*>{accName_, accRoot_, accChannel_, accSent_, accDrafts_, accTrash_, addIdentity_, removeAccount_})
         w->setEnabled(haveAcc);
     accId_->setEnabled(haveAcc && newAccounts_.contains(accounts_.value(curAccount_).id));
-    for (QWidget* w : QList<QWidget*>{idAddress_, idName_, idSignature_, idMsmtp_, idKey_, idSign_, removeIdentity_})
+    for (QWidget* w : QList<QWidget*>{idAddress_, idName_, idSignature_, idMsmtp_, msmtpBtn_, idKey_, idSign_, removeIdentity_})
         w->setEnabled(haveId);
     idId_->setEnabled(haveId && newIdentities_.contains(identities_.value(curIdentity_).id));
 }
@@ -367,6 +376,27 @@ void SettingsDialog::removeIdentity() {
     identities_.removeAt(curIdentity_);
     curIdentity_ = -1;
     refreshIdentityList(qMax(0, qMin(row, int(identityRows_.size()) - 2)));
+}
+
+// Il file di msmtp si scrive subito (non al "Salva" di Boma): e' un file a parte.
+void SettingsDialog::editMsmtp() {
+    const QString name = idMsmtp_->currentText().trimmed();
+    if (!MsmtpConfig::validAccountName(name)) {
+        error_->setText(tr("Scrivi prima un nome valido per l'account msmtp (lettere, cifre, . _ -)."));
+        return;
+    }
+    error_->clear();
+    MsmtpDialog dlg(msmtpPath_, name, this);
+    if (dlg.exec() != QDialog::Accepted) return;
+    bool ok = false;
+    msmtpAccounts_ = ConfigCheck::msmtpAccounts(ConfigCheck::readFile(msmtpPath_, &ok));
+    haveMsmtpRc_ = ok;
+    const QString cur = idMsmtp_->currentText();
+    loading_ = true;
+    idMsmtp_->clear();
+    idMsmtp_->addItems(msmtpAccounts_);
+    idMsmtp_->setEditText(cur);
+    loading_ = false;
 }
 
 void SettingsDialog::accept() {

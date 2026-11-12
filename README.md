@@ -138,6 +138,14 @@ pulsante «Verifica» controlla in **sola lettura** che il canale esista in
 la chiave sia utilizzabile con `gpg` e la cache di gpg-agent. Boma non scrive mai
 i file di mbsync, msmtp o gpg.
 
+Il pulsante «Server di invio...» accanto all'account msmtp modifica **solo il blocco
+di quell'account** in `~/.msmtprc` (server, porta, TLS, STARTTLS, autenticazione,
+utente, mittente, comando della password). Le altre righe, i commenti, `[defaults]` e gli
+altri account restano identici; il file precedente va in `.msmtprc.bak` e i permessi
+sono mantenuti (0600 se nuovo). Le password in chiaro non si scrivono mai: si usa
+`passwordeval`. A differenza del resto delle Impostazioni, questo file si scrive subito
+al «Salva» della sua finestra, non al «Salva» di Boma. `~/.mbsyncrc` resta in sola lettura.
+
 Nella stessa finestra si sceglie l'**aspetto**: stile Qt (Fusion, Windows, ...)
 e schema colori (sistema, chiaro, scuro; lo schema richiede Qt 6.8 o successivo).
 È una preferenza dell'interfaccia, salvata a parte in `~/.config/Boma/Boma.conf`

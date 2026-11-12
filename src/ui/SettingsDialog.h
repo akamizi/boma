@@ -54,6 +54,7 @@ public:
     QLineEdit* addressEdit() const { return idAddress_; }
     QComboBox* msmtpCombo() const { return idMsmtp_; }
     QComboBox* keyCombo() const { return idKey_; }
+    QPushButton* msmtpButton() const { return msmtpBtn_; }
     QComboBox* styleCombo() const { return themeStyle_; }
     QComboBox* schemeCombo() const { return themeScheme_; }
     QLabel* errorLabel() const { return error_; }
@@ -89,6 +90,8 @@ private:
     Config base_;
     SettingsEnvironment env_;
     QStringList channels_, msmtpAccounts_;
+    QString msmtpPath_;
+    void editMsmtp();
     bool haveMbsyncRc_ = false, haveMsmtpRc_ = false;
     QList<SecretKeyInfo> keys_;
     bool keysDone_ = false, checking_ = false;
@@ -105,6 +108,7 @@ private:
     QPlainTextEdit* idSignature_;
     QComboBox *idMsmtp_, *idKey_;
     QCheckBox* idSign_;
+    QPushButton* msmtpBtn_;
     QComboBox *themeStyle_, *themeScheme_;
     QTextBrowser* results_;
     QLabel* error_;
