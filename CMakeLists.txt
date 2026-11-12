@@ -16,6 +16,7 @@ add_library(boma_core STATIC
     src/ui/Theme.cpp
     src/ui/MsmtpDialog.cpp
     src/core/MsmtpConfig.cpp
+    src/core/FolderCleaner.cpp
     src/core/ProcessRunner.cpp
     src/core/MaildirWriter.cpp
     src/core/MailActions.cpp

@@ -62,6 +62,8 @@ public:
     // Numero di messaggi non letti (non cestinati) che soddisfano `query` (vuota = la vista
     // "Non lette"). Asincrono; cb(-1, errore) se mu fallisce.
     void countUnread(const QString& query, std::function<void(int count, QString error)> cb);
+    // Percorsi dei messaggi non letti che soddisfano `query` (cestino compreso).
+    void unreadPaths(const QString& query, std::function<void(QStringList paths, QString error)> cb);
     void reindex(const QString& accountId, Callback cb);
     // Radice Maildir di mu (`mu info store`, riga "maildir"). Le cartelle di mu
     // ("/a/INBOX") sono relative a questa radice, non a quella di un account.

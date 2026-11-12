@@ -352,6 +352,60 @@ private slots:
         QVERIFY(m->item(1)->text().contains(QStringLiteral("(")));     // account: somma dei figli
         QFile::remove(dir_ + QStringLiteral("/plain.txt"));
     }
+    void testFolderMenuHasTheTwoCommands() {
+        MainWindow w(makeConfig(), optsRoot());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        auto* m = w.folderPane()->itemModel();
+        QStandardItem* acc = m->item(1);
+        QVERIFY(acc->rowCount() > 0);
+        QVERIFY(!w.folderPane()->contextMenuFor(m->indexFromItem(acc)));   // l'account non ha menu
+        QVERIFY(!w.folderPane()->contextMenuFor(m->indexFromItem(m->item(0)))); // nemmeno "Non lette"
+        QMenu* menu = w.folderPane()->contextMenuFor(m->indexFromItem(acc->child(0)));
+        QVERIFY(menu);
+        QVERIFY(menu->findChild<QAction*>("markAllRead"));
+        QVERIFY(menu->findChild<QAction*>("emptyFolder"));
+        delete menu;
+    }
+    void testMarkFolderReadMarksEveryUnread() {
+        writeFile(dir_ + QStringLiteral("/plain.txt"), QStringLiteral("%1/Trash/cur/a\n%1/Trash/cur/b\n").arg(dir_ + "/mail/a").toUtf8());
+        MainWindow w(makeConfig(), optsRoot());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        w.markFolderRead("a", "maildir:\"/a/Trash\"", "Cestino");
+        QVERIFY(QTest::qWaitFor([&] { return !w.bulkBusy(); }, 10000));
+        const QString mv = moves();
+        QCOMPARE(mv.count("--flags=-N+S"), 2);
+        QFile::remove(dir_ + QStringLiteral("/plain.txt"));
+    }
+    void testEmptyFolderNeedsConfirmationThenDeletes() {
+        const QString f = dir_ + QStringLiteral("/mail/a/Trash");
+        writeFile(f + "/cur/x1:2,S", "a");
+        writeFile(f + "/new/x2", "b");
+        MainWindow w(makeConfig(), optsRoot());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        QString asked;
+        bool answer = false;
+        w.setConfirmDestructiveCallback([&](const QString&, const QString& t) { asked = t; return answer; });
+        w.emptyFolder("a", f, "Cestino");
+        QVERIFY(QTest::qWaitFor([&] { return !asked.isEmpty(); }, 10000));
+        QVERIFY(asked.contains("2 messaggi"));
+        QVERIFY(QTest::qWaitFor([&] { return !w.bulkBusy(); }, 10000));
+        QVERIFY(QFile::exists(f + "/cur/x1:2,S")); // rifiutato: nulla cancellato
+        answer = true; asked.clear();
+        w.emptyFolder("a", f, "Cestino");
+        QVERIFY(QTest::qWaitFor([&] { return !QFile::exists(f + "/cur/x1:2,S") && !QFile::exists(f + "/new/x2") && !w.bulkBusy(); }, 10000));
+        QVERIFY(QTest::qWaitFor([&] { return log("mu.log").contains("index"); }, 10000));
+        // una cartella di un altro percorso e' rifiutata senza nemmeno chiedere
+        asked.clear();
+        QString notice;
+        w.setNoticeCallback([&](const QString&, const QString& t) { notice = t; });
+        w.emptyFolder("a", dir_, "Fuori");
+        QVERIFY(asked.isEmpty());
+        QVERIFY(!notice.isEmpty());
+        QVERIFY(!w.bulkBusy());
+    }
     void testStartsShowingUnread() {
         MainWindow w(makeConfig(), opts());
         w.show();

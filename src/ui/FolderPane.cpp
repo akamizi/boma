@@ -2,6 +2,7 @@
 
 #include "core/MailIndex.h"
 
+#include <QAction>
 #include <QDir>
 #include <QHash>
 #include <functional>
@@ -45,7 +46,32 @@ FolderPane::FolderPane(const Config& config, QWidget* parent) : QTreeView(parent
     connect(selectionModel(), &QItemSelectionModel::currentChanged, this, [this](const QModelIndex& cur) {
         if (cur.isValid() && cur.data(Qt::UserRole + 2).toBool()) emit querySelected(cur.data(Qt::UserRole + 1).toString());
     });
+    setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(this, &QWidget::customContextMenuRequested, this, [this](const QPoint& p) {
+        QMenu* m = contextMenuFor(indexAt(p));
+        if (!m) return;
+        m->exec(viewport()->mapToGlobal(p));
+        delete m;
+    });
     setMuRoot(QString());
+}
+
+QMenu* FolderPane::contextMenuFor(const QModelIndex& index) {
+    if (!index.isValid()) return nullptr;
+    const QString dir = index.data(Qt::UserRole + 6).toString();
+    const QString acc = index.data(Qt::UserRole + 7).toString();
+    if (dir.isEmpty() || acc.isEmpty()) return nullptr;
+    const QString q = index.data(Qt::UserRole + 1).toString();
+    const QString label = index.data(Qt::UserRole + 5).toString();
+    auto* m = new QMenu(this);
+    QAction* read = m->addAction(tr("Segna tutti come letti"));
+    read->setObjectName(QStringLiteral("markAllRead"));
+    connect(read, &QAction::triggered, this, [=, this]() { emit markAllReadRequested(acc, q, dir, label); });
+    m->addSeparator();
+    QAction* empty = m->addAction(tr("Svuota la casella (cancellazione definitiva)..."));
+    empty->setObjectName(QStringLiteral("emptyFolder"));
+    connect(empty, &QAction::triggered, this, [=, this]() { emit emptyFolderRequested(acc, q, dir, label); });
+    return m;
 }
 
 void FolderPane::setMuRoot(const QString& muRoot) {
@@ -84,6 +110,8 @@ void FolderPane::setMuRoot(const QString& muRoot) {
             parent->setText(label.isEmpty() ? seg.last() : label);
             parent->setData(q, QueryRole);
             parent->setData(true, FolderRole);
+            parent->setData(QDir::cleanPath(QDir(a.maildirRoot).filePath(folder.trimmed())), Qt::UserRole + 6);
+            parent->setData(a.id, Qt::UserRole + 7);
         };
         add(tr("Posta in arrivo"), QStringLiteral("INBOX"));
         add(tr("Inviata"), a.sentFolder);

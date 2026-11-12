@@ -81,6 +81,12 @@ public:
 
     // Sostituibili nei test (default: QMessageBox).
     // "Inviare SENZA firma?": true = si'.
+    // Comandi del menu delle cartelle. Usano la query/percorso della cartella scelta.
+    void markFolderRead(const QString& accountId, const QString& query, const QString& label);
+    void emptyFolder(const QString& accountId, const QString& dir, const QString& label);
+    // Conferma delle azioni distruttive (titolo, testo); sostituibile nei test.
+    void setConfirmDestructiveCallback(std::function<bool(const QString&, const QString&)> cb) { confirmDestructive_ = std::move(cb); }
+    bool bulkBusy() const { return bulkBusy_; }
     void setConfirmUnsignedCallback(std::function<bool()> cb) { confirmUnsigned_ = std::move(cb); }
     // Avvisi/errori che richiedono l'attenzione dell'utente (titolo, testo).
     void setNoticeCallback(std::function<void(const QString&, const QString&)> cb) { notice_ = std::move(cb); }
@@ -201,6 +207,9 @@ private:
     QString innerSigner_;
     QDateTime lastSync_;
     bool reindexing_ = false;
+    bool bulkBusy_ = false;
+    std::function<bool(const QString&, const QString&)> confirmDestructive_;
+    bool bulkAllowed();
 
     std::function<bool()> confirmUnsigned_;
     std::function<void(const QString&, const QString&)> notice_;

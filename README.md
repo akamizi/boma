@@ -58,6 +58,10 @@ scritto e sincronizzato su disco in `tmp/`, poi pubblicato in `cur/` con `link()
 
 - Due account IMAP completamente indipendenti, con copia locale completa
   (scaricata dal cron con `mbsync`, non da Boma).
+- Menu contestuale (tasto destro) su ogni cartella: «Segna tutti come letti»
+  (tramite `mu move`) e «Svuota la casella» (cancellazione DEFINITIVA dei file in
+  `cur/` e `new/`, con conferma che indica il numero di messaggi; con `Expunge`
+  attivo in mbsync la cancellazione arriva anche al server al sync successivo).
 - Elenco per messaggio (senza conversazioni), vista delle non lette all'avvio,
   ricerca veloce.
 - Testo semplice, HTML visualizzabile senza immagini remote, allegati

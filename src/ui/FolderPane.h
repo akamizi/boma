@@ -2,6 +2,7 @@
 #include "core/Config.h"
 #include <QStandardItemModel>
 #include <QHash>
+#include <QMenu>
 #include <QString>
 #include <QStringList>
 #include <QTreeView>
@@ -34,8 +35,15 @@ public:
     static QStringList scanFolders(const QString& maildirRoot);
     static QString folderQuery(const QString& muRoot, const QString& maildirRoot, const QString& folder);
 
+    // Menu contestuale di una cartella (Maildir): nullptr per i nodi che non lo sono.
+    // Il chiamante lo possiede (parent = this).
+    QMenu* contextMenuFor(const QModelIndex& index);
+
 signals:
     void querySelected(const QString& query);
+    // accountId, query della cartella, percorso assoluto della cartella, nome mostrato
+    void markAllReadRequested(const QString& accountId, const QString& query, const QString& dir, const QString& label);
+    void emptyFolderRequested(const QString& accountId, const QString& query, const QString& dir, const QString& label);
 
 private:
     Config config_;

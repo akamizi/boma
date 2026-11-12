@@ -1,6 +1,7 @@
 #include "ui/MainWindow.h"
 
 #include "ui/ReplyBuilder.h"
+#include "core/FolderCleaner.h"
 #include "core/MaildirWriter.h"
 #include "ui/SettingsDialog.h"
 
@@ -155,6 +156,10 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     searchTimer_->setInterval(250); // attesa: una ricerca per pausa di digitazione
     connect(search_, &QLineEdit::textChanged, searchTimer_, qOverload<>(&QTimer::start));
     connect(searchTimer_, &QTimer::timeout, this, [this] { applyQuery(search_->text().trimmed()); });
+    connect(folders_, &FolderPane::markAllReadRequested, this,
+            [this](const QString& acc, const QString& q, const QString&, const QString& label) { markFolderRead(acc, q, label); });
+    connect(folders_, &FolderPane::emptyFolderRequested, this,
+            [this](const QString& acc, const QString&, const QString& dir, const QString& label) { emptyFolder(acc, dir, label); });
     connect(folders_, &FolderPane::querySelected, this, [this](const QString& q) {
         QSignalBlocker b(search_);
         search_->clear();
@@ -420,6 +425,118 @@ void MainWindow::applyQuery(const QString& query) {
 // Dopo la sincronizzazione: l'elenco viene riletto ma la selezione (e lo scorrimento)
 // restano. La selezione non emette segnali durante il reset: il messaggio aperto non
 // viene riletto ne' richiuso; se dopo la prima pagina non c'e' piu', il visore si svuota.
+// Operazioni su un'intera cartella: una alla volta, mai durante invio/aggiornamento.
+bool MainWindow::bulkAllowed() {
+    if (bulkBusy_) {
+        showNotice(tr("Cartella"), tr("Un'altra operazione sulle cartelle e' in corso."));
+        return false;
+    }
+    if (sender_->busy()) {
+        showNotice(tr("Cartella"), tr("Un messaggio e' in fase di invio: attendi la fine dell'invio."));
+        return false;
+    }
+    if (sync_->state() == SyncService::Running || reindexing_) {
+        showNotice(tr("Cartella"), tr("Un aggiornamento e' in corso: attendi che finisca."));
+        return false;
+    }
+    return true;
+}
+
+void MainWindow::markFolderRead(const QString&, const QString& query, const QString& label) {
+    if (query.isEmpty() || !bulkAllowed()) return;
+    bulkBusy_ = true;
+    QPointer<MainWindow> self(this);
+    index_->unreadPaths(query, [self, label](QStringList paths, QString err) {
+        if (!self) return;
+        if (!err.isEmpty() || paths.isEmpty()) {
+            self->bulkBusy_ = false;
+            if (!err.isEmpty()) self->showNotice(tr("Segna come letti"), tr("Impossibile leggere l'elenco da mu: %1").arg(err));
+            else self->statusBar()->showMessage(tr("«%1»: nessun messaggio non letto").arg(label), 5000);
+            return;
+        }
+        struct State { QStringList paths; int i = 0, failed = 0; QString firstError; };
+        auto st = std::make_shared<State>();
+        st->paths = paths;
+        auto step = std::make_shared<std::function<void()>>();
+        *step = [self, st, step, label]() {
+            if (!self) return;
+            if (st->i >= st->paths.size()) {
+                self->bulkBusy_ = false;
+                self->refreshList();
+                const int done = int(st->paths.size()) - st->failed;
+                self->statusBar()->showMessage(st->failed ? tr("«%1»: %2 segnati come letti, %3 non riusciti (%4)").arg(label).arg(done).arg(st->failed).arg(st->firstError)
+                                                          : tr("«%1»: %2 messaggi segnati come letti").arg(label).arg(done),
+                                               10000);
+                return;
+            }
+            self->statusBar()->showMessage(tr("«%1»: segno come letti %2/%3...").arg(label).arg(st->i + 1).arg(st->paths.size()));
+            self->actions_->markRead(st->paths.at(st->i), [self, st, step](bool ok, QString e) {
+                if (!self) return;
+                if (!ok) {
+                    if (!st->failed) st->firstError = e;
+                    ++st->failed;
+                }
+                ++st->i;
+                (*step)();
+            });
+        };
+        (*step)();
+    });
+}
+
+void MainWindow::emptyFolder(const QString& accountId, const QString& dir, const QString& label) {
+    if (!bulkAllowed()) return;
+    QString root;
+    for (const Account& a : config_.accounts())
+        if (a.id == accountId) root = a.maildirRoot;
+    const QString why = FolderCleaner::validate(dir, root);
+    if (!why.isEmpty()) {
+        showNotice(tr("Svuota la casella"), why);
+        return;
+    }
+    bulkBusy_ = true;
+    QPointer<MainWindow> self(this);
+    QThreadPool::globalInstance()->start([self, dir, root, label]() {
+        const int n = FolderCleaner::count(dir);
+        if (!self) return;
+        QMetaObject::invokeMethod(self.data(), [self, dir, root, label, n]() {
+            if (!self) return;
+            if (n == 0) {
+                self->bulkBusy_ = false;
+                self->statusBar()->showMessage(tr("«%1» e' gia' vuota").arg(label), 5000);
+                return;
+            }
+            const QString text = tr("Cancellare DEFINITIVAMENTE %1 messaggi dalla cartella «%2»?\n\n"
+                                    "Non vanno nel cestino e non si possono recuperare. Se mbsync ha Expunge attivo "
+                                    "(come nella tua configurazione), al prossimo aggiornamento la cancellazione "
+                                    "viene propagata anche al server.")
+                                    .arg(n).arg(label);
+            bool yes;
+            if (self->confirmDestructive_) yes = self->confirmDestructive_(tr("Svuota la casella"), text);
+            else yes = QMessageBox::warning(self, tr("Svuota la casella"), text, QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) == QMessageBox::Yes;
+            if (!yes) {
+                self->bulkBusy_ = false;
+                return;
+            }
+            self->statusBar()->showMessage(tr("Cancellazione di %1 messaggi da «%2»...").arg(n).arg(label));
+            QThreadPool::globalInstance()->start([self, dir, root, label]() {
+                int failed = 0;
+                QString err;
+                const int removed = FolderCleaner::removeAll(dir, root, &failed, &err);
+                if (!self) return;
+                QMetaObject::invokeMethod(self.data(), [self, removed, failed, err, label]() {
+                    if (!self) return;
+                    self->bulkBusy_ = false;
+                    self->statusBar()->showMessage(failed || !err.isEmpty() ? tr("«%1»: %2 cancellati; %3").arg(label).arg(removed).arg(err)
+                                                                            : tr("«%1»: %2 messaggi cancellati").arg(label).arg(removed),
+                                                   10000);
+                    self->reindexAndRefresh({}); // mu index toglie i file spariti, poi rilegge l'elenco
+                }, Qt::QueuedConnection);
+            });
+        }, Qt::QueuedConnection);
+    });
+}
+
 void MainWindow::scheduleUnreadCounts() {
     if (config_.isEmpty()) return;
     countTimer_->start();

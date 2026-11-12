@@ -224,6 +224,32 @@ void MailIndex::countUnread(const QString& query, std::function<void(int, QStrin
     });
 }
 
+void MailIndex::unreadPaths(const QString& query, std::function<void(QStringList, QString)> cb)
+{
+    QStringList args = baseArgs(QStringLiteral("find"));
+    args << QStringLiteral("--format=plain") << QStringLiteral("--fields=l") << QStringLiteral("--skip-dups")
+         << QStringLiteral("--") << QStringLiteral("(%1) AND flag:unread").arg(query);
+    m_runner.run(m_mu, args, std::chrono::seconds(120), [cb = std::move(cb)](ProcessResult r) {
+        QStringList out;
+        QString err;
+        if (r.crashed || r.timedOut || r.exitCode == -1) {
+            err = QString::fromUtf8(r.err).trimmed();
+            if (err.isEmpty())
+                err = QStringLiteral("mu: non eseguibile");
+        } else if (r.exitCode != 0 && r.exitCode != 2) {
+            err = QString::fromUtf8(r.err).trimmed();
+            if (err.isEmpty())
+                err = QStringLiteral("mu: errore (codice %1)").arg(r.exitCode);
+        } else if (r.exitCode == 0) {
+            for (const QByteArray& l : r.out.split('\n'))
+                if (!l.trimmed().isEmpty())
+                    out << QString::fromUtf8(l.trimmed());
+        }
+        if (cb)
+            cb(out, err);
+    });
+}
+
 void MailIndex::reindex(const QString&, Callback cb)
 {
     reindexAttempt(std::move(cb), std::chrono::milliseconds(0), std::chrono::milliseconds(250));
