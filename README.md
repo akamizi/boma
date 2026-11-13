@@ -69,6 +69,10 @@ scritto e sincronizzato su disco in `tmp/`, poi pubblicato in `cur/` con `link()
   (letto, non letto, preferito, togli preferito). Non sostituiscono il pulsante
   «Elimina» del messaggio aperto. Compare anche la riga «N selezionati» con
   «Deseleziona». Tutto passa da `mu move`.
+- Composizione HTML con editor WYSIWYG: spuntando «HTML» compare la barra di
+  formattazione (grassetto, corsivo, sottolineato, barrato, dimensione, colore, elenchi,
+  allineamento, collegamento, pulisci formattazione). Sono ammessi solo collegamenti
+  http, https e mailto. Il messaggio parte multipart/alternative con il testo semplice.
 - Messaggi mostrati in testo semplice per default; se esiste anche la parte HTML un
   pulsante nella barra del messaggio alterna testo/HTML, e nelle Impostazioni si puo'
   scegliere l'HTML come predefinito. L'HTML e' sempre ripulito.

@@ -50,6 +50,7 @@ public:
     QLineEdit* subjectEdit() const { return subject_; }
     QPlainTextEdit* bodyEdit() const { return plain_; }
     QTextEdit* richEdit() const { return rich_; }
+    class RichTextToolBar* formatBar() const { return fmtBar_; }
     QCheckBox* htmlCheck() const { return html_; }
     QListWidget* attachmentList() const { return attachments_; }
     QPushButton* signButton() const { return sign_; }
@@ -83,6 +84,7 @@ private:
     QStackedWidget* bodyStack_ = nullptr;
     QPlainTextEdit* plain_ = nullptr;
     QTextEdit* rich_ = nullptr;
+    class RichTextToolBar* fmtBar_ = nullptr;
     QCheckBox* html_ = nullptr;
     QListWidget* attachments_ = nullptr;
     QPushButton *sign_ = nullptr, *encrypt_ = nullptr, *saveDraft_ = nullptr, *send_ = nullptr, *close_ = nullptr;

@@ -1,5 +1,6 @@
 #include "ui/ComposeWindow.h"
 #include "core/MaildirWriter.h"
+#include "ui/RichTextToolBar.h"
 #include <QCloseEvent>
 #include <QFileDialog>
 #include <QFormLayout>
@@ -47,6 +48,9 @@ ComposeWindow::ComposeWindow(const Config& config, QWidget* parent) : QMainWindo
     rich_->setAcceptRichText(true);
     bodyStack_->addWidget(plain_);
     bodyStack_->addWidget(rich_);
+    fmtBar_ = new RichTextToolBar(rich_, central);
+    fmtBar_->hide(); // visibile solo in modalita' HTML
+    root->addWidget(fmtBar_);
     root->addWidget(bodyStack_, 1);
 
     attachments_ = new QListWidget(central);
@@ -120,6 +124,7 @@ void ComposeWindow::onHtmlToggled(bool on) {
         rich_->setPlainText(plain_->toPlainText());
     else
         plain_->setPlainText(rich_->toPlainText());
+    fmtBar_->setVisible(on);
     bodyStack_->setCurrentWidget(on ? static_cast<QWidget*>(rich_) : static_cast<QWidget*>(plain_));
     loading_ = false;
     touch();
