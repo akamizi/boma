@@ -1319,6 +1319,7 @@ void MainWindow::syncNow() {
     // mbsync e poi mu index (reindexAndRefresh), uno alla volta.
     if (config_.isEmpty() || sync_->state() == SyncService::Running || reindexing_) return;
     statusBar()->clearMessage();
+    sync_->setQuick(QSettings().value(QStringLiteral("sync/quick"), true).toBool());
     sync_->syncAll();
 }
 

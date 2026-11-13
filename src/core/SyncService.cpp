@@ -58,7 +58,8 @@ void SyncService::next()
     const Account acc = m_queue.dequeue();
     auto alive = m_alive;
     m_proc = m_runner->run(
-        m_program, {QStringLiteral("-V"), acc.mbsyncChannel}, m_timeout,
+        m_program, m_quick ? QStringList{QStringLiteral("--pull-new"), QStringLiteral("-V"), acc.mbsyncChannel}
+                : QStringList{QStringLiteral("-V"), acc.mbsyncChannel}, m_timeout,
         [this, alive, acc](ProcessResult r) {
             if (!*alive)
                 return;

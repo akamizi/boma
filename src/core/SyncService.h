@@ -30,6 +30,11 @@ public:
     // Nuova configurazione (account). Solo a sincronizzazione ferma.
     void setConfig(const Config& c) { if (m_state != Running) m_config = c; }
     void syncAll();
+    // Aggiornamento rapido: mbsync --pull-new (scarica solo i messaggi nuovi, senza
+    // confrontare bandiere ne' cancellazioni). Le modifiche locali (letto, cestino...)
+    // restano da propagare al server con una sincronizzazione completa (es. il cron).
+    void setQuick(bool q) { m_quick = q; }
+    bool quick() const { return m_quick; }
     State state() const { return m_state; }
     // Almeno un account ha completato la sincronizzazione nel giro corrente/ultimo
     // (anche se un account successivo e' fallito): la posta nuova va indicizzata.
@@ -54,6 +59,7 @@ signals:
     void stateChanged(boma::SyncService::State state, QString accountId, QString message);
 
 private:
+    bool m_quick = false;
     void next();
     void finish();
     void setState(State s, const QString& accountId = {}, const QString& msg = {});

@@ -44,6 +44,17 @@ private slots:
         QCOMPARE(st.first().first().toInt(), int(SyncService::Running));
         QVERIFY(s.anySynced());
     }
+    void testQuickModeUsesPullNew() {
+        QString log = dir.filePath("logq");
+        QString p = writeScript(dir.filePath("mq"), "echo \"$@\" >> " + log + "\nexit 0");
+        ProcessRunner r; Config c = cfg();
+        SyncService s(&r, c); s.setMbsyncProgram(p);
+        s.setQuick(true);
+        s.syncAll();
+        QTRY_COMPARE_WITH_TIMEOUT(s.state(), SyncService::Idle, 10000);
+        QFile f(log); QVERIFY(f.open(QIODevice::ReadOnly));
+        QVERIFY(f.readAll().contains("--pull-new -V chA"));
+    }
     void testFailureReportsFirstErrorAndDoesNotRetry() {
         QString log = dir.filePath("log2");
         QString p = writeScript(dir.filePath("m2"), "echo x >> " + log + "\necho boom >&2\nexit 1");

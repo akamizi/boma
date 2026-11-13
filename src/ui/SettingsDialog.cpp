@@ -1,5 +1,7 @@
 #include "ui/SettingsDialog.h"
+#include <QSettings>
 #include "ui/MessageView.h"
+#include <QSettings>
 
 #include "core/MsmtpConfig.h"
 #include "ui/MsmtpDialog.h"
@@ -153,6 +155,11 @@ SettingsDialog::SettingsDialog(const Config& config, const SettingsEnvironment& 
                                "Con un messaggio aperto un pulsante permette di cambiare vista."));
     preferHtml_->setChecked(MessageView::preferHtml());
     rl->addWidget(preferHtml_);
+    quickSync_ = new QCheckBox(tr("Aggiorna ora scarica solo i messaggi nuovi (piu' veloce)"), right);
+    quickSync_->setToolTip(tr("Usa mbsync --pull-new. Letto/cestino fatti in Boma arrivano al server "
+                              "con la sincronizzazione completa (ad esempio il cron)."));
+    quickSync_->setChecked(QSettings().value(QStringLiteral("sync/quick"), true).toBool());
+    rl->addWidget(quickSync_);
 
     split->addWidget(left);
     split->addWidget(right);
@@ -421,6 +428,7 @@ void SettingsDialog::accept() {
     t.style = themeStyle_->currentData().toString();
     t.scheme = themeScheme_->currentData().toString();
     MessageView::setPreferHtml(preferHtml_->isChecked());
+    QSettings().setValue(QStringLiteral("sync/quick"), quickSync_->isChecked());
     t.save();
     t.apply(); // subito, anche se poi il salvataggio degli account fallisse
     QDialog::accept();

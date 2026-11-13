@@ -374,3 +374,10 @@ non passa mai da Boma.
 - Provato finora solo con posta sintetica e programmi finti; le verifiche con
   posta, server e chiavi reali sono in corso e non ci sono ancora misure di
   prestazioni su una casella vera.
+
+## Aggiornamento rapido
+
+«Aggiorna ora» usa per default `mbsync --pull-new`: scarica solo i messaggi nuovi,
+senza confrontare bandiere e cancellazioni, ed e' molto piu' veloce. Letto, cestino e
+spostamenti fatti in Boma arrivano al server con la sincronizzazione completa (il
+cron). Si puo' tornare alla sincronizzazione completa in Impostazioni.

@@ -112,6 +112,7 @@ private:
     QPushButton* msmtpBtn_;
     QComboBox *themeStyle_, *themeScheme_;
     QCheckBox* preferHtml_ = nullptr;
+    QCheckBox* quickSync_ = nullptr;
     QTextBrowser* results_;
     QLabel* error_;
     QDialogButtonBox* buttons_;

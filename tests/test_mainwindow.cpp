@@ -222,7 +222,7 @@ private slots:
                           " move) [ -f \"$d/slow\" ] && sleep 1; exit 0;;\n info) [ -f \"$d/slowinfo\" ] && sleep 1; [ -f \"$d/info.txt\" ] && cat \"$d/info.txt\" || exit 1;;\n *) exit 0;;\nesac\n");
         mbsync_ = writeScript(dir_, QStringLiteral("mbsync"),
                               "#!/bin/sh\nd=$(dirname \"$0\")\necho \"$*\" >> \"$d/mbsync.log\"\n"
-                              "[ -f \"$d/mbok\" ] && exit 0\n[ -f \"$d/mba\" ] && [ \"$2\" = a ] && exit 0\n"
+                              "[ -f \"$d/mbok\" ] && exit 0\nfor l; do :; done\n[ -f \"$d/mba\" ] && [ \"$l\" = a ] && exit 0\n"
                               "echo 'mbsync: network unreachable' >&2\nexit 1\n");
         gpglog_ = writeScript(dir_, QStringLiteral("gpglog"), "#!/bin/sh\nd=$(dirname \"$0\")\necho \"$*\" >> \"$d/gpg.log\"\nsleep 1\nexec gpg \"$@\"\n");
         msmtp_ = writeScript(dir_, QStringLiteral("msmtp"),
