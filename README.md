@@ -377,6 +377,9 @@ non passa mai da Boma.
 
 ## Aggiornamento rapido
 
+Accanto ad «Aggiorna» la freccia ▾ permette di aggiornare un solo account (F5 li
+aggiorna tutti).
+
 «Aggiorna ora» usa per default `mbsync --pull-new`: scarica solo i messaggi nuovi,
 senza confrontare bandiere e cancellazioni, ed e' molto piu' veloce. Letto, cestino e
 spostamenti fatti in Boma arrivano al server con la sincronizzazione completa (il

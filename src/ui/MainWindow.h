@@ -25,6 +25,7 @@
 #include <QStackedWidget>
 #include <QTextBrowser>
 #include <QTimer>
+#include <QToolButton>
 #include <functional>
 
 namespace boma {
@@ -115,6 +116,9 @@ public slots:
     void forward() { compose(ReplyMode::Forward); }
     void newMessage();
     void syncNow();
+    // Aggiorna un solo account (id vuoto = tutti).
+    void syncAccount(const QString& accountId);
+    QToolButton* syncMenuButton() const { return syncMenuBtn_; }
     void focusSearch();
     // Finestra Impostazioni: salva il file di Boma e applica la nuova configurazione
     // a caldo. Rifiutata durante un invio, una sincronizzazione o con finestre di
@@ -186,6 +190,8 @@ private:
     QTextBrowser* help_;
     QWidget* bulkBar_ = nullptr;
     QWidget* listBar_ = nullptr;
+    QToolButton* syncMenuBtn_ = nullptr;
+    void setSyncEnabled(bool on);
     QList<QWidget*> checkedOnly_; // pulsanti attivi solo con messaggi spuntati
     void bulkApply(const QString& title, const QList<MessageSummary>& items,
                    std::function<void(const MessageSummary&, Callback)> op, bool removesFromList,

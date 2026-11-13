@@ -29,7 +29,8 @@ public:
 
     // Nuova configurazione (account). Solo a sincronizzazione ferma.
     void setConfig(const Config& c) { if (m_state != Running) m_config = c; }
-    void syncAll();
+    // Con onlyAccountId solo quell'account (id sconosciuto: non parte nulla).
+    void syncAll(const QString& onlyAccountId = QString());
     // Aggiornamento rapido: mbsync --pull-new (scarica solo i messaggi nuovi, senza
     // confrontare bandiere ne' cancellazioni). Le modifiche locali (letto, cestino...)
     // restano da propagare al server con una sincronizzazione completa (es. il cron).

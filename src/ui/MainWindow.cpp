@@ -96,6 +96,23 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     settingsBtn_->setToolTip(tr("Account, identita', mbsync, msmtp e PGP (Ctrl+,)"));
     searchRow->addWidget(search_, 1);
     searchRow->addWidget(syncBtn_);
+    syncMenuBtn_ = new QToolButton(central);
+    syncMenuBtn_->setObjectName(QStringLiteral("syncMenu"));
+    syncMenuBtn_->setText(QStringLiteral("\u25be"));
+    syncMenuBtn_->setToolTip(tr("Aggiorna un solo account"));
+    syncMenuBtn_->setPopupMode(QToolButton::InstantPopup);
+    auto* syncMenu = new QMenu(syncMenuBtn_);
+    connect(syncMenu, &QMenu::aboutToShow, this, [this, syncMenu]() {
+        syncMenu->clear();
+        for (const Account& a : config_.accounts()) {
+            const QString id = a.id;
+            QAction* act = syncMenu->addAction(tr("Solo «%1»").arg(a.name.isEmpty() ? a.id : a.name));
+            act->setObjectName(QStringLiteral("sync_") + id);
+            connect(act, &QAction::triggered, this, [this, id]() { syncAccount(id); });
+        }
+    });
+    syncMenuBtn_->setMenu(syncMenu);
+    searchRow->addWidget(syncMenuBtn_);
     searchRow->addWidget(settingsBtn_);
     top->addLayout(searchRow);
 
@@ -362,7 +379,7 @@ void MainWindow::updateEmptyState() {
         if (syncLabel_->text() == tr("Nessun account configurato")) syncLabel_->setText(tr("Non ancora sincronizzato"));
     }
     search_->setEnabled(!empty);
-    syncBtn_->setEnabled(!empty);
+    setSyncEnabled(!empty);
     newBtn_->setEnabled(!empty);
 }
 
@@ -1314,19 +1331,26 @@ void MainWindow::deleteSelected() {
     });
 }
 
-void MainWindow::syncNow() {
+void MainWindow::setSyncEnabled(bool on) {
+    syncBtn_->setEnabled(on);
+    syncMenuBtn_->setEnabled(on);
+}
+
+void MainWindow::syncNow() { syncAccount(QString()); }
+
+void MainWindow::syncAccount(const QString& accountId) {
     // La sincronizzazione periodica e' del cron; qui solo "Aggiorna ora":
     // mbsync e poi mu index (reindexAndRefresh), uno alla volta.
     if (config_.isEmpty() || sync_->state() == SyncService::Running || reindexing_) return;
     statusBar()->clearMessage();
     sync_->setQuick(QSettings().value(QStringLiteral("sync/quick"), true).toBool());
-    sync_->syncAll();
+    sync_->syncAll(accountId);
 }
 
 void MainWindow::onSyncState(SyncService::State st, const QString&, const QString& message) {
     switch (st) {
     case SyncService::Running:
-        syncBtn_->setEnabled(false);
+        setSyncEnabled(false);
         syncLabel_->setText(tr("Aggiornamento in corso..."));
         progress_->setRange(0, 0);
         progress_->show();
@@ -1342,7 +1366,7 @@ void MainWindow::onSyncState(SyncService::State st, const QString&, const QStrin
         progress_->hide();
         // un account fallito non deve nascondere la posta scaricata dagli altri
         if (sync_->anySynced()) runReindex();
-        else syncBtn_->setEnabled(true);
+        else setSyncEnabled(true);
         if (sync_->busyElsewhere())
             syncLabel_->setText(tr("Sincronizzazione gia' in corso altrove (cron): riprova tra poco"));
         else
@@ -1357,12 +1381,12 @@ void MainWindow::onSyncState(SyncService::State st, const QString&, const QStrin
 
 void MainWindow::runReindex() {
     reindexing_ = true;
-    syncBtn_->setEnabled(false);
+    setSyncEnabled(false);
     QPointer<MainWindow> self(this);
     reindexAndRefresh([self]() {
         if (!self) return;
         self->reindexing_ = false;
-        self->syncBtn_->setEnabled(true);
+        self->setSyncEnabled(true);
     });
 }
 

@@ -735,6 +735,22 @@ private slots:
         QVERIFY(QTest::qWaitFor([&] { return log(QStringLiteral("mu.log")).contains(QStringLiteral("index")); }, 10000));
         QVERIFY(w.statusLabel()->text().contains(QStringLiteral("non riuscito")));
     }
+    void testSyncSingleAccountFromMenu() {
+        MainWindow w(makeConfig(), opts());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        resetLogs();
+        writeFile(dir_ + QStringLiteral("/mbok"), "x");
+        QMenu* m = w.syncMenuButton()->menu();
+        emit m->aboutToShow();
+        QAction* act = m->findChild<QAction*>("sync_b");
+        QVERIFY(act);
+        act->trigger();
+        QVERIFY(QTest::qWaitFor([&] { return log("mu.log").contains("index"); }, 10000));
+        const QString mb = log("mbsync.log");
+        QCOMPARE(mb.count('\n'), 1);
+        QVERIFY(mb.contains(" b"));
+    }
     void testFullyFailedSyncDoesNotReindex() {
         MainWindow w(makeConfig(), opts());
         w.show();

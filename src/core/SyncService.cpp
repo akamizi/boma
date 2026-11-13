@@ -33,9 +33,16 @@ bool SyncService::isLockError(const QString& text)
     return text.contains(QLatin1String("lock"), Qt::CaseInsensitive);
 }
 
-void SyncService::syncAll()
+void SyncService::syncAll(const QString& onlyAccountId)
 {
-    const QList<Account> accounts = m_config.accounts();
+    QList<Account> accounts = m_config.accounts();
+    if (!onlyAccountId.isEmpty()) {
+        QList<Account> one;
+        for (const Account& a : accounts)
+            if (a.id == onlyAccountId)
+                one << a;
+        accounts = one;
+    }
     if (m_shutdown || m_state == Running || accounts.isEmpty())
         return;
     m_queue.clear();
