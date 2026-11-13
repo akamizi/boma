@@ -85,6 +85,14 @@ QList<MessageSummary> MailIndex::parse(const QByteArray& json, QString* error) c
     return out;
 }
 
+void MailIndex::setSort(const QString& field, bool descending)
+{
+    static const QStringList ok{QStringLiteral("date"), QStringLiteral("from"), QStringLiteral("subject"), QStringLiteral("size")};
+    m_sortField = ok.contains(field) ? field : QStringLiteral("date");
+    m_sortDesc = descending;
+    m_cacheValid = false;
+}
+
 void MailIndex::search(const QString& query, int offset, int limit, SearchCallback cb)
 {
     if (limit <= 0 || offset < 0) {
@@ -110,8 +118,10 @@ void MailIndex::search(const QString& query, int offset, int limit, SearchCallba
         m_cacheValid = false;
     QStringList args = baseArgs(QStringLiteral("find"));
     args << QStringLiteral("--format=json") << QStringLiteral("--skip-dups")
-         << QStringLiteral("--sortfield=date") << QStringLiteral("--reverse")
-         << QStringLiteral("--maxnum=%1").arg(fetch);
+         << QStringLiteral("--sortfield=") + m_sortField;
+    if (m_sortDesc)
+        args << QStringLiteral("--reverse");
+    args << QStringLiteral("--maxnum=%1").arg(fetch);
     // "--" : la query non deve mai essere letta come opzione.
     args << QStringLiteral("--") << query;
     m_runner.run(m_mu, args, std::chrono::seconds(60),

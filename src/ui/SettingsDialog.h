@@ -103,7 +103,7 @@ private:
 
     QListWidget *accountList_, *identityList_;
     QPushButton *addAccount_, *removeAccount_, *addIdentity_, *removeIdentity_, *checkBtn_;
-    QLineEdit *accId_, *accName_, *accRoot_, *accSent_, *accDrafts_, *accTrash_;
+    QLineEdit *accId_, *accName_, *accRoot_, *accSent_, *accDrafts_, *accTrash_, *accArchive_;
     QComboBox* accChannel_;
     QLineEdit *idId_, *idAddress_, *idName_;
     QPlainTextEdit* idSignature_;

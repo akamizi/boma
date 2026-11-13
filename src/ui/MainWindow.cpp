@@ -12,8 +12,13 @@
 #include <QFileDialog>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QHBoxLayout>
+#include <QActionGroup>
+#include <QMenu>
 #include <QMessageBox>
+#include <QSettings>
+#include <QToolButton>
 #include <QMouseEvent>
 #include <QScrollBar>
 #include <QShortcut>
@@ -144,24 +149,102 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     auto* bbl = new QHBoxLayout(bulkBar_);
     bbl->setContentsMargins(6, 4, 6, 4);
     bulkLabel_ = new QLabel(bulkBar_);
-    auto* bulkRead = new QPushButton(tr("Segna come letti"), bulkBar_);
-    bulkRead->setObjectName(QStringLiteral("bulkRead"));
-    auto* bulkDel = new QPushButton(tr("Elimina"), bulkBar_);
-    bulkDel->setObjectName(QStringLiteral("bulkDelete"));
     auto* bulkClear = new QPushButton(tr("Deseleziona"), bulkBar_);
     bulkClear->setObjectName(QStringLiteral("bulkClear"));
     bbl->addWidget(bulkLabel_, 1);
-    bbl->addWidget(bulkRead);
-    bbl->addWidget(bulkDel);
     bbl->addWidget(bulkClear);
     bulkBar_->hide();
+    // Barra comandi sopra l'elenco (linea guida GUI: azioni sui messaggi spuntati)
+    listBar_ = new QWidget(listPane);
+    listBar_->setObjectName(QStringLiteral("listBar"));
+    auto* lbl = new QHBoxLayout(listBar_);
+    lbl->setContentsMargins(6, 4, 6, 4);
+    auto mkBtn = [&](const QString& text, const QString& name, bool needsChecked, bool menu) {
+        auto* b = new QToolButton(listBar_);
+        b->setText(menu ? text + QStringLiteral(" \u25be") : text);
+        b->setObjectName(name);
+        b->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        if (menu) b->setPopupMode(QToolButton::InstantPopup);
+        if (needsChecked) {
+            b->setEnabled(false);
+            checkedOnly_ << b;
+        }
+        lbl->addWidget(b);
+        return b;
+    };
+    auto* sortBtn = mkBtn(tr("Ordina"), QStringLiteral("listSort"), false, true);
+    auto* moveBtn = mkBtn(tr("Sposta"), QStringLiteral("listMove"), true, true);
+    auto* archBtn = mkBtn(tr("Archivia"), QStringLiteral("listArchive"), true, false);
+    auto* delChk = mkBtn(tr("Elimina"), QStringLiteral("listDelete"), true, false);
+    auto* markBtn = mkBtn(tr("Segna"), QStringLiteral("listMark"), true, true);
+    lbl->addStretch(1);
+    delChk->setToolTip(tr("Sposta nel cestino i messaggi spuntati (chiede conferma)"));
+    archBtn->setToolTip(tr("Sposta i messaggi spuntati nella cartella Archivio del loro account"));
+    {
+        QSettings qs;
+        const QString f = qs.value(QStringLiteral("list/sortField"), QStringLiteral("date")).toString();
+        const bool d = qs.value(QStringLiteral("list/sortDesc"), true).toBool();
+        index_->setSort(f, d);
+        auto* menu = new QMenu(sortBtn);
+        auto* grp = new QActionGroup(menu);
+        struct Opt { const char* label; const char* field; bool desc; };
+        const Opt opts[] = {{"Data (prima i piu' recenti)", "date", true}, {"Data (prima i meno recenti)", "date", false},
+                            {"Mittente (A-Z)", "from", false}, {"Oggetto (A-Z)", "subject", false},
+                            {"Dimensione (prima i piu' grandi)", "size", true}};
+        for (const Opt& o : opts) {
+            QAction* a = menu->addAction(tr(o.label));
+            a->setCheckable(true);
+            a->setActionGroup(grp);
+            a->setData(QStringLiteral("%1:%2").arg(QLatin1String(o.field)).arg(o.desc ? 1 : 0));
+            a->setChecked(index_->sortField() == QLatin1String(o.field) && index_->sortDescending() == o.desc);
+            connect(a, &QAction::triggered, this, [this, o]() { setListSort(QLatin1String(o.field), o.desc); });
+        }
+        sortBtn->setMenu(menu);
+    }
+    {
+        auto* menu = new QMenu(moveBtn);
+        connect(menu, &QMenu::aboutToShow, this, [this, menu]() {
+            menu->clear();
+            const auto targets = folders_->folderTargets();
+            QSet<QString> accs;
+            for (const auto& t : targets) accs << t.accountId;
+            QHash<QString, QMenu*> sub;
+            for (const auto& t : targets) {
+                QMenu* m = menu;
+                if (accs.size() > 1) {
+                    m = sub.value(t.accountId);
+                    if (!m) { m = menu->addMenu(t.accountName); sub.insert(t.accountId, m); }
+                }
+                QAction* a = m->addAction(t.label);
+                connect(a, &QAction::triggered, this, [this, t]() { moveChecked(t.accountId, t.folder, t.label); });
+            }
+            if (targets.isEmpty()) menu->addAction(tr("Nessuna cartella disponibile"))->setEnabled(false);
+        });
+        moveBtn->setMenu(menu);
+    }
+    {
+        auto* menu = new QMenu(markBtn);
+        auto add = [&](const QString& text, const QString& name, std::function<void()> fn) {
+            QAction* a = menu->addAction(text);
+            a->setObjectName(name);
+            connect(a, &QAction::triggered, this, [fn]() { fn(); });
+        };
+        add(tr("Segna come letto"), QStringLiteral("markRead"), [this]() { markCheckedRead(); });
+        add(tr("Segna come non letto"), QStringLiteral("markUnread"), [this]() { setCheckedFlags(QString(), QStringLiteral("S"), tr("segnati come non letti")); });
+        menu->addSeparator();
+        add(tr("Marca come preferito"), QStringLiteral("markFlag"), [this]() { setCheckedFlags(QStringLiteral("F"), QString(), tr("marcati come preferiti")); });
+        add(tr("Togli dai preferiti"), QStringLiteral("markUnflag"), [this]() { setCheckedFlags(QString(), QStringLiteral("F"), tr("tolti dai preferiti")); });
+        markBtn->setMenu(menu);
+    }
+    connect(archBtn, &QToolButton::clicked, this, &MainWindow::archiveChecked);
+    connect(delChk, &QToolButton::clicked, this, &MainWindow::deleteChecked);
+    lpl->addWidget(listBar_);
     lpl->addWidget(bulkBar_);
     lpl->addWidget(list_, 1);
-    connect(bulkRead, &QPushButton::clicked, this, &MainWindow::markCheckedRead);
-    connect(bulkDel, &QPushButton::clicked, this, &MainWindow::deleteChecked);
     connect(bulkClear, &QPushButton::clicked, model_, &MessageListModel::clearChecked);
     connect(model_, &MessageListModel::checkedChanged, this, [this](int n) {
         bulkBar_->setVisible(n > 0);
+        for (QWidget* w : std::as_const(checkedOnly_)) w->setEnabled(n > 0);
         bulkLabel_->setText(tr("%n selezionati", nullptr, n));
     });
     list_->viewport()->installEventFilter(this);
@@ -955,6 +1038,157 @@ void MainWindow::markCheckedRead() {
         });
     };
     (*step)();
+}
+
+void MainWindow::setListSort(const QString& field, bool descending) {
+    index_->setSort(field, descending);
+    QSettings qs;
+    qs.setValue(QStringLiteral("list/sortField"), index_->sortField());
+    qs.setValue(QStringLiteral("list/sortDesc"), index_->sortDescending());
+    refreshList();
+}
+
+// Spostamenti: stesse garanzie del cestino (radice di mu nota e affidabile).
+bool MainWindow::moveGuard(const QString& title) {
+    if (!bulkAllowed()) return false;
+    if (!muRootDetected_ && !config_.isEmpty()) {
+        statusBar()->showMessage(tr("Disponibile dopo il rilevamento della radice mu"), 8000);
+        return false;
+    }
+    if (!muRootReliable_) {
+        showNotice(title, tr("La radice Maildir di mu non e' stata determinata in modo affidabile: per sicurezza nulla viene spostato."));
+        return false;
+    }
+    return true;
+}
+
+// Esegue op su ogni messaggio, uno alla volta. removesFromList: l'elemento sparisce
+// dall'elenco (spostamenti); altrimenti si rilegge l'elenco (i nomi dei file cambiano).
+void MainWindow::bulkApply(const QString& title, const QList<MessageSummary>& items,
+                           std::function<void(const MessageSummary&, Callback)> op, bool removesFromList,
+                           const QString& doneText) {
+    bulkBusy_ = true;
+    struct State { QList<MessageSummary> items; int i = 0, failed = 0; QString firstError; };
+    auto st = std::make_shared<State>();
+    st->items = items;
+    QPointer<MainWindow> self(this);
+    auto step = std::make_shared<std::function<void()>>();
+    *step = [self, st, step, op, removesFromList, title, doneText]() {
+        if (!self) return;
+        if (st->i >= st->items.size()) {
+            self->bulkBusy_ = false;
+            const int done = int(st->items.size()) - st->failed;
+            if (!removesFromList) self->refreshList();
+            else self->scheduleUnreadCounts();
+            self->statusBar()->showMessage(st->failed ? tr("%1 %2, %3 non riusciti (%4)").arg(done).arg(doneText).arg(st->failed).arg(st->firstError)
+                                                      : tr("%1 messaggi %2").arg(done).arg(doneText), 10000);
+            return;
+        }
+        self->statusBar()->showMessage(tr("%1: %2/%3...").arg(title).arg(st->i + 1).arg(st->items.size()));
+        const MessageSummary s = st->items.at(st->i);
+        op(s, [self, st, step, s, removesFromList](bool ok, QString e) {
+            if (!self) return;
+            if (!ok) {
+                if (!st->failed) st->firstError = e;
+                ++st->failed;
+            } else if (removesFromList) {
+                const int row = self->rowForPath(s.path);
+                if (row >= 0) {
+                    const bool wasCurrent = self->list_->currentIndex().isValid() && self->list_->currentIndex().row() == row;
+                    if (wasCurrent) {
+                        {
+                            QSignalBlocker b(self->list_->selectionModel());
+                            self->model_->removeAt(row);
+                            self->list_->selectionModel()->clear();
+                        }
+                        self->clearViewer();
+                    } else {
+                        self->model_->removeAt(row);
+                    }
+                }
+            }
+            ++st->i;
+            (*step)();
+        });
+    };
+    (*step)();
+}
+
+static bool inFolder(const QString& msgPath, const QString& root, const QString& folder) {
+    return QDir::cleanPath(QFileInfo(msgPath).absolutePath() + QStringLiteral("/..")) ==
+           QDir::cleanPath(QDir(root).filePath(folder.trimmed()));
+}
+
+void MainWindow::moveChecked(const QString& accountId, const QString& folder, const QString& label) {
+    const QList<MessageSummary> sel = model_->checkedSummaries();
+    if (sel.isEmpty() || !moveGuard(tr("Sposta"))) return;
+    const Account acc = accountFor(accountId);
+    if (acc.id.isEmpty()) return;
+    QList<MessageSummary> todo;
+    for (const MessageSummary& s : sel) {
+        if (s.accountId != accountId) {
+            showNotice(tr("Sposta"), tr("Si possono spostare solo messaggi dello stesso account della cartella «%1».").arg(label));
+            return;
+        }
+        if (!inFolder(s.path, acc.maildirRoot, folder)) todo << s;
+    }
+    if (todo.isEmpty()) {
+        statusBar()->showMessage(tr("I messaggi sono gia' in «%1»").arg(label), 5000);
+        return;
+    }
+    bulkApply(tr("Sposto in «%1»").arg(label), todo,
+              [this, acc, folder](const MessageSummary& s, Callback cb) { actions_->moveToFolder(s.path, acc, folder, std::move(cb)); },
+              true, tr("spostati in «%1»").arg(label));
+}
+
+void MainWindow::archiveChecked() {
+    const QList<MessageSummary> sel = model_->checkedSummaries();
+    if (sel.isEmpty() || !moveGuard(tr("Archivia"))) return;
+    QList<MessageSummary> todo;
+    for (const MessageSummary& s : sel) {
+        const Account acc = accountFor(s.accountId);
+        if (acc.id.isEmpty()) {
+            showNotice(tr("Archivia"), tr("Account non riconosciuto per %1").arg(s.path));
+            return;
+        }
+        const QString f = acc.archiveFolder.trimmed();
+        if (f.isEmpty() || !QDir(QDir(acc.maildirRoot).filePath(f)).exists(QStringLiteral("cur"))) {
+            showNotice(tr("Archivia"), tr("L'account «%1» non ha una cartella Archivio esistente («%2»). "
+                                          "Creala (anche dal webmail, poi aggiorna) oppure indicane una in Impostazioni.")
+                                           .arg(acc.name, f));
+            return;
+        }
+        if (!inFolder(s.path, acc.maildirRoot, f)) todo << s;
+    }
+    if (todo.isEmpty()) {
+        statusBar()->showMessage(tr("I messaggi sono gia' in archivio"), 5000);
+        return;
+    }
+    bulkApply(tr("Archivio"), todo,
+              [this](const MessageSummary& s, Callback cb) {
+                  const Account acc = accountFor(s.accountId);
+                  actions_->moveToFolder(s.path, acc, acc.archiveFolder, std::move(cb));
+              },
+              true, tr("archiviati"));
+}
+
+void MainWindow::setCheckedFlags(const QString& add, const QString& remove, const QString& label) {
+    const QList<MessageSummary> sel = model_->checkedSummaries();
+    if (sel.isEmpty() || !bulkAllowed()) return;
+    QList<MessageSummary> todo;
+    for (const MessageSummary& s : sel) {
+        if (add == QLatin1String("F") && s.flagged) continue;
+        if (remove == QLatin1String("F") && !s.flagged) continue;
+        if (remove == QLatin1String("S") && s.unread) continue;
+        todo << s;
+    }
+    if (todo.isEmpty()) {
+        statusBar()->showMessage(tr("Nessun messaggio da modificare"), 5000);
+        return;
+    }
+    bulkApply(tr("Aggiorno"), todo,
+              [this, add, remove](const MessageSummary& s, Callback cb) { actions_->changeFlags(s.path, add, remove, std::move(cb)); },
+              false, label);
 }
 
 void MainWindow::deleteChecked() {

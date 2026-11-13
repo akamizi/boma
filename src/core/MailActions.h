@@ -48,8 +48,15 @@ public:
     void markRead(const QString& path, Callback cb);
     // Sposta nella cartella cestino dell'account (relativa a maildirRoot).
     void moveToTrash(const QString& path, const Account& account, Callback cb);
+    // Sposta in un'altra cartella dello STESSO account (relativa a maildirRoot), con
+    // le stesse regole del cestino ma senza forzare "letto": lo stato resta com'e'.
+    void moveToFolder(const QString& path, const Account& account, const QString& folder, Callback cb);
+    // Aggiunge/toglie bandiere Maildir (lettere: S letto, F preferito). Per i messaggi
+    // ancora in new/ la N viene tolta (mu non la accetta insieme ad altre).
+    void changeFlags(const QString& path, const QString& add, const QString& remove, Callback cb);
 
 private:
+    void moveImpl(const QString& path, const Account& account, const QString& folder, const QString& flags, Callback cb);
     void runMu(const QStringList& args, Callback cb);
     void attempt(const QStringList& args, Callback cb, std::chrono::milliseconds waited,
                  std::chrono::milliseconds delay);

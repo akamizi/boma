@@ -58,6 +58,11 @@ public:
     // Vuota se la Maildir dell'account non e' sotto la radice o la cartella e' vuota.
     static QString maildirQuery(const QString& muRoot, const QString& maildirRoot, const QString& folder);
 
+    // Ordinamento dei risultati di search (field: date, from, subject, size; altri valori
+    // = date). Predefinito: data, dal piu' recente. Il chiamante azzera il modello dopo.
+    void setSort(const QString& field, bool descending);
+    QString sortField() const { return m_sortField; }
+    bool sortDescending() const { return m_sortDesc; }
     void search(const QString& query, int offset, int limit, SearchCallback cb);
     void unread(int offset, int limit, SearchCallback cb);
     // Numero di messaggi non letti (non cestinati) che soddisfano `query` (vuota = la vista
@@ -78,6 +83,8 @@ private:
     QStringList baseArgs(const QString& sub) const;
     QString accountFor(const QString& path) const;
     QString m_mu, m_muHome, m_muRoot;
+    QString m_sortField = QStringLiteral("date");
+    bool m_sortDesc = true;
     QList<Account> m_accounts;
     void reindexAttempt(Callback cb, std::chrono::milliseconds waited, std::chrono::milliseconds delay);
     ProcessRunner m_runner;

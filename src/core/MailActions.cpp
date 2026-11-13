@@ -82,6 +82,33 @@ void MailActions::markRead(const QString& path, Callback cb)
 
 void MailActions::moveToTrash(const QString& path, const Account& account, Callback cb)
 {
+    moveImpl(path, account, account.trashFolder, QStringLiteral("--flags=+S-N"), std::move(cb));
+}
+
+void MailActions::moveToFolder(const QString& path, const Account& account, const QString& folder, Callback cb)
+{
+    moveImpl(path, account, folder, QStringLiteral("--flags=-N"), std::move(cb));
+}
+
+void MailActions::changeFlags(const QString& path, const QString& add, const QString& remove, Callback cb)
+{
+    static const QString allowed = QStringLiteral("SF");
+    auto bad = [&](const QString& f) {
+        for (QChar ch : f) if (!allowed.contains(ch)) return true;
+        return false;
+    };
+    if (!QDir::isAbsolutePath(path) || bad(add) || bad(remove) || (add.isEmpty() && remove.isEmpty())) {
+        if (cb) cb(false, QStringLiteral("Parametri non validi per il cambio di bandiere"));
+        return;
+    }
+    QString spec = QStringLiteral("--flags=-N");
+    for (QChar ch : add) spec += QLatin1Char('+') + QString(ch);
+    for (QChar ch : remove) spec += QLatin1Char('-') + QString(ch);
+    runMu({QStringLiteral("move"), path, spec}, std::move(cb));
+}
+
+void MailActions::moveImpl(const QString& path, const Account& account, const QString& folder, const QString& flags, Callback cb)
+{
     auto refuse = [&cb](const QString& why) {
         if (cb)
             cb(false, why);
@@ -94,10 +121,10 @@ void MailActions::moveToTrash(const QString& path, const Account& account, Callb
         return refuse(QStringLiteral("Il messaggio %1 non e' sotto la Maildir dell'account (%2)")
                           .arg(path, account.maildirRoot));
 
-    const QString trimmed = account.trashFolder.trimmed();
+    const QString trimmed = folder.trimmed();
     const QStringList parts = trimmed.split(QLatin1Char('/'), Qt::SkipEmptyParts);
     if (parts.isEmpty() || parts.contains(QStringLiteral("..")) || parts.contains(QStringLiteral(".")))
-        return refuse(QStringLiteral("Cartella cestino non valida: '%1'").arg(account.trashFolder));
+        return refuse(QStringLiteral("Cartella di destinazione non valida: '%1'").arg(folder));
     // mu vuole la cartella relativa alla radice Maildir di mu, con '/' iniziale.
     // La radice di mu e' OBBLIGATORIA: senza, la cartella di destinazione potrebbe
     // essere sbagliata e non si sposta nulla. "/" non e' accettata come radice.
@@ -123,7 +150,7 @@ void MailActions::moveToTrash(const QString& path, const Account& account, Callb
     // ancora in new/ mu rifiuta N insieme ad altre bandiere ("the New flag cannot be
     // combined with others", uscita 1, nulla spostato). Con -N finisce in cur/.
     runMu({QStringLiteral("move"), path, prefix + QLatin1Char('/') + parts.join(QLatin1Char('/')),
-           QStringLiteral("--change-name"), QStringLiteral("--flags=+S-N")},
+           QStringLiteral("--change-name"), flags},
           std::move(cb));
 }
 

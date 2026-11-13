@@ -39,6 +39,14 @@ public:
     // Il chiamante lo possiede (parent = this).
     QMenu* contextMenuFor(const QModelIndex& index);
 
+    // Cartelle Maildir di ogni account, come destinazioni di uno spostamento.
+    struct FolderTarget {
+        QString accountId, accountName;
+        QString folder; // relativa a maildirRoot ("INBOX", "Archive/2025")
+        QString label;  // percorso mostrato ("Posta in arrivo", "Altre / Sotto")
+    };
+    QList<FolderTarget> folderTargets() const;
+
 signals:
     void querySelected(const QString& query);
     // accountId, query della cartella, percorso assoluto della cartella, nome mostrato

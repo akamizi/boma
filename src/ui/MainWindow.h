@@ -78,6 +78,12 @@ public:
     QWidget* bulkBar() const { return bulkBar_; }
     void markCheckedRead();
     void deleteChecked();
+    // Barra sopra l'elenco: agisce sui messaggi spuntati (Ordina sempre attivo).
+    QWidget* listBar() const { return listBar_; }
+    void moveChecked(const QString& accountId, const QString& folder, const QString& label);
+    void archiveChecked();
+    void setCheckedFlags(const QString& add, const QString& remove, const QString& label);
+    void setListSort(const QString& field, bool descending);
     Sender* sender() const { return sender_; }
     SyncService* syncService() const { return sync_; }
     // Finestre di scrittura aperte.
@@ -179,6 +185,12 @@ private:
     MessageView* view_;
     QTextBrowser* help_;
     QWidget* bulkBar_ = nullptr;
+    QWidget* listBar_ = nullptr;
+    QList<QWidget*> checkedOnly_; // pulsanti attivi solo con messaggi spuntati
+    void bulkApply(const QString& title, const QList<MessageSummary>& items,
+                   std::function<void(const MessageSummary&, Callback)> op, bool removesFromList,
+                   const QString& doneText);
+    bool moveGuard(const QString& title);
     QLabel* bulkLabel_ = nullptr;
     QPushButton *newBtn_, *replyBtn_, *replyAllBtn_, *fwdBtn_, *delBtn_, *syncBtn_, *settingsBtn_;
     std::function<bool(const Config&, Config*)> settingsCb_;

@@ -61,9 +61,14 @@ scritto e sincronizzato su disco in `tmp/`, poi pubblicato in `cur/` con `link()
 - Elenco a due righe: mittente e data (relativa: «2 ore fa», «ieri alle 18:02»),
   oggetto e dimensione; stella per i messaggi contrassegnati, graffetta per gli
   allegati; le non lette sono in grassetto, con sfondo e barra laterale evidenziati.
-- Selezione multipla: la casella a sinistra di ogni riga (senza aprire il messaggio)
-  fa comparire sopra l'elenco una barra con «Segna come letti», «Elimina» (nel
-  cestino, con conferma) e «Deseleziona».
+- Barra sopra l'elenco: «Ordina» (data, mittente, oggetto, dimensione; la scelta si
+  ricorda) e, sui messaggi spuntati con la casella a sinistra di ogni riga (senza
+  aprire il messaggio), «Sposta» (menu delle cartelle dello stesso account),
+  «Archivia» (cartella `archiveFolder` dell'account, default `Archive`: deve
+  esistere, Boma non la crea), «Elimina» (nel cestino, con conferma) e «Segna»
+  (letto, non letto, preferito, togli preferito). Non sostituiscono il pulsante
+  «Elimina» del messaggio aperto. Compare anche la riga «N selezionati» con
+  «Deseleziona». Tutto passa da `mu move`.
 - Messaggi mostrati in testo semplice per default; se esiste anche la parte HTML un
   pulsante nella barra del messaggio alterna testo/HTML, e nelle Impostazioni si puo'
   scegliere l'HTML come predefinito. L'HTML e' sempre ripulito.

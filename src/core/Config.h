@@ -15,6 +15,7 @@ namespace boma {
 //   sentFolder=Sent     cartelle speciali (relative alla radice)
 //   draftsFolder=Drafts
 //   trashFolder=Trash
+//   archiveFolder=Archive   (deve esistere: Boma non la crea)
 //
 //   [identity:<id>]
 //   accountId=<id account>   obbligatorio: ogni identita' appartiene a un solo account
@@ -29,6 +30,7 @@ namespace boma {
 
 struct Account {
     QString id, name, maildirRoot, mbsyncChannel, sentFolder, draftsFolder, trashFolder;
+    QString archiveFolder = QStringLiteral("Archive"); // destinazione del pulsante Archivia
 };
 
 struct Identity {

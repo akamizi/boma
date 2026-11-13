@@ -47,6 +47,7 @@ Config Config::load(const QString& path, QString* error) {
         a.sentFolder = s.value("sentFolder", "Sent").toString();
         a.draftsFolder = s.value("draftsFolder", "Drafts").toString();
         a.trashFolder = s.value("trashFolder", "Trash").toString();
+        a.archiveFolder = s.value("archiveFolder", "Archive").toString();
         s.endGroup();
         c.m_accounts.append(a);
     }
@@ -148,6 +149,7 @@ bool Config::save(const QString& path, QString* error) const {
         s.setValue(QStringLiteral("sentFolder"), a.sentFolder);
         s.setValue(QStringLiteral("draftsFolder"), a.draftsFolder);
         s.setValue(QStringLiteral("trashFolder"), a.trashFolder);
+        s.setValue(QStringLiteral("archiveFolder"), a.archiveFolder);
         s.endGroup();
     }
     for (const Identity& i : m_identities) {

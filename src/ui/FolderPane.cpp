@@ -74,6 +74,29 @@ QMenu* FolderPane::contextMenuFor(const QModelIndex& index) {
     return m;
 }
 
+QList<FolderPane::FolderTarget> FolderPane::folderTargets() const {
+    QList<FolderTarget> out;
+    std::function<void(QStandardItem*, const QString&, const Account&, const QString&)> walk =
+        [&](QStandardItem* it, const QString& path, const Account& a, const QString& root) {
+            const QString here = path.isEmpty() ? it->data(Qt::UserRole + 5).toString() : path + QStringLiteral(" / ") + it->data(Qt::UserRole + 5).toString();
+            const QString dir = it->data(Qt::UserRole + 6).toString();
+            if (!dir.isEmpty() && dir.startsWith(root + QLatin1Char('/')))
+                out.append({a.id, a.name.isEmpty() ? a.id : a.name, dir.mid(root.size() + 1), here});
+            for (int i = 0; i < it->rowCount(); ++i) walk(it->child(i), here, a, root);
+        };
+    for (int i = 0; i < model_->rowCount(); ++i) {
+        QStandardItem* top = model_->item(i);
+        const QString id = top->data(Qt::UserRole + 3).toString();
+        if (id.isEmpty()) continue;
+        for (const Account& a : config_.accounts()) {
+            if (a.id != id) continue;
+            const QString root = QDir::cleanPath(a.maildirRoot);
+            for (int k = 0; k < top->rowCount(); ++k) walk(top->child(k), QString(), a, root);
+        }
+    }
+    return out;
+}
+
 void FolderPane::setMuRoot(const QString& muRoot) {
     const int QueryRole = Qt::UserRole + 1, FolderRole = Qt::UserRole + 2;
     QSignalBlocker b(selectionModel());

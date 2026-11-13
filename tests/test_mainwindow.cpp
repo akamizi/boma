@@ -419,6 +419,61 @@ private slots:
         QVERIFY(QTest::qWaitFor([&] { return !w.bulkBusy(); }, 10000));
         QCOMPARE(countLines(log(QStringLiteral("mu.log")), QStringLiteral("--flags=-N+S")), 1);
     }
+    void testListBarButtonsFollowCheckedState() {
+        MainWindow w(makeConfig(), optsRoot());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        for (const char* n : {"listMove", "listArchive", "listDelete", "listMark"})
+            QVERIFY(!w.listBar()->findChild<QToolButton*>(n)->isEnabled());
+        QVERIFY(w.listBar()->findChild<QToolButton*>("listSort")->isEnabled());
+        w.model()->setData(w.model()->index(0, 0), true, MessageListModel::CheckedRole);
+        for (const char* n : {"listMove", "listArchive", "listDelete", "listMark"})
+            QVERIFY(w.listBar()->findChild<QToolButton*>(n)->isEnabled());
+    }
+    void testSortChangesMuQuery() {
+        MainWindow w(makeConfig(), optsRoot());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        QFile::remove(dir_ + QStringLiteral("/mu.log"));
+        w.setListSort("size", false);
+        QVERIFY(QTest::qWaitFor([&] { return log("mu.log").contains("--sortfield=size"); }, 10000));
+        QVERIFY(!log("mu.log").contains("--reverse"));
+        w.setListSort("date", true);
+        QVERIFY(QTest::qWaitFor([&] { return log("mu.log").contains("--sortfield=date --format") || log("mu.log").contains("--reverse"); }, 10000));
+    }
+    void testArchiveNeedsExistingFolderThenMoves() {
+        MainWindow w(makeConfig(), optsRoot());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        QString notice;
+        w.setNoticeCallback([&](const QString&, const QString& t) { notice = t; });
+        w.model()->setData(w.model()->index(1, 0), true, MessageListModel::CheckedRole);
+        const QString path = w.model()->summary(1).path;
+        w.archiveChecked();
+        QVERIFY(!notice.isEmpty());          // cartella Archive inesistente: niente spostato
+        QVERIFY(!moves().contains("/a/Archive"));
+        QDir().mkpath(dir_ + QStringLiteral("/mail/a/Archive/cur"));
+        w.archiveChecked();
+        QVERIFY(QTest::qWaitFor([&] { return moves().contains(QStringLiteral("%1 /a/Archive").arg(path)) && !w.bulkBusy(); }, 10000));
+        QVERIFY(moves().contains("--flags=-N"));
+        QVERIFY(waitRows(w, 1));
+    }
+    void testMoveCheckedToFolderAndFlagActions() {
+        MainWindow w(makeConfig(), optsRoot());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        w.model()->setData(w.model()->index(0, 0), true, MessageListModel::CheckedRole);
+        const QString path = w.model()->summary(0).path;
+        w.moveChecked("a", "Trash", "Cestino");
+        QVERIFY(QTest::qWaitFor([&] { return moves().contains(QStringLiteral("%1 /a/Trash").arg(path)) && !w.bulkBusy(); }, 10000));
+        QVERIFY(waitRows(w, 1));
+        w.model()->setData(w.model()->index(0, 0), true, MessageListModel::CheckedRole);
+        QToolButton* mark = w.listBar()->findChild<QToolButton*>("listMark");
+        QAction* flag = mark->menu()->findChild<QAction*>("markFlag");
+        QVERIFY(flag);
+        flag->trigger();
+        QVERIFY(QTest::qWaitFor([&] { return log("mu.log").contains("--flags=-N+F") && !w.bulkBusy(); }, 10000));
+    }
     void testMarkFolderReadMarksEveryUnread() {
         writeFile(dir_ + QStringLiteral("/plain.txt"), QStringLiteral("%1/Trash/cur/a\n%1/Trash/cur/b\n").arg(dir_ + "/mail/a").toUtf8());
         MainWindow w(makeConfig(), optsRoot());

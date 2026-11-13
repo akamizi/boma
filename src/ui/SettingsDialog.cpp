@@ -65,6 +65,7 @@ SettingsDialog::SettingsDialog(const Config& config, const SettingsEnvironment& 
     accSent_ = new QLineEdit(accBox);
     accDrafts_ = new QLineEdit(accBox);
     accTrash_ = new QLineEdit(accBox);
+    accArchive_ = new QLineEdit(accBox);
     af->addRow(tr("Identificativo"), accId_);
     af->addRow(tr("Nome visualizzato"), accName_);
     af->addRow(tr("Radice Maildir"), rootRow);
@@ -72,6 +73,7 @@ SettingsDialog::SettingsDialog(const Config& config, const SettingsEnvironment& 
     af->addRow(tr("Cartella Inviata"), accSent_);
     af->addRow(tr("Cartella Bozze"), accDrafts_);
     af->addRow(tr("Cartella Cestino"), accTrash_);
+    af->addRow(tr("Cartella Archivio"), accArchive_);
     rl->addWidget(accBox);
 
     auto* idBox = new QGroupBox(tr("Identita' dell'account (msmtp e PGP)"), right);
@@ -177,7 +179,7 @@ SettingsDialog::SettingsDialog(const Config& config, const SettingsEnvironment& 
         const QString d = QFileDialog::getExistingDirectory(this, tr("Radice Maildir"), accRoot_->text());
         if (!d.isEmpty()) accRoot_->setText(d);
     });
-    for (QLineEdit* e : {accId_, accName_, accRoot_, accSent_, accDrafts_, accTrash_})
+    for (QLineEdit* e : {accId_, accName_, accRoot_, accSent_, accDrafts_, accTrash_, accArchive_})
         connect(e, &QLineEdit::textChanged, this, &SettingsDialog::readAccountForm);
     connect(accChannel_, &QComboBox::editTextChanged, this, &SettingsDialog::readAccountForm);
     for (QLineEdit* e : {idId_, idAddress_, idName_})
@@ -209,7 +211,7 @@ Config SettingsDialog::result() const {
 void SettingsDialog::setFormsEnabled() {
     const bool haveAcc = curAccount_ >= 0;
     const bool haveId = curIdentity_ >= 0;
-    for (QWidget* w : QList<QWidget*>{accName_, accRoot_, accChannel_, accSent_, accDrafts_, accTrash_, addIdentity_, removeAccount_})
+    for (QWidget* w : QList<QWidget*>{accName_, accRoot_, accChannel_, accSent_, accDrafts_, accTrash_, accArchive_, addIdentity_, removeAccount_})
         w->setEnabled(haveAcc);
     accId_->setEnabled(haveAcc && newAccounts_.contains(accounts_.value(curAccount_).id));
     for (QWidget* w : QList<QWidget*>{idAddress_, idName_, idSignature_, idMsmtp_, msmtpBtn_, idKey_, idSign_, removeIdentity_})
@@ -257,9 +259,10 @@ void SettingsDialog::showAccount(int row) {
         accSent_->setText(a.sentFolder);
         accDrafts_->setText(a.draftsFolder);
         accTrash_->setText(a.trashFolder);
+        accArchive_->setText(a.archiveFolder);
     } else {
         curAccount_ = -1;
-        for (QLineEdit* e : {accId_, accName_, accRoot_, accSent_, accDrafts_, accTrash_}) e->clear();
+        for (QLineEdit* e : {accId_, accName_, accRoot_, accSent_, accDrafts_, accTrash_, accArchive_}) e->clear();
         accChannel_->setEditText(QString());
     }
     loading_ = false;
@@ -301,6 +304,7 @@ void SettingsDialog::readAccountForm() {
     a.sentFolder = accSent_->text();
     a.draftsFolder = accDrafts_->text();
     a.trashFolder = accTrash_->text();
+    a.archiveFolder = accArchive_->text();
     if (a.id != oldId) { // solo un account nuovo ha l'id modificabile: le sue identita' lo seguono
         newAccounts_.remove(oldId);
         newAccounts_.insert(a.id);
@@ -345,6 +349,7 @@ void SettingsDialog::addAccount() {
     a.sentFolder = QStringLiteral("Sent");
     a.draftsFolder = QStringLiteral("Drafts");
     a.trashFolder = QStringLiteral("Trash");
+    a.archiveFolder = QStringLiteral("Archive");
     accounts_.append(a);
     newAccounts_.insert(id);
     refreshAccountList(int(accounts_.size()) - 1);
