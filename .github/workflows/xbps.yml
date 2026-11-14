@@ -38,6 +38,8 @@ jobs:
           # xbps-src non gira come root: utente dedicato
           useradd -G xbuilder -M builder
           chown -R builder:builder /vp
+          # come il CI di void-packages: nei container si usa lo stile di chroot "uchroot"
+          echo XBPS_CHROOT_CMD=uchroot >> /vp/etc/conf
           sudo -Eu builder sh -c 'cd /vp && ./xbps-src binary-bootstrap && ./xbps-src -f pkg boma'
 
       - name: Firma e indicizza
