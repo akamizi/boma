@@ -2,6 +2,8 @@
 
 #include <QApplication>
 #include <QGuiApplication>
+#include <QPalette>
+#include <QStyle>
 #include <QSettings>
 #include <QStyleFactory>
 #include <QStyleHints>
@@ -33,6 +35,33 @@ void Theme::save() const {
     s.setValue(QStringLiteral("appearance/scheme"), scheme);
 }
 
+namespace {
+QPalette darkPalette() {
+    QPalette p;
+    const QColor win(45, 45, 48), base(30, 30, 32), text(228, 228, 228), dis(130, 130, 130), hl(61, 142, 224);
+    p.setColor(QPalette::Window, win);
+    p.setColor(QPalette::WindowText, text);
+    p.setColor(QPalette::Base, base);
+    p.setColor(QPalette::AlternateBase, QColor(40, 40, 43));
+    p.setColor(QPalette::Text, text);
+    p.setColor(QPalette::Button, win);
+    p.setColor(QPalette::ButtonText, text);
+    p.setColor(QPalette::BrightText, Qt::white);
+    p.setColor(QPalette::ToolTipBase, base);
+    p.setColor(QPalette::ToolTipText, text);
+    p.setColor(QPalette::PlaceholderText, dis);
+    p.setColor(QPalette::Highlight, hl);
+    p.setColor(QPalette::HighlightedText, Qt::white);
+    p.setColor(QPalette::Link, QColor(110, 170, 255));
+    p.setColor(QPalette::Mid, QColor(70, 70, 74));
+    p.setColor(QPalette::Dark, QColor(25, 25, 27));
+    p.setColor(QPalette::Light, QColor(80, 80, 84));
+    for (auto r : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
+        p.setColor(QPalette::Disabled, r, dis);
+    return p;
+}
+} // namespace
+
 void Theme::apply() const {
     // solo stili esistenti: un nome sparito (plugin rimosso) non rompe l'avvio
     if (!style.isEmpty() && QStyleFactory::keys().contains(style, Qt::CaseInsensitive)) QApplication::setStyle(style);
@@ -41,6 +70,14 @@ void Theme::apply() const {
                                                   : scheme == QLatin1String("light") ? Qt::ColorScheme::Light
                                                                                      : Qt::ColorScheme::Unknown);
 #endif
+    // Riserva: senza un tema di piattaforma che gestisca lo schema (es. QT_QPA_PLATFORMTHEME=qt5ct
+    // con Qt6) la richiesta e' ignorata; applico una palette propria cosi' la scelta ha effetto.
+    const bool wantDark = scheme == QLatin1String("dark"), wantLight = scheme == QLatin1String("light");
+    if (wantDark || wantLight) {
+        const bool isDark = QApplication::palette().color(QPalette::Base).lightness() < 128;
+        if (wantDark && !isDark) QApplication::setPalette(darkPalette());
+        else if (wantLight && isDark) QApplication::setPalette(QApplication::style()->standardPalette());
+    }
 }
 
 } // namespace boma

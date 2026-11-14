@@ -64,6 +64,15 @@ private slots:
         QCOMPARE(t.style, QString("Fusion"));
         Theme().save(); // ripristina
     }
+    void testDarkSchemeChangesThePaletteEvenWithoutPlatformSupport() {
+        Theme t;
+        t.scheme = "dark";
+        t.apply();
+        QVERIFY(QApplication::palette().color(QPalette::Base).lightness() < 128);
+        t.scheme = "light";
+        t.apply();
+        QVERIFY(QApplication::palette().color(QPalette::Base).lightness() >= 128);
+    }
     void testChannelAndMsmtpListsComeFromFiles() {
         SettingsDialog d(sample(), env());
         QStringList ch, ms;
