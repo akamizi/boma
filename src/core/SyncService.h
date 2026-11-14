@@ -31,9 +31,10 @@ public:
     void setConfig(const Config& c) { if (m_state != Running) m_config = c; }
     // Con onlyAccountId solo quell'account (id sconosciuto: non parte nulla).
     void syncAll(const QString& onlyAccountId = QString());
-    // Aggiornamento rapido: mbsync --pull-new (scarica solo i messaggi nuovi, senza
-    // confrontare bandiere ne' cancellazioni). Le modifiche locali (letto, cestino...)
-    // restano da propagare al server con una sincronizzazione completa (es. il cron).
+    // Aggiornamento rapido: mbsync --pull-new --push (dal server scarica solo i messaggi
+    // nuovi; verso il server invia tutto: letto, cestino, spostamenti, cancellazioni).
+    // Le novita' di bandiere/cancellazioni fatte altrove restano alla sincronizzazione
+    // completa (es. il cron).
     void setQuick(bool q) { m_quick = q; }
     bool quick() const { return m_quick; }
     State state() const { return m_state; }

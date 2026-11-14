@@ -403,10 +403,15 @@ non passa mai da Boma.
 Accanto ad «Aggiorna» la freccia ▾ permette di aggiornare un solo account (F5 li
 aggiorna tutti).
 
-«Aggiorna ora» usa per default `mbsync --pull-new`: scarica solo i messaggi nuovi,
-senza confrontare bandiere e cancellazioni, ed e' molto piu' veloce. Letto, cestino e
-spostamenti fatti in Boma arrivano al server con la sincronizzazione completa (il
-cron). Si puo' tornare alla sincronizzazione completa in Impostazioni.
+«Aggiorna ora» usa per default `mbsync --pull-new --push`: dal server scarica solo i
+messaggi nuovi (piu' veloce), mentre verso il server invia tutte le modifiche fatte in
+Boma (letto, cestino, spostamenti, cancellazioni). Bandiere e cancellazioni fatte
+altrove arrivano con la sincronizzazione completa (il cron). Si puo' tornare alla
+sincronizzazione completa in Impostazioni.
+
+Attenzione: mbsync sincronizza solo le cartelle che corrispondono a `Patterns` nel
+canale. Una cartella locale fuori dai pattern (es. «Trash» o «Archive» di un account Gmail
+che sincronizza solo «[Gmail]/Tutti i messaggi») non arriva mai al server.
 
 ## Licenza
 

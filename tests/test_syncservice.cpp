@@ -53,7 +53,7 @@ private slots:
         s.syncAll();
         QTRY_COMPARE_WITH_TIMEOUT(s.state(), SyncService::Idle, 10000);
         QFile f(log); QVERIFY(f.open(QIODevice::ReadOnly));
-        QVERIFY(f.readAll().contains("--pull-new -V chA"));
+        QVERIFY(f.readAll().contains("--pull-new --push -V chA"));
     }
     void testFailureReportsFirstErrorAndDoesNotRetry() {
         QString log = dir.filePath("log2");

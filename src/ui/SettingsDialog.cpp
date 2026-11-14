@@ -155,9 +155,10 @@ SettingsDialog::SettingsDialog(const Config& config, const SettingsEnvironment& 
                                "Con un messaggio aperto un pulsante permette di cambiare vista."));
     preferHtml_->setChecked(MessageView::preferHtml());
     rl->addWidget(preferHtml_);
-    quickSync_ = new QCheckBox(tr("Aggiorna ora scarica solo i messaggi nuovi (piu' veloce)"), right);
-    quickSync_->setToolTip(tr("Usa mbsync --pull-new. Letto/cestino fatti in Boma arrivano al server "
-                              "con la sincronizzazione completa (ad esempio il cron)."));
+    quickSync_ = new QCheckBox(tr("Aggiorna ora: dal server solo i messaggi nuovi (piu' veloce)"), right);
+    quickSync_->setToolTip(tr("Usa mbsync --pull-new --push: scarica solo i messaggi nuovi, ma invia al server tutte le "
+                              "modifiche fatte in Boma (letto, cestino, spostamenti). Le modifiche fatte altrove "
+                              "arrivano con la sincronizzazione completa (ad esempio il cron)."));
     quickSync_->setChecked(QSettings().value(QStringLiteral("sync/quick"), true).toBool());
     rl->addWidget(quickSync_);
 
