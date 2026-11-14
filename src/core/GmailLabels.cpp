@@ -24,7 +24,10 @@ QHash<QString, QStringList> GmailLabels::parseOutput(const QByteArray& out, int*
         QStringList l;
         for (const QJsonValue& v : o.value(QLatin1String("labels")).toArray())
             if (!v.toString().isEmpty()) l << v.toString();
-        if (!l.isEmpty()) m.insert(id, l);
+        QStringList cur = m.value(id);
+        for (const QString& t : l)
+            if (!cur.contains(t)) cur << t;
+        if (!cur.isEmpty()) m.insert(id, cur);
     }
     return m;
 }
@@ -34,16 +37,17 @@ void GmailLabels::fetch(ProcessRunner* runner, const QString& python, const QStr
     const QString cfg = mbsyncConfig.isEmpty() ? QDir::homePath() + QStringLiteral("/.mbsyncrc") : mbsyncConfig;
     const QString py = python.isEmpty() ? QStringLiteral("python3") : python;
     // -I: modalita' isolata (niente directory corrente ne' variabili PYTHON* nel percorso di import)
-    runner->run(py, {QStringLiteral("-I"), QStringLiteral("-c"), script(), cfg, channel}, std::chrono::minutes(10),
+    runner->run(py, {QStringLiteral("-I"), QStringLiteral("-c"), script(), cfg, channel}, std::chrono::minutes(30),
                 [cb = std::move(cb)](ProcessResult r) {
                     int done = -1;
                     auto map = parseOutput(r.out, &done);
-                    if (r.exitCode != 0 || done < 0) {
+                    if (done < 0 || (r.exitCode != 0 && map.isEmpty())) {
                         QString e = QString::fromUtf8(r.err).trimmed();
                         if (e.isEmpty()) e = r.timedOut ? QObject::tr("tempo scaduto") : QObject::tr("importazione non riuscita");
                         cb({}, e);
                         return;
                     }
+                    if (r.exitCode == 0 && !r.err.trimmed().isEmpty()) { cb(map, QString::fromUtf8(r.err).trimmed()); return; }
                     cb(map, QString());
                 });
 }

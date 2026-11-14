@@ -16,9 +16,13 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from email.parser import BytesHeaderParser
 
-CHUNK = 500
+CHUNK = 200
+PAUSE = 0.3          # secondi tra una richiesta e l'altra
+RETRIES = 4          # tentativi dopo OVERQUOTA
+RETRY_WAIT = 90      # secondi
 
 
 def _unquote(v):
@@ -159,14 +163,56 @@ def parse_fetch(data):
     return out
 
 
+def parse_message_ids(data):
+    """Risposta FETCH di soli header Message-ID -> [Message-ID senza <>]."""
+    out = []
+    for item in data:
+        if isinstance(item, tuple):
+            mid = BytesHeaderParser().parsebytes(item[1]).get("Message-ID", "")
+            mid = " ".join(str(mid).split()).strip().strip("<>").strip()
+            if mid:
+                out.append(mid)
+    return out
+
+
+def parse_list_line(b):
+    """Riga di LIST -> (flags, nome decodificato) oppure None."""
+    line = b.decode("utf-8", "replace") if isinstance(b, bytes) else str(b)
+    m = re.match(r'^\((?P<flags>[^)]*)\) (?:"(?P<sep>[^"]*)"|NIL) (?P<name>.+)$', line)
+    if not m:
+        return None
+    return m.group("flags"), _unquote(m.group("name"))
+
+
+# Etichette che ricalcano cartelle di sistema (importate da vecchie caselle): non sono tag utili.
+IGNORED = {"sent", "trash", "drafts", "draft", "junk", "spam", "archive", "queue", "posta inviata", "inbox"}
+
+
+def user_labels(boxes):
+    """Nomi (grezzi, come li vuole il server) delle etichette dell'utente: niente cartelle di sistema."""
+    out = []
+    for b in boxes or []:
+        r = parse_list_line(b)
+        if not r:
+            continue
+        flags, name = r
+        if "\\Noselect" in flags or name.lower() in IGNORED or name.startswith("[Gmail]") or name.startswith("[Google Mail]"):
+            continue
+        out.append(name)
+    return out
+
+
 def find_all_mail(conn):
     typ, boxes = conn.list()
     for b in boxes or []:
-        line = b.decode("utf-8", "replace") if isinstance(b, bytes) else str(b)
-        m = re.match(r'^\((?P<flags>[^)]*)\) "(?P<sep>[^"]*)" (?P<name>.+)$', line)
-        if m and "\\All" in m.group("flags"):
-            return _unquote(m.group("name"))
+        r = parse_list_line(b)
+        if r and "\\All" in r[0]:
+            return r[1]
     return "[Gmail]/All Mail"
+
+
+def quote(s):
+    return '"%s"' % s.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def run(config_path, channel, out=sys.stdout):
@@ -174,35 +220,78 @@ def run(config_path, channel, out=sys.stdout):
         acc = parse_config(f.read(), channel)
     if acc["tls"] not in ("IMAPS", "STARTTLS"):
         raise RuntimeError("connessione non cifrata rifiutata (TLSType %s)" % acc["tls"])
-    if acc["tls"] == "IMAPS":
-        conn = imaplib.IMAP4_SSL(acc["host"], acc["port"])
-    else:
-        conn = imaplib.IMAP4(acc["host"], acc["port"])
-        conn.starttls()
-    try:
-        caps = " ".join(conn.capabilities)
-        if "X-GM-EXT-1" not in caps:
+    password = get_password(acc)
+    state = {"conn": None, "box": None}
+
+    def connect():
+        try:
+            if state["conn"]:
+                state["conn"].logout()
+        except Exception:
+            pass
+        if acc["tls"] == "IMAPS":
+            conn = imaplib.IMAP4_SSL(acc["host"], acc["port"])
+        else:
+            conn = imaplib.IMAP4(acc["host"], acc["port"])
+            conn.starttls()
+        if "X-GM-EXT-1" not in " ".join(conn.capabilities):
             raise RuntimeError("il server non e' Gmail (manca X-GM-EXT-1)")
-        conn.login(acc["user"], get_password(acc))
-        box = find_all_mail(conn)
-        typ, dat = conn.select('"%s"' % box.replace("\\", "\\\\").replace('"', '\\"'), readonly=True)
+        conn.login(acc["user"], password)
+        state["conn"] = conn
+        if state["box"] is None:
+            typ, boxes = conn.list()
+            state["names"] = user_labels(boxes)
+            state["box"] = find_all_mail(conn)
+        typ, _ = conn.select(quote(state["box"]), readonly=True)
         if typ != "OK":
-            raise RuntimeError("cartella %s non apribile" % box)
-        total = int(dat[0])
+            raise RuntimeError("cartella %s non apribile" % state["box"])
+
+    def retrying(fn):
+        for k in range(RETRIES + 1):
+            try:
+                return fn(state["conn"])
+            except (imaplib.IMAP4.error, OSError) as e:
+                quota = "OVERQUOTA" in str(e).upper()
+                if k == RETRIES:
+                    raise
+                time.sleep(RETRY_WAIT if quota else 5)
+                if not quota:  # connessione caduta: si riparte da capo (sola lettura, nulla da ripristinare)
+                    connect()
+
+    connect()
+    try:
+        # Una ricerca per etichetta e poi solo gli header dei messaggi trovati: molto meno
+        # traffico che leggere tutta la cartella (Gmail limita la banda: OVERQUOTA).
+        found = []
+        for name in state["names"]:
+            typ, res = retrying(lambda c: c.search(None, "X-GM-LABELS", quote(name)))
+            if typ == "OK" and res and res[0]:
+                found.append((len(res[0].split()), name, res[0].split()))
+        found.sort(key=lambda t: t[0])  # prima le piccole: se si viene interrotti, resta il piu' utile
         done = 0
-        for a in range(1, total + 1, CHUNK):
-            b = min(total, a + CHUNK - 1)
-            typ, data = conn.fetch("%d:%d" % (a, b), "(X-GM-LABELS BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
-            if typ != "OK":
-                raise RuntimeError("FETCH fallito")
-            for mid, labels in parse_fetch(data):
-                out.write(json.dumps({"id": mid, "labels": labels}, ensure_ascii=False) + "\n")
-                done += 1
-            out.flush()
-        out.write(json.dumps({"done": done}) + "\n")
+        partial = False
+        try:
+            for _, name, ids in found:
+                label = decode_mutf7(name)
+                for a in range(0, len(ids), CHUNK):
+                    part = b",".join(ids[a:a + CHUNK]).decode()
+                    typ, data = retrying(lambda c: c.fetch(part, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])"))
+                    if typ != "OK":
+                        raise RuntimeError("FETCH fallito")
+                    for mid in parse_message_ids(data):
+                        out.write(json.dumps({"id": mid, "labels": [label]}, ensure_ascii=False) + "\n")
+                        done += 1
+                    out.flush()
+                    time.sleep(PAUSE)
+        except (imaplib.IMAP4.error, OSError) as e:
+            if done == 0:
+                raise
+            partial = True  # limite di Gmail o rete: si tiene quanto gia' letto
+            sys.stderr.write("Importazione parziale (%s): riprova piu' tardi\n" % e)
+        out.write(json.dumps({"done": done, "partial": partial}) + "\n")
     finally:
         try:
-            conn.logout()
+            state["conn"].logout()
         except Exception:
             pass
 
@@ -245,6 +334,11 @@ Near :lavoro-local:
         b")",
     ]
     assert parse_fetch(data) == [("a@x", ["Lavoro"]), ("b@x", ["Banca", "Tasse"])], parse_fetch(data)
+    assert parse_message_ids([(b"1 (BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <a@x>\r\n\r\n"), b")"]) == ["a@x"]
+    assert user_labels([b'(\\HasNoChildren) "/" "INBOX"', b'(\\HasNoChildren) "/" "Sent"', b'(\\HasNoChildren) "/" "Banca"',
+                        b'(\\HasNoChildren \\Sent) "/" "[Gmail]/Posta inviata"', b'(\\HasChildren) "/" "A/B"',
+                        b'(\\Noselect) "/" "[Gmail]"']) == ["Banca", "A/B"]
+    assert find_all_mail.__name__
     print("ok")
 
 

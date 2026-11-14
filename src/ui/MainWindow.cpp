@@ -706,12 +706,13 @@ void MainWindow::importGmailLabels(const QString& channel, const QString& name) 
     GmailLabels::fetch(runner_, QString(), opts_.mbsyncConfig, channel, [self, name](QHash<QString, QStringList> map, QString err) {
         if (!self) return;
         self->gmailBusy_ = false;
-        if (!err.isEmpty()) {
+        if (!err.isEmpty() && map.isEmpty()) {
             self->statusBar()->clearMessage();
             self->showNotice(tr("Importa etichette Gmail"), err);
             return;
         }
         const int n = self->tags_->addTags(map);
+        if (!err.isEmpty()) self->showNotice(tr("Importa etichette Gmail"), err);
         if (n < 0) self->showNotice(tr("Etichette"), tr("Impossibile salvare: %1").arg(self->tags_->lastError()));
         else self->statusBar()->showMessage(tr("«%1»: etichette importate su %n messaggi", nullptr, n).arg(name), 10000);
     });
