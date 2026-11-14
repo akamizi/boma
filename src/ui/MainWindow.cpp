@@ -298,6 +298,15 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     split->setStretchFactor(1, 2);
     split->setStretchFactor(2, 4);
     top->addWidget(split, 1);
+    split->setObjectName(QStringLiteral("mainSplitter"));
+    split->setChildrenCollapsible(false);
+    {   // larghezza delle colonne (e dimensione della finestra) dell'ultima sessione
+        QSettings qs;
+        const QByteArray g = qs.value(QStringLiteral("ui/windowGeometry")).toByteArray();
+        if (!g.isEmpty()) restoreGeometry(g);
+        const QByteArray s = qs.value(QStringLiteral("ui/splitterState")).toByteArray();
+        if (!s.isEmpty()) split->restoreState(s);
+    }
     setCentralWidget(central);
 
     syncLabel_ = new QLabel(tr("Non ancora sincronizzato"), this);
@@ -489,6 +498,10 @@ void MainWindow::closeEvent(QCloseEvent* e) {
             return;
         }
     }
+    QSettings qs;
+    qs.setValue(QStringLiteral("ui/windowGeometry"), saveGeometry());
+    if (auto* sp = findChild<QSplitter*>(QStringLiteral("mainSplitter")))
+        qs.setValue(QStringLiteral("ui/splitterState"), sp->saveState());
     QMainWindow::closeEvent(e);
 }
 
