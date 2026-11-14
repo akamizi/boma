@@ -52,6 +52,10 @@ target_link_libraries(boma_core PUBLIC Qt6::Widgets Qt6::Network PkgConfig::GMIM
 add_executable(boma src/main.cpp)
 target_link_libraries(boma PRIVATE boma_core)
 
+include(GNUInstallDirs)
+install(TARGETS boma RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES packaging/boma.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+
 enable_testing()
 
 # boma_add_test(name src...) : eseguibile di test collegato a boma_core

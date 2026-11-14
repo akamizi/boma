@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Boma
+GenericName=Client di posta
+Comment=Client di posta personale (mbsync, mu, msmtp, gpg)
+Exec=boma %U
+Icon=mail-client
+Terminal=false
+Categories=Network;Email;
+StartupNotify=true

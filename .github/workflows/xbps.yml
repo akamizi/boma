@@ -1,0 +1,65 @@
+name: Repository xbps
+
+# Compila il pacchetto Void Linux e lo pubblica come repository xbps firmato su GitHub Pages
+# (ramo gh-pages). Parte quando si pubblica un tag vX.Y.Z; si puo' lanciare anche a mano.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  pacchetto:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/void-linux/void-glibc-full:latest
+    steps:
+      - name: Strumenti
+        run: |
+          xbps-install -Syu xbps
+          xbps-install -Sy git bash curl openssl tar xz gzip base-devel
+
+      - uses: actions/checkout@v4
+        with:
+          path: boma
+
+      - name: void-packages
+        run: |
+          git clone --depth 1 https://github.com/void-linux/void-packages.git /vp
+          ./boma/packaging/void/prepare.sh /vp ./boma
+
+      - name: Compila
+        working-directory: /vp
+        run: |
+          ./xbps-src binary-bootstrap
+          ./xbps-src -f pkg boma
+
+      - name: Firma e indicizza
+        env:
+          XBPS_KEY: ${{ secrets.XBPS_PRIVATE_KEY }}
+        run: |
+          set -e
+          [ -n "$XBPS_KEY" ] || { echo "manca il secret XBPS_PRIVATE_KEY"; exit 1; }
+          mkdir -p /out && cp /vp/hostdir/binpkgs/*.xbps /out/
+          printf '%s\n' "$XBPS_KEY" > /tmp/key.pem
+          cd /out
+          xbps-rindex -a ./*.xbps
+          xbps-rindex --privkey /tmp/key.pem --signedby "Boma xbps repository" -s /out
+          xbps-rindex --privkey /tmp/key.pem -S ./*.xbps
+          rm -f /tmp/key.pem
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: repo-xbps
+          path: /out
+
+      - name: Pubblica su gh-pages
+        run: |
+          cd /out
+          git config --global --add safe.directory '*'
+          git init -q -b gh-pages
+          git add -A
+          git -c user.name=github-actions -c user.email=actions@users.noreply.github.com commit -qm "repository xbps"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages

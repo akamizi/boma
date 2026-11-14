@@ -1,0 +1,15 @@
+# Template file for 'boma'
+pkgname=boma
+version=0.1.0
+revision=1
+build_style=cmake
+configure_args="-DBUILD_TESTING=OFF"
+hostmakedepends="pkg-config qt6-base"
+makedepends="qt6-base-devel gmime3-devel"
+depends="isync maildir-utils msmtp gnupg python3"
+short_desc="Personal desktop email client coordinating mbsync, mu, msmtp and gpg"
+maintainer="Maurizio Cavalletti <INDIRIZZO-EMAIL>"
+license="GPL-3.0-or-later"
+homepage="https://github.com/akamizi/boma"
+distfiles="https://github.com/akamizi/boma/archive/refs/tags/v${version}.tar.gz"
+checksum=0000000000000000000000000000000000000000000000000000000000000000

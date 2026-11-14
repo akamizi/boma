@@ -407,3 +407,16 @@ aggiorna tutti).
 senza confrontare bandiere e cancellazioni, ed e' molto piu' veloce. Letto, cestino e
 spostamenti fatti in Boma arrivano al server con la sincronizzazione completa (il
 cron). Si puo' tornare alla sincronizzazione completa in Impostazioni.
+
+## Licenza e pacchetto Void Linux
+
+Boma è distribuito con licenza GPL-3.0-or-later (vedi `LICENSE`).
+
+Il template xbps è in `packaging/void/srcpkgs/boma/`. Il workflow `.github/workflows/xbps.yml`
+compila il pacchetto a ogni tag `vX.Y.Z` e lo pubblica come repository firmato su GitHub Pages
+(ramo `gh-pages`). Uso, su Void:
+
+```
+echo 'repository=https://akamizi.github.io/boma/' | sudo tee /etc/xbps.d/boma.conf
+sudo xbps-install -S boma      # accettare la chiave del repository
+```
