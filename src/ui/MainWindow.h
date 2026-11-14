@@ -194,6 +194,9 @@ private:
     TagStore* tags_ = nullptr;
     MailWatcher* watcher_ = nullptr;
     void watchMail();
+    void checkNewMail(bool silent);
+    QSet<QString> seenUnread_;
+    bool seenInit_ = false;
     FolderPane* folders_;
     QListView* list_;
     QLineEdit* search_;

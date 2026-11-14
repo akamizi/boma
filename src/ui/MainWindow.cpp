@@ -1,4 +1,5 @@
 #include "ui/MainWindow.h"
+#include "core/Notifier.h"
 
 #include "ui/MessageDelegate.h"
 #include "ui/ReplyBuilder.h"
@@ -94,6 +95,7 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
             runReindex();
         });
         watchMail();
+        QTimer::singleShot(0, this, [this]() { checkNewMail(true); });
     }
     model_->setTagStore(tags_);
     connect(tags_, &TagStore::changed, this, [this] {
@@ -1578,6 +1580,29 @@ void MainWindow::onSyncState(SyncService::State st, const QString&, const QStrin
     }
 }
 
+void MainWindow::checkNewMail(bool silent) {
+    // Notifica i non letti mai visti prima. La prima lettura (all'avvio) fissa solo il punto di partenza.
+    if (!seenInit_ && !silent) return;
+    QPointer<MainWindow> self(this);
+    index_->unread(0, 100, [self, silent](QList<MessageSummary> list, QString err) {
+        if (!self || !err.isEmpty()) return;
+        QList<MessageSummary> fresh;
+        for (const MessageSummary& m : list)
+            if (!self->seenUnread_.contains(m.messageId)) {
+                self->seenUnread_.insert(m.messageId);
+                fresh << m;
+            }
+        const bool first = !self->seenInit_;
+        self->seenInit_ = true;
+        if (silent || first || fresh.isEmpty()) return;
+        if (!QSettings().value(QStringLiteral("ui/notifyNewMail"), true).toBool()) return;
+        if (fresh.size() == 1)
+            Notifier::show(fresh[0].from, fresh[0].subject);
+        else
+            Notifier::show(tr("%1 nuovi messaggi").arg(fresh.size()), fresh[0].from + QStringLiteral(": ") + fresh[0].subject);
+    });
+}
+
 void MainWindow::runReindex() {
     reindexing_ = true;
     setSyncEnabled(false);
@@ -1586,6 +1611,7 @@ void MainWindow::runReindex() {
         if (!self) return;
         self->reindexing_ = false;
         self->setSyncEnabled(true);
+        self->checkNewMail(false);
     });
 }
 

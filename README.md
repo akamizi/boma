@@ -419,6 +419,8 @@ di quiete ne arriva di nuova, esegue `mu index` e rilegge l'elenco da solo, senz
 «Aggiorna». Non parte se è già in corso una sincronizzazione di Boma. Le modifiche arrivate
 dal server alle sole bandiere (letto/non letto) restano al prossimo aggiornamento.
 
+Quando dopo un aggiornamento (o dopo posta scaricata da altri) compaiono messaggi non letti mai visti prima, Boma mostra una notifica del desktop (D-Bus, `org.freedesktop.Notifications`): mittente e oggetto se è uno solo, altrimenti il numero. Quelli già presenti all'avvio non vengono notificati. Si disattiva in Impostazioni; se il servizio di notifiche manca non succede nulla.
+
 ## Licenza
 
 Boma è distribuito con licenza GPL-3.0-or-later (vedi `LICENSE`).

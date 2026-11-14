@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Test Network)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Test Network DBus)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GMIME REQUIRED IMPORTED_TARGET gmime-3.0)
 
@@ -36,6 +36,7 @@ add_library(boma_core STATIC
     src/core/TagStore.cpp
     src/core/GmailLabels.cpp
     src/core/MailWatcher.cpp
+    src/core/Notifier.cpp
     src/ui/MessageListModel.cpp
     src/ui/MainWindow.cpp
     src/ui/FolderPane.cpp
@@ -48,7 +49,7 @@ add_library(boma_core STATIC
     src/ui/ComposeWindow.cpp
 )
 target_include_directories(boma_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
-target_link_libraries(boma_core PUBLIC Qt6::Widgets Qt6::Network PkgConfig::GMIME)
+target_link_libraries(boma_core PUBLIC Qt6::Widgets Qt6::Network Qt6::DBus PkgConfig::GMIME)
 
 add_executable(boma src/main.cpp)
 target_link_libraries(boma PRIVATE boma_core)

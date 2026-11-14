@@ -113,6 +113,7 @@ private:
     QComboBox *themeStyle_, *themeScheme_;
     QCheckBox* preferHtml_ = nullptr;
     QCheckBox* quickSync_ = nullptr;
+    QCheckBox* notifyNew_ = nullptr;
     QTextBrowser* results_;
     QLabel* error_;
     QDialogButtonBox* buttons_;

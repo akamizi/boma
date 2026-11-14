@@ -161,6 +161,9 @@ SettingsDialog::SettingsDialog(const Config& config, const SettingsEnvironment& 
                               "arrivano con la sincronizzazione completa (ad esempio il cron)."));
     quickSync_->setChecked(QSettings().value(QStringLiteral("sync/quick"), true).toBool());
     rl->addWidget(quickSync_);
+    notifyNew_ = new QCheckBox(tr("Notifica del desktop quando arriva posta nuova"), right);
+    notifyNew_->setChecked(QSettings().value(QStringLiteral("ui/notifyNewMail"), true).toBool());
+    rl->addWidget(notifyNew_);
 
     split->addWidget(left);
     split->addWidget(right);
@@ -430,6 +433,7 @@ void SettingsDialog::accept() {
     t.scheme = themeScheme_->currentData().toString();
     MessageView::setPreferHtml(preferHtml_->isChecked());
     QSettings().setValue(QStringLiteral("sync/quick"), quickSync_->isChecked());
+    QSettings().setValue(QStringLiteral("ui/notifyNewMail"), notifyNew_->isChecked());
     t.save();
     t.apply(); // subito, anche se poi il salvataggio degli account fallisse
     QDialog::accept();
