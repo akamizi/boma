@@ -76,6 +76,9 @@ scritto e sincronizzato su disco in `tmp/`, poi pubblicato in `cur/` con `link()
 - Messaggi mostrati in testo semplice per default; se esiste anche la parte HTML un
   pulsante nella barra del messaggio alterna testo/HTML, e nelle Impostazioni si puo'
   scegliere l'HTML come predefinito. L'HTML e' sempre ripulito.
+  Con un tema scuro i colori chiari dell'HTML (sfondi bianchi) sono adattati invertendo la
+  luminosita' e conservando la tinta; il pulsante «Mostra originale» ripristina i colori
+  del mittente per quel messaggio. Le immagini non vengono modificate.
   Le immagini incorporate nel messaggio (`cid:`) si vedono; quelle remote (http/https)
   NON si scaricano mai da sole (il mittente saprebbe che e quando leggi): il pulsante
   «Carica immagini remote» le scarica per il solo messaggio aperto (max 5 MiB l'una,

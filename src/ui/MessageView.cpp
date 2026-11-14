@@ -1,4 +1,6 @@
 #include "ui/MessageView.h"
+#include "ui/HtmlDarken.h"
+#include <QEvent>
 #include <QAction>
 #include <QMenu>
 #include <QNetworkReply>
@@ -329,6 +331,19 @@ MessageView::MessageView(QWidget* parent) : QTextBrowser(parent) {
         render();
         layoutBar();
     });
+    darkToggle_ = new QPushButton(bar_);
+    darkToggle_->setObjectName(QStringLiteral("darkToggle"));
+    darkToggle_->setToolTip(tr("Con il tema scuro i colori chiari del messaggio sono adattati; "
+                               "qui puoi vedere l'originale."));
+    darkToggle_->hide();
+    lay->addWidget(darkToggle_, 0, Qt::AlignLeft);
+    connect(darkToggle_, &QPushButton::clicked, this, [this]() {
+        darkOff_ = !darkOff_;
+        const int sc = verticalScrollBar()->value();
+        render();
+        layoutBar();
+        verticalScrollBar()->setValue(sc);
+    });
     remoteBtn_ = new QPushButton(tr("Carica immagini remote"), bar_);
     remoteBtn_->setObjectName(QStringLiteral("remoteImages"));
     remoteBtn_->setToolTip(tr("Scarica le immagini dai server indicati nel messaggio. "
@@ -364,10 +379,12 @@ void MessageView::layoutBar() {
     const bool both = !encryptedShown_ && !msg_.html.isEmpty() && !msg_.plainText.isEmpty();
     htmlToggle_->setText(wantHtml_ ? tr("Mostra come testo") : tr("Mostra HTML"));
     htmlToggle_->setVisible(both);
+    darkToggle_->setText(darkOff_ ? tr("Adatta al tema scuro") : tr("Mostra originale"));
+    darkToggle_->setVisible(showingHtml() && darkApplicable_);
     remoteBtn_->setVisible(showingHtml() && !remoteUrls_.isEmpty() && (!remoteAllowed_ || pendingFetches_ > 0));
     attachButton_->setVisible(!encryptedShown_ && !msg_.attachments.isEmpty());
     const bool any = encryptedShown_ || badge_->isVisibleTo(bar_) || errLabel_->isVisibleTo(bar_) ||
-                     attachButton_->isVisibleTo(bar_) || htmlToggle_->isVisibleTo(bar_) ||
+                     attachButton_->isVisibleTo(bar_) || htmlToggle_->isVisibleTo(bar_) || darkToggle_->isVisibleTo(bar_) ||
                      remoteBtn_->isVisibleTo(bar_);
     int h = 0;
     if (any) {
@@ -579,6 +596,7 @@ void MessageView::show(const ParsedMessage& m) {
     encryptedShown_ = m.encryptedPgp;
     decryptButton_->setEnabled(true);
     resetRemote();
+    darkOff_ = false;
     wantHtml_ = defaultHtml_;
     updateAttachments();
     render();
@@ -600,6 +618,7 @@ void MessageView::updateAttachments() {
 
 void MessageView::render() {
     const ParsedMessage& m = msg_;
+    darkApplicable_ = false;
     QString h = QStringLiteral("<div style=\"margin-bottom:8px\">");
     auto line = [&](const QString& label, const QString& v) {
         // intestazioni enormi bloccherebbero il layout di QTextDocument
@@ -636,10 +655,27 @@ void MessageView::render() {
         const bool cut = m.html.size() > kMaxBody;
         const QString t = cut ? m.html.left(kMaxBody) : m.html;
         qsizetype used = 0;
-        h += sanitizeHtmlImpl(t, &used, true, remoteAllowed_);
+        QString body = sanitizeHtmlImpl(t, &used, true, remoteAllowed_);
+        darkApplicable_ = false;
+        if (palette().color(QPalette::Base).lightness() < 128) {
+            bool adapted = false;
+            const QString dark = darkenHtml(body, &adapted);
+            darkApplicable_ = adapted;
+            if (adapted && !darkOff_) body = dark;
+        }
+        h += body;
         if (cut || used < t.size()) h += note(t.left(used));
     }
     setHtml(h);
+}
+
+void MessageView::changeEvent(QEvent* e) {
+    QTextBrowser::changeEvent(e);
+    // cambio tema: l'adattamento dei colori dipende dalla palette
+    if (e->type() == QEvent::PaletteChange && showingHtml()) {
+        render();
+        layoutBar();
+    }
 }
 
 // Politica di privacy: nessuna risorsa esterna, mai. Solo immagini data: gia'

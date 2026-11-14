@@ -32,6 +32,10 @@ public:
     // Immagini remote (http/https): MAI caricate da sole (tracciamento). Il pulsante le
     // scarica per il solo messaggio corrente; il sito del mittente vede l'indirizzo IP.
     QPushButton* remoteImagesButton() const { return remoteBtn_; }
+    // Con una palette scura i colori dell'HTML (sfondi chiari) sono adattati; il pulsante
+    // alterna adattato/originale per il solo messaggio corrente. Nascosto se non serve.
+    QPushButton* darkToggleButton() const { return darkToggle_; }
+    bool darkAdapted() const { return darkApplicable_ && !darkOff_; }
     bool remoteImagesLoaded() const { return remoteAllowed_ && pendingFetches_ == 0; }
     // Sostituibile nei test; default: rete reale.
     void setNetworkAccessManager(QNetworkAccessManager* nam) { nam_ = nam; }
@@ -68,6 +72,7 @@ signals:
 protected:
     void resizeEvent(QResizeEvent* e) override;
     QVariant loadResource(int type, const QUrl& name) override;
+    void changeEvent(QEvent* e) override;
 
 private:
     void render();
@@ -85,7 +90,8 @@ private:
     QWidget* encRow_ = nullptr;
     QPushButton* decryptButton_ = nullptr;
     QToolButton* attachButton_ = nullptr;
-    QPushButton *htmlToggle_ = nullptr, *remoteBtn_ = nullptr;
+    QPushButton *htmlToggle_ = nullptr, *remoteBtn_ = nullptr, *darkToggle_ = nullptr;
+    bool darkApplicable_ = false, darkOff_ = false; // tema scuro adattato / disattivato dall'utente per questo messaggio
     QNetworkAccessManager* nam_ = nullptr;
     bool remoteAllowed_ = false;
     int pendingFetches_ = 0;
