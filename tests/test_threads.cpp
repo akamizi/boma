@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include "core/TagStore.h"
 #include "ui/MessageListModel.h"
 using namespace boma;
 
@@ -45,6 +46,23 @@ private slots:
         m.fetchMore({});
         QTRY_COMPARE(m.rowCount(), 4);
         QCOMPARE(m.index(0, 0).data(MessageListModel::ThreadSizeRole).toInt(), 0);
+    }
+    void testTagsRoleFollowsTagStore() {
+        MailIndex idx(nullptr, fakeMu(dir_.path(), sample()));
+        TagStore ts(dir_.path() + "/tags.json");
+        MessageListModel m(&idx);
+        m.setTagStore(&ts);
+        m.setQuery("x");
+        m.fetchMore({});
+        QTRY_COMPARE(m.rowCount(), 4);
+        QVERIFY(m.index(0, 0).data(MessageListModel::TagsRole).toStringList().isEmpty());
+        QSignalSpy sp(&m, &QAbstractItemModel::dataChanged);
+        const QString id = m.summary(0).messageId;
+        QVERIFY(!id.isEmpty());
+        ts.setTag({id}, "Lavoro", true);
+        QCOMPARE(sp.count(), 1);
+        QCOMPARE(m.index(0, 0).data(MessageListModel::TagsRole).toStringList(), QStringList{"Lavoro"});
+        QVERIFY(m.index(1, 0).data(MessageListModel::TagsRole).toStringList().isEmpty());
     }
     void testGroupsAndExpands() {
         MailIndex idx(nullptr, fakeMu(dir_.path(), sample()));

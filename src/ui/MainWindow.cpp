@@ -15,7 +15,9 @@
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QActionGroup>
+#include <QInputDialog>
 #include <QMenu>
+#include <QRegularExpression>
 #include <QMessageBox>
 #include <QSettings>
 #include <QToolButton>
@@ -81,6 +83,12 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     if (!opts_.gpgProgram.isEmpty()) sender_->gpg().setGpgProgram(opts_.gpgProgram);
     if (!opts_.gnupgHome.isEmpty()) sender_->gpg().setGnupgHome(opts_.gnupgHome);
     model_ = new MessageListModel(config_.isEmpty() ? nullptr : index_, this);
+    tags_ = new TagStore(opts_.tagsFile, this);
+    model_->setTagStore(tags_);
+    connect(tags_, &TagStore::changed, this, [this] {
+        // un filtro per etichetta resta valido: si rilegge l'elenco
+        if (search_ && search_->text().contains(QLatin1String("tag:"), Qt::CaseInsensitive)) applyQuery(search_->text().trimmed());
+    });
 
     // ---- interfaccia ----
     auto* central = new QWidget(this);
@@ -194,6 +202,7 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     auto* archBtn = mkBtn(tr("Archivia"), QStringLiteral("listArchive"), true, false);
     auto* delChk = mkBtn(tr("Elimina"), QStringLiteral("listDelete"), true, false);
     auto* markBtn = mkBtn(tr("Segna"), QStringLiteral("listMark"), true, true);
+    auto* tagBtn = mkBtn(tr("Etichette"), QStringLiteral("listTags"), false, true);
     lbl->addStretch(1);
     delChk->setToolTip(tr("Sposta nel cestino i messaggi spuntati (chiede conferma)"));
     archBtn->setToolTip(tr("Sposta i messaggi spuntati nella cartella Archivio del loro account"));
@@ -263,6 +272,12 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
         add(tr("Marca come preferito"), QStringLiteral("markFlag"), [this]() { setCheckedFlags(QStringLiteral("F"), QString(), tr("marcati come preferiti")); });
         add(tr("Togli dai preferiti"), QStringLiteral("markUnflag"), [this]() { setCheckedFlags(QString(), QStringLiteral("F"), tr("tolti dai preferiti")); });
         markBtn->setMenu(menu);
+    }
+    {
+        auto* menu = new QMenu(tagBtn);
+        menu->setObjectName(QStringLiteral("tagMenu"));
+        connect(menu, &QMenu::aboutToShow, this, [this, menu]() { buildTagMenu(menu); });
+        tagBtn->setMenu(menu);
     }
     connect(archBtn, &QToolButton::clicked, this, &MainWindow::archiveChecked);
     connect(delChk, &QToolButton::clicked, this, &MainWindow::deleteChecked);
@@ -561,9 +576,103 @@ void MainWindow::showNotice(const QString& title, const QString& text) {
 
 // ---- elenco e ricerca ----
 
+QString MainWindow::expandTagQuery(const QString& query) const {
+    if (!tags_ || !query.contains(QLatin1String("tag:"), Qt::CaseInsensitive)) return query;
+    static const QRegularExpression re(QStringLiteral("(?<![\\w:])tag:(?:\"([^\"]+)\"|(\\S+))"),
+                                       QRegularExpression::CaseInsensitiveOption);
+    QString out;
+    qsizetype last = 0;
+    auto it = re.globalMatch(query);
+    while (it.hasNext()) {
+        const auto m = it.next();
+        const QString name = m.captured(1).isEmpty() ? m.captured(2) : m.captured(1);
+        QStringList ids = tags_->messageIds(name);
+        if (ids.size() > 1500) ids = ids.mid(0, 1500); // limite pratico della riga di comando
+        QStringList parts;
+        for (QString id : std::as_const(ids)) {
+            id.replace(QLatin1Char('\\'), QStringLiteral("\\\\")).replace(QLatin1Char('"'), QStringLiteral("\\\""));
+            parts << QStringLiteral("msgid:\"%1\"").arg(id);
+        }
+        const QString repl = parts.isEmpty() ? QStringLiteral("msgid:\"boma-nessuna-etichetta\"")
+                                             : QStringLiteral("(") + parts.join(QStringLiteral(" OR ")) + QStringLiteral(")");
+        out += QStringView(query).mid(last, m.capturedStart() - last);
+        out += repl;
+        last = m.capturedEnd();
+    }
+    return out + QStringView(query).mid(last);
+}
+
+void MainWindow::setCheckedTag(const QString& tag, bool on) {
+    QStringList ids;
+    int without = 0;
+    for (const MessageSummary& s : model_->checkedSummaries()) {
+        if (s.messageId.isEmpty()) ++without;
+        else ids << s.messageId;
+    }
+    if (ids.isEmpty()) {
+        showNotice(tr("Etichette"), tr("I messaggi selezionati non hanno un Message-ID: non si possono etichettare."));
+        return;
+    }
+    if (!tags_->setTag(ids, tag, on))
+        showNotice(tr("Etichette"), tr("Impossibile salvare le etichette in %1: %2").arg(tags_->path(), tags_->lastError()));
+    else if (without > 0)
+        statusBar()->showMessage(tr("%n messaggi senza Message-ID non sono stati etichettati", nullptr, without), 5000);
+}
+
+void MainWindow::buildTagMenu(QMenu* menu) {
+    menu->clear();
+    const QList<MessageSummary> sel = model_->checkedSummaries();
+    const QMap<QString, int> counts = tags_->counts();
+    if (!sel.isEmpty()) {
+        for (auto it = counts.cbegin(); it != counts.cend(); ++it) {
+            bool all = true;
+            for (const MessageSummary& s : sel)
+                if (!tags_->tags(s.messageId).contains(it.key(), Qt::CaseInsensitive)) { all = false; break; }
+            QAction* a = menu->addAction(it.key());
+            a->setCheckable(true);
+            a->setChecked(all);
+            const QString tag = it.key();
+            connect(a, &QAction::triggered, this, [this, tag, all]() { setCheckedTag(tag, !all); });
+        }
+        QAction* n = menu->addAction(tr("Nuova etichetta..."));
+        n->setObjectName(QStringLiteral("tagNew"));
+        connect(n, &QAction::triggered, this, [this]() {
+            bool ok = false;
+            const QString t = TagStore::normalize(QInputDialog::getText(this, tr("Nuova etichetta"), tr("Nome:"), QLineEdit::Normal, QString(), &ok));
+            if (ok && !t.isEmpty()) setCheckedTag(t, true);
+        });
+    } else {
+        menu->addAction(tr("Spunta dei messaggi per etichettarli"))->setEnabled(false);
+    }
+    menu->addSeparator();
+    QMenu* show = menu->addMenu(tr("Mostra i messaggi con l'etichetta"));
+    QMenu* ren = menu->addMenu(tr("Rinomina etichetta"));
+    QMenu* del = menu->addMenu(tr("Elimina etichetta"));
+    for (auto it = counts.cbegin(); it != counts.cend(); ++it) {
+        const QString tag = it.key();
+        connect(show->addAction(QStringLiteral("%1 (%2)").arg(tag).arg(it.value())), &QAction::triggered, this, [this, tag]() {
+            QString q = tag;
+            search_->setText(QStringLiteral("tag:\"%1\"").arg(q.remove(QLatin1Char('"'))));
+        });
+        connect(ren->addAction(tag), &QAction::triggered, this, [this, tag]() {
+            bool ok = false;
+            const QString t = QInputDialog::getText(this, tr("Rinomina etichetta"), tr("Nuovo nome:"), QLineEdit::Normal, tag, &ok);
+            if (ok && !TagStore::normalize(t).isEmpty() && !tags_->renameTag(tag, t))
+                showNotice(tr("Etichette"), tr("Impossibile salvare: %1").arg(tags_->lastError()));
+        });
+        connect(del->addAction(tag), &QAction::triggered, this, [this, tag]() {
+            if (QMessageBox::question(this, tr("Elimina etichetta"),
+                                      tr("Togliere l'etichetta \"%1\" da tutti i messaggi? I messaggi non vengono toccati.").arg(tag)) ==
+                QMessageBox::Yes)
+                tags_->removeTag(tag);
+        });
+    }
+    for (QMenu* m : {show, ren, del}) m->setEnabled(!counts.isEmpty());
+}
+
 void MainWindow::applyQuery(const QString& query) {
     keepPending_ = false;
-    model_->setQuery(query); // generazione: i risultati della query precedente sono scartati
+    model_->setQuery(expandTagQuery(query)); // generazione: i risultati della query precedente sono scartati
     if (model_->canFetchMore({})) model_->fetchMore({});
 }
 

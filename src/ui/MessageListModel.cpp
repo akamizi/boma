@@ -1,6 +1,16 @@
 #include "ui/MessageListModel.h"
+#include "core/TagStore.h"
 
 namespace boma {
+
+void MessageListModel::setTagStore(TagStore* t) {
+    if (m_tags) disconnect(m_tags, nullptr, this, nullptr);
+    m_tags = t;
+    if (t)
+        connect(t, &TagStore::changed, this, [this] {
+            if (!m_vis.isEmpty()) emit dataChanged(index(0), index(m_vis.size() - 1), {TagsRole});
+        });
+}
 
 MessageListModel::MessageListModel(MailIndex* index, QObject* parent)
     : QAbstractListModel(parent), m_index(index) {}
@@ -312,6 +322,7 @@ QVariant MessageListModel::data(const QModelIndex& idx, int role) const
     case ThreadSizeRole: return r.level == 0 && r.count > 1 ? r.count : 0;
     case ThreadExpandedRole: return r.expanded;
     case ThreadLevelRole: return r.level;
+    case TagsRole: return m_tags && !m.messageId.isEmpty() ? m_tags->tags(m.messageId) : QStringList();
     }
     return {};
 }

@@ -149,6 +149,7 @@ class T : public QObject {
         o.msmtpProgram = msmtp_;
         o.gnupgHome = home_;
         o.unsavedDir = dir_ + QStringLiteral("/non-salvati");
+        o.tagsFile = dir_ + QStringLiteral("/tags.json");
         return o;
     }
     MainWindowOptions optsRoot() const { // radice di mu nota: Elimina abilitato

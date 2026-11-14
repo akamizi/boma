@@ -69,6 +69,12 @@ scritto e sincronizzato su disco in `tmp/`, poi pubblicato in `cur/` con `link()
   (letto, non letto, preferito, togli preferito). Non sostituiscono il pulsante
   «Elimina» del messaggio aperto. Compare anche la riga «N selezionati» con
   «Deseleziona». Tutto passa da `mu move`.
+- Etichette: il pulsante «Etichette» sopra l'elenco applica o toglie etichette ai messaggi
+  spuntati (anche con «Nuova etichetta…»), con pillole colorate accanto all'oggetto. Si salvano
+  solo in un file JSON locale (`~/.local/share/Boma/tags.json`, Message-ID → etichette, scrittura
+  atomica): non si scrive nulla nei messaggi né sui server. Si filtra da «Mostra i messaggi con
+  l'etichetta» o digitando `tag:nome` / `tag:"nome con spazi"` nella ricerca (combinabile con altri
+  termini). Un file illeggibile non viene mai sovrascritto (copia in `tags.json.corrupt`).
 - Conversazioni: i messaggi che si citano a vicenda (Message-ID/References, letti da `mu`)
   sono raggruppati in una riga con il numero dei messaggi; il clic sull'etichetta «N ▸» apre
   e chiude la conversazione, spuntare la riga seleziona tutti i suoi messaggi. Il

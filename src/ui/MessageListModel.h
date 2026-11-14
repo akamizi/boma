@@ -6,6 +6,8 @@
 
 namespace boma {
 
+class TagStore;
+
 // Modello a caricamento pigro: pagine da 200 righe tramite canFetchMore /
 // fetchMore. Query vuota = vista dei non letti. I risultati tardivi di una
 // query sostituita (o di un reset) vengono scartati (contatore di generazione).
@@ -25,7 +27,8 @@ public:
         CheckedRole,
         ThreadSizeRole,     // numero di messaggi della conversazione (riga capo, solo se > 1)
         ThreadExpandedRole, // conversazione aperta
-        ThreadLevelRole     // 0 = riga principale, 1 = messaggio dentro la conversazione aperta
+        ThreadLevelRole,    // 0 = riga principale, 1 = messaggio dentro la conversazione aperta
+        TagsRole            // QStringList: etichette del messaggio (TagStore)
     };
     static constexpr int PageSize = 200;
     // Finestra massima richiesta a mu (il costo cresce con la profondita').
@@ -40,6 +43,8 @@ public:
     // Come setQuery con la query corrente.
     void reset();
     void setMaxWindow(int n) { m_maxWindow = n; }
+    // Etichette mostrate nell'elenco (non posseduto; nullptr = nessuna).
+    void setTagStore(TagStore* t);
     // true se i risultati sono stati troncati dal limite di finestra: la UI
     // puo' suggerire di affinare la ricerca.
     bool truncated() const { return m_truncated; }
@@ -101,6 +106,7 @@ private:
     void applyVis(QList<Row> nv);
     bool rowChecked(const Row& r) const;
     void applyPage(QList<MessageSummary> list, const QString& error, int want, int probe);
+    QPointer<TagStore> m_tags;
     QPointer<MailIndex> m_index;
     QString m_query;
     QList<MessageSummary> m_all; // tutti i messaggi caricati

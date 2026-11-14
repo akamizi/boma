@@ -132,7 +132,37 @@ void MessageDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
     if (attach) p->drawText(QRect(in.right() - iconW + 2, l2, iconW, h), Qt::AlignCenter, QStringLiteral("📎"));
     p->setFont(bold);
     p->setPen(fg);
-    const int sw = right - sizeW - in.left() - 8;
+    int sw = right - sizeW - in.left() - 8;
+    // etichette: pillole a destra dell'oggetto (max 3, poi "+N"), con il colore ricavato dal nome
+    const QStringList tags = i.data(MessageListModel::TagsRole).toStringList();
+    if (!tags.isEmpty()) {
+        QFont tf = opt.font;
+        tf.setPointSizeF(qMax(6.0, opt.font.pointSizeF() * 0.85));
+        const QFontMetrics tm(tf);
+        int x = right - sizeW - 10;
+        const int th = h, shown = qMin<int>(3, tags.size());
+        const bool dark = pal.color(QPalette::Base).lightness() < 128;
+        QStringList draw;
+        for (int k = 0; k < shown; ++k) draw << tags.at(k);
+        if (tags.size() > shown) draw << QStringLiteral("+%1").arg(tags.size() - shown);
+        for (int k = draw.size() - 1; k >= 0; --k) {
+            const QString t = tm.elidedText(draw.at(k), Qt::ElideRight, 110);
+            const int w = tm.horizontalAdvance(t) + 14;
+            if (x - w < in.left() + 60) break; // spazio minimo per l'oggetto
+            const QRect cr(x - w, l2 + 1, w, th - 2);
+            const QColor base = QColor::fromHsl(qHash(draw.at(k).toLower()) % 360, 150, dark ? 95 : 190);
+            p->setPen(Qt::NoPen);
+            p->setBrush(sel ? QColor(255, 255, 255, 60) : base);
+            p->drawRoundedRect(cr, cr.height() / 2.0, cr.height() / 2.0);
+            p->setFont(tf);
+            p->setPen(sel ? fg : (dark ? QColor(235, 235, 235) : QColor(30, 30, 30)));
+            p->drawText(cr, Qt::AlignCenter, t);
+            x -= w + 4;
+            sw = x - in.left() - 4;
+        }
+        p->setFont(bold);
+    }
+    p->setPen(fg);
     p->drawText(QRect(in.left(), l2, sw, h), Qt::AlignLeft | Qt::AlignVCenter,
                 fb.elidedText(i.data(MessageListModel::SubjectRole).toString(), Qt::ElideRight, sw));
     p->restore();

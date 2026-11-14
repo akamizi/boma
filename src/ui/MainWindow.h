@@ -6,6 +6,7 @@
 #include "core/MailIndex.h"
 #include "core/ProcessRunner.h"
 #include "core/SyncService.h"
+#include "core/TagStore.h"
 #include "mime/MessageParser.h"
 #include "send/Sender.h"
 #include "ui/ComposeWindow.h"
@@ -43,6 +44,7 @@ struct MainWindowOptions {
     QString mbsyncConfig; // ~/.mbsyncrc per i controlli delle Impostazioni (vuoto = predefinito)
     QString msmtpConfig;  // ~/.msmtprc (vuoto = predefinito)
     QString unsavedDir;   // copie di emergenza degli inviati (vuoto = default di Sender)
+    QString tagsFile;     // file JSON delle etichette (vuoto = <dati app>/tags.json)
 };
 
 // Finestra a tre colonne: account/cartelle | elenco | lettura. Tutto il lavoro
@@ -157,6 +159,10 @@ private:
     void startVerify(quint64 token, const ParsedMessage& pm);
     void onDecryptRequested();
     void applyQuery(const QString& query);
+    // Sostituisce i termini tag:nome / tag:"nome con spazi" con una query msgid: equivalente.
+    QString expandTagQuery(const QString& query) const;
+    void setCheckedTag(const QString& tag, bool on);
+    void buildTagMenu(QMenu* menu);
     void refreshList();
     void onPageLoaded(int added, const QString& error);
     void clearViewer();
@@ -181,6 +187,7 @@ private:
     SyncService* sync_;
     Sender* sender_;
     MessageListModel* model_;
+    TagStore* tags_ = nullptr;
     FolderPane* folders_;
     QListView* list_;
     QLineEdit* search_;
