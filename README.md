@@ -408,15 +408,42 @@ senza confrontare bandiere e cancellazioni, ed e' molto piu' veloce. Letto, cest
 spostamenti fatti in Boma arrivano al server con la sincronizzazione completa (il
 cron). Si puo' tornare alla sincronizzazione completa in Impostazioni.
 
-## Licenza e pacchetto Void Linux
+## Licenza
 
 Boma è distribuito con licenza GPL-3.0-or-later (vedi `LICENSE`).
 
-Il template xbps è in `packaging/void/srcpkgs/boma/`. Il workflow `.github/workflows/xbps.yml`
-compila il pacchetto a ogni tag `vX.Y.Z` e lo pubblica come repository firmato su GitHub Pages
-(ramo `gh-pages`). Uso, su Void:
+## Installazione su Void Linux (repository xbps)
 
+Il repository binario (solo `x86_64`, glibc) è pubblicato su GitHub Pages a
+`https://akamizi.github.io/boma/` ed è firmato.
+
+Prima installazione:
+
+```sh
+# 1. aggiungere il repository
+echo 'repository=https://akamizi.github.io/boma' | sudo tee /etc/xbps.d/boma.conf
+
+# 2. sincronizzare e installare: alla prima sincronizzazione xbps chiede di importare la
+#    chiave pubblica del repository. Verificare che l'impronta sia
+#    67:a2:ff:79:04:76:71:8c:19:62:93:79:d2:3f:d9:99 e rispondere "y"
+sudo xbps-install -S boma
 ```
-echo 'repository=https://akamizi.github.io/boma/' | sudo tee /etc/xbps.d/boma.conf
-sudo xbps-install -S boma      # accettare la chiave del repository
-```
+
+`boma` richiede a runtime `isync` (mbsync), `mu4e` (fornisce `mu`), `msmtp`, `gnupg` e `python3`,
+che xbps installa da solo. Dopo l'installazione:
+
+1. configurare mbsync e msmtp come descritto nelle sezioni precedenti (`~/.mbsyncrc`, `~/.msmtprc`);
+2. avviare `boma` dal menu delle applicazioni o da terminale: al primo avvio crea
+   `~/.config/boma/config.ini`, che si modifica anche da «Impostazioni»;
+3. per gli aggiornamenti: `sudo xbps-install -Su`.
+
+### Come si pubblica una nuova versione (per chi mantiene il progetto)
+
+1. Alzare `VERSION` in `project(boma VERSION ...)` di `CMakeLists.txt` e fare il commit.
+2. Creare e pubblicare il tag `vX.Y.Z` (corrispondente alla versione): il workflow
+   `.github/workflows/xbps.yml` compila il pacchetto in un container Void con il template
+   `packaging/void/srcpkgs/boma/template`, lo firma con la chiave del secret `XBPS_PRIVATE_KEY`
+   e aggiorna il ramo `gh-pages`. Si può anche lanciare a mano (*Actions → Repository xbps →
+   Run workflow*).
+3. La chiave privata di firma non è nel repository: se cambia, cambia anche l'impronta qui sopra
+   e gli utenti devono importare la nuova chiave.
