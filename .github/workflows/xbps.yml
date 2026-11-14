@@ -16,11 +16,13 @@ jobs:
     container:
       image: ghcr.io/void-linux/void-glibc-full:latest
       options: --privileged
+      volumes:
+        - /dev:/dev
     steps:
       - name: Strumenti
         run: |
           xbps-install -Syu xbps
-          xbps-install -Sy git bash curl openssl tar xz gzip base-devel shadow util-linux
+          xbps-install -Sy git bash curl openssl tar xz gzip base-devel shadow util-linux sudo
 
       - uses: actions/checkout@v4
         with:
@@ -34,9 +36,9 @@ jobs:
       - name: Compila
         run: |
           # xbps-src non gira come root: utente dedicato
-          useradd -m builder
-          chown -R builder /vp
-          su builder -c 'cd /vp && ./xbps-src binary-bootstrap && ./xbps-src -f pkg boma'
+          useradd -G xbuilder -M builder
+          chown -R builder:builder /vp
+          sudo -Eu builder sh -c 'cd /vp && ./xbps-src binary-bootstrap && ./xbps-src -f pkg boma'
 
       - name: Firma e indicizza
         env:
