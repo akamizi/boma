@@ -35,6 +35,7 @@ add_library(boma_core STATIC
     src/core/MailIndex.cpp
     src/core/TagStore.cpp
     src/core/GmailLabels.cpp
+    src/core/MailWatcher.cpp
     src/ui/MessageListModel.cpp
     src/ui/MainWindow.cpp
     src/ui/FolderPane.cpp

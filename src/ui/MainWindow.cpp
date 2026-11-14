@@ -85,6 +85,16 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     if (!opts_.gnupgHome.isEmpty()) sender_->gpg().setGnupgHome(opts_.gnupgHome);
     model_ = new MessageListModel(config_.isEmpty() ? nullptr : index_, this);
     tags_ = new TagStore(opts_.tagsFile, this);
+    watcher_ = new MailWatcher(this);
+    if (opts_.watchMail) {
+        connect(watcher_, &MailWatcher::newMail, this, [this]() {
+            // posta scaricata da altri (cron, goimapnotify): indice e elenco; se si sta gia'
+            // sincronizzando, ci pensa quel giro
+            if (config_.isEmpty() || sync_->state() == SyncService::Running || reindexing_) return;
+            runReindex();
+        });
+        watchMail();
+    }
     model_->setTagStore(tags_);
     connect(tags_, &TagStore::changed, this, [this] {
         // un filtro per etichetta resta valido: si rilegge l'elenco
@@ -419,8 +429,16 @@ void MainWindow::updateEmptyState() {
     newBtn_->setEnabled(!empty);
 }
 
+void MainWindow::watchMail() {
+    QStringList roots;
+    for (const Account& a : config_.accounts())
+        if (!a.maildirRoot.isEmpty()) roots << a.maildirRoot;
+    watcher_->setRoots(roots);
+}
+
 void MainWindow::applyConfig(const Config& c) {
     config_ = c;
+    if (opts_.watchMail) watchMail();
     index_->setAccounts(c.accounts());
     sender_->setAccounts(c.accounts());
     sync_->setConfig(c);

@@ -413,6 +413,12 @@ Attenzione: mbsync sincronizza solo le cartelle che corrispondono a `Patterns` n
 canale. Una cartella locale fuori dai pattern (es. «Trash» o «Archive» di un account Gmail
 che sincronizza solo «[Gmail]/Tutti i messaggi») non arriva mai al server.
 
+Posta scaricata da altri programmi (il cron, `goimapnotify`...): Boma osserva le cartelle
+`new` dei Maildir configurati (solo le directory, mai i file) e, quando dopo qualche secondo
+di quiete ne arriva di nuova, esegue `mu index` e rilegge l'elenco da solo, senza premere
+«Aggiorna». Non parte se è già in corso una sincronizzazione di Boma. Le modifiche arrivate
+dal server alle sole bandiere (letto/non letto) restano al prossimo aggiornamento.
+
 ## Licenza
 
 Boma è distribuito con licenza GPL-3.0-or-later (vedi `LICENSE`).

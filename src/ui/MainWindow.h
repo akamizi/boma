@@ -5,6 +5,7 @@
 #include "core/MailActions.h"
 #include "core/MailIndex.h"
 #include "core/ProcessRunner.h"
+#include "core/MailWatcher.h"
 #include "core/SyncService.h"
 #include "core/TagStore.h"
 #include "mime/MessageParser.h"
@@ -44,6 +45,7 @@ struct MainWindowOptions {
     QString mbsyncConfig; // ~/.mbsyncrc per i controlli delle Impostazioni (vuoto = predefinito)
     QString msmtpConfig;  // ~/.msmtprc (vuoto = predefinito)
     QString unsavedDir;   // copie di emergenza degli inviati (vuoto = default di Sender)
+    bool watchMail = true; // osserva le cartelle "new" per la posta scaricata da altri programmi
     QString tagsFile;     // file JSON delle etichette (vuoto = <dati app>/tags.json)
 };
 
@@ -190,6 +192,8 @@ private:
     Sender* sender_;
     MessageListModel* model_;
     TagStore* tags_ = nullptr;
+    MailWatcher* watcher_ = nullptr;
+    void watchMail();
     FolderPane* folders_;
     QListView* list_;
     QLineEdit* search_;
