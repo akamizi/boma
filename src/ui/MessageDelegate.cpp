@@ -33,7 +33,7 @@ QRect MessageDelegate::checkRect(const QRect& r) {
 }
 
 QRect MessageDelegate::threadRect(const QRect& r, int h) {
-    const int w = 46, iconW = h + 2;
+    const int w = 62, iconW = h + 2;
     const int right = r.right() - 10 - iconW; // come `right` in paint()
     return QRect(right - w, r.top() + 6 + (h - (h + 2)) / 2, w, h + 2);
 }
@@ -56,6 +56,11 @@ void MessageDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
         p->fillRect(r, c);
     }
     if (unread) p->fillRect(QRect(r.left(), r.top(), 4, r.height()), pal.color(QPalette::Highlight));
+    if (i.data(MessageListModel::ThreadSizeRole).toInt() > 1) { // conversazione: bordo a "pila"
+        QColor st = pal.color(QPalette::Highlight);
+        st.setAlpha(150);
+        p->fillRect(QRect(r.left() + 6, r.bottom() - 3, r.width() - 12, 2), st);
+    }
     p->setPen(pal.color(QPalette::Mid));
     p->drawLine(r.bottomLeft(), r.bottomRight());
 
@@ -91,18 +96,22 @@ void MessageDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
     p->setPen(dim);
     const int right = in.right() - iconW;
     const int dateW = fm.horizontalAdvance(date);
-    const int pillW = threadN > 1 ? 46 : 0;
+    const int pillW = threadN > 1 ? 62 : 0;
     p->drawText(QRect(right - pillW - dateW, l1, dateW, h), Qt::AlignRight | Qt::AlignVCenter, date);
     if (threadN > 1) {
         const bool open = i.data(MessageListModel::ThreadExpandedRole).toBool();
         const QRect pr = threadRect(r, h).adjusted(4, 0, 0, 0);
+        // pillola a tinta piena (accento), ben visibile; invertita sulla riga selezionata
+        const QColor accent = pal.color(QPalette::Highlight), onAccent = pal.color(QPalette::HighlightedText);
         p->setPen(Qt::NoPen);
-        QColor bg = sel ? fg : pal.color(QPalette::Mid);
-        bg.setAlpha(sel ? 60 : 110);
-        p->setBrush(bg);
-        p->drawRoundedRect(pr.adjusted(0, 1, 0, -1), 8, 8);
-        p->setPen(fg);
-        p->drawText(pr, Qt::AlignCenter, QStringLiteral("%1 %2").arg(threadN).arg(open ? QStringLiteral("▾") : QStringLiteral("▸")));
+        p->setBrush(sel ? onAccent : accent);
+        p->drawRoundedRect(pr.adjusted(0, 0, 0, 0), pr.height() / 2.0, pr.height() / 2.0);
+        QFont pf = opt.font;
+        pf.setBold(true);
+        p->setFont(pf);
+        p->setPen(sel ? accent : onAccent);
+        p->drawText(pr, Qt::AlignCenter, QStringLiteral("💬 %1 %2").arg(threadN).arg(open ? QStringLiteral("▾") : QStringLiteral("▸")));
+        p->setFont(opt.font);
     }
     if (flagged) {
         p->setPen(QColor(0xf5, 0xa6, 0x23));
