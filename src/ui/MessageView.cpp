@@ -316,27 +316,33 @@ MessageView::MessageView(QWidget* parent) : QTextBrowser(parent) {
     row->addWidget(decryptButton_);
     encRow_->hide();
     lay->addWidget(encRow_);
-    attachButton_ = new QToolButton(bar_);
+    // i pulsanti di azione stanno su un'unica riga
+    btnRow_ = new QWidget(bar_);
+    auto* brow = new QHBoxLayout(btnRow_);
+    brow->setContentsMargins(0, 0, 0, 0);
+    brow->setSpacing(6);
+    lay->addWidget(btnRow_);
+    attachButton_ = new QToolButton(btnRow_);
     attachButton_->setText(tr("Salva allegato..."));
     attachButton_->setPopupMode(QToolButton::InstantPopup);
     attachButton_->setMenu(new QMenu(attachButton_));
     attachButton_->hide();
-    lay->addWidget(attachButton_, 0, Qt::AlignLeft);
-    htmlToggle_ = new QPushButton(bar_);
+    brow->addWidget(attachButton_);
+    htmlToggle_ = new QPushButton(btnRow_);
     htmlToggle_->setObjectName(QStringLiteral("htmlToggle"));
     htmlToggle_->hide();
-    lay->addWidget(htmlToggle_, 0, Qt::AlignLeft);
+    brow->addWidget(htmlToggle_);
     connect(htmlToggle_, &QPushButton::clicked, this, [this]() {
         wantHtml_ = !wantHtml_;
         render();
         layoutBar();
     });
-    darkToggle_ = new QPushButton(bar_);
+    darkToggle_ = new QPushButton(btnRow_);
     darkToggle_->setObjectName(QStringLiteral("darkToggle"));
     darkToggle_->setToolTip(tr("Con il tema scuro i colori chiari del messaggio sono adattati; "
                                "qui puoi vedere l'originale."));
     darkToggle_->hide();
-    lay->addWidget(darkToggle_, 0, Qt::AlignLeft);
+    brow->addWidget(darkToggle_);
     connect(darkToggle_, &QPushButton::clicked, this, [this]() {
         darkOff_ = !darkOff_;
         const int sc = verticalScrollBar()->value();
@@ -344,12 +350,13 @@ MessageView::MessageView(QWidget* parent) : QTextBrowser(parent) {
         layoutBar();
         verticalScrollBar()->setValue(sc);
     });
-    remoteBtn_ = new QPushButton(tr("Carica immagini remote"), bar_);
+    remoteBtn_ = new QPushButton(tr("Carica immagini remote"), btnRow_);
     remoteBtn_->setObjectName(QStringLiteral("remoteImages"));
     remoteBtn_->setToolTip(tr("Scarica le immagini dai server indicati nel messaggio. "
                               "Il mittente puo' cosi' sapere che e quando l'hai letto."));
     remoteBtn_->hide();
-    lay->addWidget(remoteBtn_, 0, Qt::AlignLeft);
+    brow->addWidget(remoteBtn_);
+    brow->addStretch(1);
     connect(remoteBtn_, &QPushButton::clicked, this, [this]() {
         remoteAllowed_ = true;
         remoteBtn_->setEnabled(false);
@@ -383,9 +390,10 @@ void MessageView::layoutBar() {
     darkToggle_->setVisible(showingHtml() && darkApplicable_);
     remoteBtn_->setVisible(showingHtml() && !remoteUrls_.isEmpty() && (!remoteAllowed_ || pendingFetches_ > 0));
     attachButton_->setVisible(!encryptedShown_ && !msg_.attachments.isEmpty());
+    btnRow_->setVisible(attachButton_->isVisibleTo(btnRow_) || htmlToggle_->isVisibleTo(btnRow_) ||
+                        darkToggle_->isVisibleTo(btnRow_) || remoteBtn_->isVisibleTo(btnRow_));
     const bool any = encryptedShown_ || badge_->isVisibleTo(bar_) || errLabel_->isVisibleTo(bar_) ||
-                     attachButton_->isVisibleTo(bar_) || htmlToggle_->isVisibleTo(bar_) || darkToggle_->isVisibleTo(bar_) ||
-                     remoteBtn_->isVisibleTo(bar_);
+                     btnRow_->isVisibleTo(bar_);
     int h = 0;
     if (any) {
         bar_->layout()->activate();

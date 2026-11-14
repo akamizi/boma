@@ -86,6 +86,7 @@ private:
     QByteArray encrypted_;
     bool encryptedShown_ = false;
     QWidget* bar_ = nullptr;
+    QWidget* btnRow_ = nullptr; // riga dei pulsanti di azione
     QLabel *badge_ = nullptr, *errLabel_ = nullptr;
     QWidget* encRow_ = nullptr;
     QPushButton* decryptButton_ = nullptr;
