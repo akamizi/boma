@@ -15,11 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/void-linux/void-glibc-full:latest
+      options: --privileged
     steps:
       - name: Strumenti
         run: |
           xbps-install -Syu xbps
-          xbps-install -Sy git bash curl openssl tar xz gzip base-devel
+          xbps-install -Sy git bash curl openssl tar xz gzip base-devel shadow util-linux
 
       - uses: actions/checkout@v4
         with:
@@ -31,10 +32,11 @@ jobs:
           ./boma/packaging/void/prepare.sh /vp ./boma
 
       - name: Compila
-        working-directory: /vp
         run: |
-          ./xbps-src binary-bootstrap
-          ./xbps-src -f pkg boma
+          # xbps-src non gira come root: utente dedicato
+          useradd -m builder
+          chown -R builder /vp
+          su builder -c 'cd /vp && ./xbps-src binary-bootstrap && ./xbps-src -f pkg boma'
 
       - name: Firma e indicizza
         env:
