@@ -51,7 +51,7 @@ bool parseColorToken(const QString& tok, QColor* out, QString* alpha) {
 }
 
 struct Ctx {
-    bool darkBackground = false; // trovato uno sfondo scuro dichiarato
+    int darkBgs = 0, lightBgs = 0; // sfondi dichiarati scuri / chiari
     bool changed = false;
 };
 
@@ -67,7 +67,10 @@ QString mapValue(const QString& v, bool isBg, Ctx& ctx) {
         QColor c;
         QString alpha;
         if (!parseColorToken(m.captured(), &c, &alpha)) continue;
-        if (isBg && c.lightnessF() < 0.35) ctx.darkBackground = true;
+        if (isBg) {
+            if (c.lightnessF() < 0.35) ++ctx.darkBgs;
+            else ++ctx.lightBgs;
+        }
         const QColor n = invert(c);
         QString repl = n.name();
         if (!alpha.isEmpty())
@@ -143,7 +146,8 @@ QString darkenHtml(const QString& html, bool* changed) {
         last = m.capturedEnd();
     }
     out += QStringView(html).mid(last);
-    const bool keep = ctx.darkBackground; // sfondo gia' scuro: lasciare com'e'
+    // gia' scura se gli sfondi scuri prevalgono (un solo dettaglio nero, es. icona, non basta)
+    const bool keep = ctx.darkBgs > 0 && ctx.darkBgs >= ctx.lightBgs;
     if (changed) *changed = !keep && out != html;
     return keep ? html : out;
 }

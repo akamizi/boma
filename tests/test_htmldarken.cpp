@@ -28,6 +28,12 @@ private slots:
         QCOMPARE(darkenHtml(in, &ch), in);
         QVERIFY(!ch);
     }
+    void testSmallDarkDetailDoesNotBlockAdaptation() {
+        bool ch = false;
+        const QString h = "<style>#m>b{background-color:#000000}</style><body bgcolor=\"#ffffff\"><table style=\"background:#ffffff\"><tr><td style=\"background-color:#f3f3f3\">x</td></tr></table></body>";
+        darkenHtml(h, &ch);
+        QVERIFY(ch);
+    }
     void testNoColorsNoChange() {
         bool ch = true;
         QCOMPARE(darkenHtml("<p>ciao</p>", &ch), QString("<p>ciao</p>"));
