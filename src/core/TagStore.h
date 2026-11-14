@@ -32,6 +32,9 @@ public:
 
     // false se il salvataggio fallisce (lo stato in memoria resta aggiornato).
     bool setTag(const QStringList& messageIds, const QString& tag, bool on);
+    // Aggiunge (mai toglie) le etichette indicate, con un solo salvataggio. Ritorna il numero di
+    // messaggi modificati, -1 se il salvataggio fallisce.
+    int addTags(const QHash<QString, QStringList>& byId);
     bool renameTag(const QString& from, const QString& to);
     bool removeTag(const QString& tag);
     QString lastError() const { return lastError_; }

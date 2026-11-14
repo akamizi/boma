@@ -9,6 +9,14 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Test Network)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GMIME REQUIRED IMPORTED_TARGET gmime-3.0)
 
+# Lo script Python delle etichette Gmail viene incorporato nel binario (nessun file da installare).
+file(READ ${CMAKE_SOURCE_DIR}/src/core/gmail_labels.py BOMA_GMAIL_LABELS_PY)
+file(WRITE ${CMAKE_BINARY_DIR}/generated/gmail_labels_py.h.tmp
+     "static const char kGmailLabelsScript[] = R\"BOMAPY(${BOMA_GMAIL_LABELS_PY})BOMAPY\";\n")
+execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_BINARY_DIR}/generated/gmail_labels_py.h.tmp ${CMAKE_BINARY_DIR}/generated/gmail_labels_py.h)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/core/gmail_labels.py)
+
 add_library(boma_core STATIC
     src/core/Config.cpp
     src/core/ConfigCheck.cpp
@@ -26,6 +34,7 @@ add_library(boma_core STATIC
     src/core/SyncService.cpp
     src/core/MailIndex.cpp
     src/core/TagStore.cpp
+    src/core/GmailLabels.cpp
     src/ui/MessageListModel.cpp
     src/ui/MainWindow.cpp
     src/ui/FolderPane.cpp
@@ -37,7 +46,7 @@ add_library(boma_core STATIC
     src/ui/MessageView.cpp
     src/ui/ComposeWindow.cpp
 )
-target_include_directories(boma_core PUBLIC src)
+target_include_directories(boma_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(boma_core PUBLIC Qt6::Widgets Qt6::Network PkgConfig::GMIME)
 
 add_executable(boma src/main.cpp)

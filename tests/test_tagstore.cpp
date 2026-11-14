@@ -2,6 +2,7 @@
 #include <QDir>
 #include <QTemporaryDir>
 #include "core/TagStore.h"
+#include "core/GmailLabels.h"
 
 using namespace boma;
 
@@ -66,6 +67,34 @@ private slots:
         QVERIFY(!s.setTag({"a@x"}, "t", true));
         QVERIFY(!s.lastError().isEmpty());
         QCOMPARE(s.tags("a@x"), QStringList{"t"}); // lo stato in memoria resta
+    }
+    void testAddTagsMergesWithoutRemoving() {
+        TagStore s(file());
+        QVERIFY(s.setTag({"a@x"}, "Mia", true));
+        QSignalSpy sp(&s, &TagStore::changed);
+        QCOMPARE(s.addTags({{"a@x", {"Mia", "banca"}}, {"b@x", {"Tasse"}}, {"", {"x"}}}), 2);
+        QCOMPARE(sp.count(), 1);
+        QCOMPARE(s.tags("a@x"), (QStringList{"banca", "Mia"}));
+        QCOMPARE(s.addTags({{"a@x", {"BANCA"}}}), 0); // nulla da aggiungere: nessun segnale
+        QCOMPARE(sp.count(), 1);
+        TagStore r(file());
+        QCOMPARE(r.tags("b@x"), QStringList{"Tasse"});
+    }
+    void testGmailOutputParsing() {
+        int done = -1;
+        const auto m = GmailLabels::parseOutput(
+            "{\"id\":\"a@x\",\"labels\":[\"Lavoro\",\"Citt\\u00e0\"]}\n"
+            "garbage\n{\"id\":\"\",\"labels\":[\"x\"]}\n{\"id\":\"b@x\",\"labels\":[]}\n{\"done\":1}\n", &done);
+        QCOMPARE(done, 1);
+        QCOMPARE(m.size(), 1);
+        QCOMPARE(m.value("a@x"), (QStringList{"Lavoro", QString::fromUtf8("Citt\u00e0")}));
+    }
+    void testEmbeddedScriptSelfTest() {
+        QProcess p;
+        p.start("python3", {"-I", "-c", GmailLabels::script(), "--selftest"});
+        QVERIFY(p.waitForFinished(20000));
+        QCOMPARE(p.exitCode(), 0);
+        QVERIFY(p.readAllStandardOutput().contains("ok"));
     }
 };
 QTEST_MAIN(T)

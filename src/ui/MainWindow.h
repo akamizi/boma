@@ -163,6 +163,8 @@ private:
     QString expandTagQuery(const QString& query) const;
     void setCheckedTag(const QString& tag, bool on);
     void buildTagMenu(QMenu* menu);
+    void importGmailLabels(const QString& channel, const QString& name);
+    bool gmailBusy_ = false;
     void refreshList();
     void onPageLoaded(int added, const QString& error);
     void clearViewer();

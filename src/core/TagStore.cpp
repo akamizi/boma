@@ -125,6 +125,27 @@ bool TagStore::setTag(const QStringList& ids, const QString& tag, bool on) {
     return ok;
 }
 
+int TagStore::addTags(const QHash<QString, QStringList>& byId) {
+    int n = 0;
+    for (auto it = byId.cbegin(); it != byId.cend(); ++it) {
+        if (it.key().isEmpty()) continue;
+        QStringList l = byId_.value(it.key());
+        const qsizetype before = l.size();
+        for (const QString& raw : it.value()) {
+            const QString t = canonical(raw);
+            if (!t.isEmpty() && !l.contains(t, Qt::CaseInsensitive)) l << t;
+        }
+        if (l.size() == before) continue;
+        l.sort(Qt::CaseInsensitive);
+        byId_.insert(it.key(), l);
+        ++n;
+    }
+    if (n == 0) return 0;
+    const bool ok = save();
+    emit changed();
+    return ok ? n : -1;
+}
+
 bool TagStore::renameTag(const QString& from, const QString& to) {
     const QString n = normalize(to);
     if (n.isEmpty() || from.compare(n, Qt::CaseInsensitive) == 0 && from == n) return true;

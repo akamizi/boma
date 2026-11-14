@@ -75,6 +75,11 @@ scritto e sincronizzato su disco in `tmp/`, poi pubblicato in `cur/` con `link()
   atomica): non si scrive nulla nei messaggi né sui server. Si filtra da «Mostra i messaggi con
   l'etichetta» o digitando `tag:nome` / `tag:"nome con spazi"` nella ricerca (combinabile con altri
   termini). Un file illeggibile non viene mai sovrascritto (copia in `tags.json.corrupt`).
+  Solo per Gmail: «Importa etichette Gmail da» copia i nomi delle etichette (`X-GM-LABELS`) nelle
+  etichette locali, in sola lettura (IMAP `EXAMINE`, `BODY.PEEK`) con un piccolo script Python
+  incorporato (`src/core/gmail_labels.py`, richiede `python3`). Host, utente e password vengono da
+  `~/.mbsyncrc` (PassCmd); le etichette di sistema (Inbox, Sent...) sono escluse, quelle già presenti
+  non vengono mai tolte e Gmail non viene modificato.
 - Conversazioni: i messaggi che si citano a vicenda (Message-ID/References, letti da `mu`)
   sono raggruppati in una riga con il numero dei messaggi; il clic sull'etichetta «N ▸» apre
   e chiude la conversazione, spuntare la riga seleziona tutti i suoi messaggi. Il

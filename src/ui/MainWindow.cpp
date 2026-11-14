@@ -3,6 +3,7 @@
 #include "ui/MessageDelegate.h"
 #include "ui/ReplyBuilder.h"
 #include "core/FolderCleaner.h"
+#include "core/GmailLabels.h"
 #include "core/MaildirWriter.h"
 #include "ui/SettingsDialog.h"
 
@@ -668,6 +669,39 @@ void MainWindow::buildTagMenu(QMenu* menu) {
         });
     }
     for (QMenu* m : {show, ren, del}) m->setEnabled(!counts.isEmpty());
+    menu->addSeparator();
+    QMenu* gm = menu->addMenu(tr("Importa etichette Gmail da"));
+    gm->setObjectName(QStringLiteral("gmailImportMenu"));
+    for (const Account& a : config_.accounts()) {
+        if (a.mbsyncChannel.isEmpty()) continue;
+        const QString channel = a.mbsyncChannel, name = a.name.isEmpty() ? a.id : a.name;
+        connect(gm->addAction(name), &QAction::triggered, this, [this, channel, name]() { importGmailLabels(channel, name); });
+    }
+    gm->setEnabled(!gm->isEmpty());
+}
+
+void MainWindow::importGmailLabels(const QString& channel, const QString& name) {
+    if (gmailBusy_) return;
+    if (QMessageBox::question(this, tr("Importa etichette Gmail"),
+                              tr("Boma si collega in sola lettura al server IMAP di «%1» con le credenziali di mbsync "
+                                 "(~/.mbsyncrc) e copia i nomi delle etichette Gmail nelle etichette locali. "
+                                 "Su Gmail non viene modificato nulla. Continuare?").arg(name)) != QMessageBox::Yes)
+        return;
+    gmailBusy_ = true;
+    statusBar()->showMessage(tr("Importazione etichette da «%1»...").arg(name));
+    QPointer<MainWindow> self(this);
+    GmailLabels::fetch(runner_, QString(), opts_.mbsyncConfig, channel, [self, name](QHash<QString, QStringList> map, QString err) {
+        if (!self) return;
+        self->gmailBusy_ = false;
+        if (!err.isEmpty()) {
+            self->statusBar()->clearMessage();
+            self->showNotice(tr("Importa etichette Gmail"), err);
+            return;
+        }
+        const int n = self->tags_->addTags(map);
+        if (n < 0) self->showNotice(tr("Etichette"), tr("Impossibile salvare: %1").arg(self->tags_->lastError()));
+        else self->statusBar()->showMessage(tr("«%1»: etichette importate su %n messaggi", nullptr, n).arg(name), 10000);
+    });
 }
 
 void MainWindow::applyQuery(const QString& query) {
