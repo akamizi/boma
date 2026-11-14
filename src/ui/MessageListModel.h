@@ -22,7 +22,10 @@ public:
         AccountIdRole,
         FlaggedRole,
         SizeRole,
-        CheckedRole
+        CheckedRole,
+        ThreadSizeRole,     // numero di messaggi della conversazione (riga capo, solo se > 1)
+        ThreadExpandedRole, // conversazione aperta
+        ThreadLevelRole     // 0 = riga principale, 1 = messaggio dentro la conversazione aperta
     };
     static constexpr int PageSize = 200;
     // Finestra massima richiesta a mu (il costo cresce con la profondita').
@@ -42,12 +45,25 @@ public:
     bool truncated() const { return m_truncated; }
     QString query() const { return m_query; }
     bool isLoading() const { return m_loading; }
-    const MessageSummary& summary(int row) const { return m_rows.at(row); }
+    const MessageSummary& summary(int row) const { return m_all.at(m_vis.at(row).idx); }
     // Aggiornamenti locali dopo un'azione riuscita (senza rileggere da mu):
     // la riga risulta letta (e col nuovo percorso se il file e' stato spostato)...
     void markReadLocal(int row, const QString& newPath = {});
+    // Come sopra / come removeAt, ma per percorso: valgono anche per messaggi nascosti
+    // dentro una conversazione chiusa.
+    void markReadPath(const QString& path, const QString& newPath = {});
+    void removePath(const QString& path);
     // ...oppure e' tolta dall'elenco (messaggio spostato nel cestino).
     void removeAt(int row);
+
+    // Raggruppamento per conversazione (Message-ID/References), solo tra i messaggi gia'
+    // caricati. Una conversazione chiusa e' una riga (il primo messaggio in ordine di elenco)
+    // col numero dei messaggi; aperta mostra tutti i messaggi. Spuntare la riga chiusa
+    // seleziona tutta la conversazione. Predefinito: spento.
+    void setThreaded(bool on);
+    bool threaded() const { return m_threaded; }
+    void toggleExpanded(int row);
+    bool hasPath(const QString& path) const;
 
     // Selezione multipla (casella a sinistra di ogni riga), per percorso.
     int checkedCount() const { return int(m_checked.size()); }
@@ -68,10 +84,30 @@ signals:
     void pageLoaded(int added, const QString& error);
 
 private:
+    struct Group {
+        QList<int> members; // indici in m_all, nell'ordine dell'elenco
+        QString gid;        // chiave stabile (il Message-ID minore)
+        int unread = 0;
+    };
+    struct Row {
+        int group = 0, idx = 0, level = 0;
+        QString id; // identita' stabile della riga (Message-ID o percorso)
+        int count = 0, unread = 0;
+        bool expanded = false;
+    };
+    static QString keyOf(const MessageSummary& m) { return m.messageId.isEmpty() ? m.path : m.messageId; }
+    void rebuildGroups();
+    QList<Row> computeVis() const;
+    void applyVis(QList<Row> nv);
+    bool rowChecked(const Row& r) const;
     void applyPage(QList<MessageSummary> list, const QString& error, int want, int probe);
     QPointer<MailIndex> m_index;
     QString m_query;
-    QList<MessageSummary> m_rows;
+    QList<MessageSummary> m_all; // tutti i messaggi caricati
+    QList<Group> m_groups;
+    QList<Row> m_vis;            // righe visibili
+    QSet<QString> m_expanded;    // gid delle conversazioni aperte
+    bool m_threaded = false;
     QSet<QString> m_seen, m_checked;
     int m_offset = 0; // risultati gia' richiesti a mu (incl. duplicati scartati)
     bool m_exhausted = false, m_loading = false, m_truncated = false;

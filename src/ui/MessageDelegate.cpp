@@ -32,6 +32,12 @@ QRect MessageDelegate::checkRect(const QRect& r) {
     return QRect(r.left() + 12, r.center().y() - 9, 18, 18);
 }
 
+QRect MessageDelegate::threadRect(const QRect& r, int h) {
+    const int w = 46, iconW = h + 2;
+    const int right = r.right() - 10 - iconW; // come `right` in paint()
+    return QRect(right - w, r.top() + 6 + (h - (h + 2)) / 2, w, h + 2);
+}
+
 QSize MessageDelegate::sizeHint(const QStyleOptionViewItem& o, const QModelIndex&) const {
     const int h = o.fontMetrics.height();
     return {200, h * 2 + 18};
@@ -59,7 +65,13 @@ void MessageDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
     bold.setBold(unread);
     const QFontMetrics fm(opt.font), fb(bold);
     const int pad = 10, h = fm.height();
-    const QRect in = r.adjusted(pad + 4 + 28, 6, -pad, -6);
+    const int level = i.data(MessageListModel::ThreadLevelRole).toInt();
+    const int threadN = i.data(MessageListModel::ThreadSizeRole).toInt();
+    QRect in = r.adjusted(pad + 4 + 28, 6, -pad, -6);
+    if (level > 0) { // messaggio dentro una conversazione aperta: rientrato e piu' sobrio
+        in.setLeft(in.left() + 22);
+        p->fillRect(QRect(r.left() + 4, r.top(), r.width() - 4, r.height()), QColor(128, 128, 128, 18));
+    }
     {
         QStyleOptionButton cb;
         cb.rect = checkRect(r);
@@ -79,15 +91,28 @@ void MessageDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
     p->setPen(dim);
     const int right = in.right() - iconW;
     const int dateW = fm.horizontalAdvance(date);
-    p->drawText(QRect(right - dateW, l1, dateW, h), Qt::AlignRight | Qt::AlignVCenter, date);
+    const int pillW = threadN > 1 ? 46 : 0;
+    p->drawText(QRect(right - pillW - dateW, l1, dateW, h), Qt::AlignRight | Qt::AlignVCenter, date);
+    if (threadN > 1) {
+        const bool open = i.data(MessageListModel::ThreadExpandedRole).toBool();
+        const QRect pr = threadRect(r, h).adjusted(4, 0, 0, 0);
+        p->setPen(Qt::NoPen);
+        QColor bg = sel ? fg : pal.color(QPalette::Mid);
+        bg.setAlpha(sel ? 60 : 110);
+        p->setBrush(bg);
+        p->drawRoundedRect(pr.adjusted(0, 1, 0, -1), 8, 8);
+        p->setPen(fg);
+        p->drawText(pr, Qt::AlignCenter, QStringLiteral("%1 %2").arg(threadN).arg(open ? QStringLiteral("▾") : QStringLiteral("▸")));
+    }
     if (flagged) {
         p->setPen(QColor(0xf5, 0xa6, 0x23));
         p->drawText(QRect(in.right() - iconW + 2, l1, iconW, h), Qt::AlignCenter, QStringLiteral("★"));
     }
     p->setFont(bold);
     p->setPen(fg);
-    p->drawText(QRect(in.left(), l1, right - dateW - in.left() - 8, h), Qt::AlignLeft | Qt::AlignVCenter,
-                fb.elidedText(i.data(MessageListModel::FromRole).toString(), Qt::ElideRight, right - dateW - in.left() - 8));
+    const int fromW = right - pillW - dateW - in.left() - 8;
+    p->drawText(QRect(in.left(), l1, fromW, h), Qt::AlignLeft | Qt::AlignVCenter,
+                fb.elidedText(i.data(MessageListModel::FromRole).toString(), Qt::ElideRight, fromW));
 
     // linea 2: dimensione (e graffetta) a destra, oggetto a sinistra
     const QString size = formatSize(i.data(MessageListModel::SizeRole).toLongLong());

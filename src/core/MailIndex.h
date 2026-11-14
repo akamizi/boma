@@ -17,6 +17,7 @@ struct MessageSummary {
     bool unread = false, hasAttachment = false, flagged = false;
     qint64 size = 0; // byte
     QString accountId;
+    QStringList references; // Message-ID dei messaggi citati (References/In-Reply-To), per i thread
 };
 
 using SearchCallback = std::function<void(QList<MessageSummary>, QString error)>;

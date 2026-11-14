@@ -216,6 +216,17 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
             a->setChecked(index_->sortField() == QLatin1String(o.field) && index_->sortDescending() == o.desc);
             connect(a, &QAction::triggered, this, [this, o]() { setListSort(QLatin1String(o.field), o.desc); });
         }
+        menu->addSeparator();
+        QAction* thr = menu->addAction(tr("Raggruppa per conversazione"));
+        thr->setObjectName(QStringLiteral("groupThreads"));
+        thr->setCheckable(true);
+        thr->setChecked(qs.value(QStringLiteral("list/threads"), true).toBool());
+        model_->setThreaded(thr->isChecked());
+        connect(thr, &QAction::toggled, this, [this](bool on) {
+            QSettings s;
+            s.setValue(QStringLiteral("list/threads"), on);
+            model_->setThreaded(on);
+        });
         sortBtn->setMenu(menu);
     }
     {
@@ -834,6 +845,7 @@ void MainWindow::markReadAfterOpen(const MessageSummary& s) {
             self->scheduleUnreadCounts();
             const int row = self->rowForPath(s.path);
             if (row >= 0) self->model_->markReadLocal(row, newPath);
+            else self->model_->markReadPath(s.path, newPath);
             if (self->curSummary_.path == s.path) {
                 self->curSummary_.unread = false;
                 if (!newPath.isEmpty()) self->curSummary_.path = newPath;
@@ -1014,6 +1026,12 @@ bool MainWindow::eventFilter(QObject* o, QEvent* e) {
                                    e->type() == QEvent::MouseButtonDblClick)) {
         auto* me = static_cast<QMouseEvent*>(e);
         const QModelIndex idx = list_->indexAt(me->position().toPoint());
+        if (idx.isValid() && me->button() == Qt::LeftButton && idx.data(MessageListModel::ThreadSizeRole).toInt() > 1 &&
+            MessageDelegate::threadRect(list_->visualRect(idx), list_->fontMetrics().height())
+                .adjusted(0, -4, 4, 4).contains(me->position().toPoint())) {
+            if (e->type() == QEvent::MouseButtonRelease) model_->toggleExpanded(idx.row());
+            return true;
+        }
         if (idx.isValid() && me->button() == Qt::LeftButton &&
             MessageDelegate::checkRect(list_->visualRect(idx)).adjusted(-4, -4, 4, 4).contains(me->position().toPoint())) {
             if (e->type() == QEvent::MouseButtonRelease)
@@ -1122,6 +1140,8 @@ void MainWindow::bulkApply(const QString& title, const QList<MessageSummary>& it
                     } else {
                         self->model_->removeAt(row);
                     }
+                } else {
+                    self->model_->removePath(s.path); // nascosto in una conversazione chiusa
                 }
             }
             ++st->i;
@@ -1269,6 +1289,8 @@ void MainWindow::deleteChecked() {
                     } else {
                         self->model_->removeAt(row);
                     }
+                } else {
+                    self->model_->removePath(s.path); // nascosto in una conversazione chiusa
                 }
             }
             ++st->i;
@@ -1325,6 +1347,8 @@ void MainWindow::deleteSelected() {
             } else {
                 self->model_->removeAt(row);
             }
+        } else {
+            self->model_->removePath(s.path);
         }
         self->statusBar()->showMessage(tr("Spostato nel cestino"), 5000);
         self->scheduleUnreadCounts();

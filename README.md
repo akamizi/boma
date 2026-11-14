@@ -69,6 +69,11 @@ scritto e sincronizzato su disco in `tmp/`, poi pubblicato in `cur/` con `link()
   (letto, non letto, preferito, togli preferito). Non sostituiscono il pulsante
   «Elimina» del messaggio aperto. Compare anche la riga «N selezionati» con
   «Deseleziona». Tutto passa da `mu move`.
+- Conversazioni: i messaggi che si citano a vicenda (Message-ID/References, letti da `mu`)
+  sono raggruppati in una riga con il numero dei messaggi; il clic sull'etichetta «N ▸» apre
+  e chiude la conversazione, spuntare la riga seleziona tutti i suoi messaggi. Il
+  raggruppamento riguarda i messaggi già caricati in elenco (stessa cartella o ricerca) e si
+  disattiva da «Ordina → Raggruppa per conversazione».
 - Composizione HTML con editor WYSIWYG: spuntando «HTML» compare la barra di
   formattazione (grassetto, corsivo, sottolineato, barrato, dimensione, colore, elenchi,
   allineamento, collegamento, pulisci formattazione). Sono ammessi solo collegamenti

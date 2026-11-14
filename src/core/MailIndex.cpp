@@ -79,6 +79,11 @@ QList<MessageSummary> MailIndex::parse(const QByteArray& json, QString* error) c
             else if (s == QLatin1String("attach"))
                 m.hasAttachment = true;
         }
+        for (const QJsonValue& r : o.value(QStringLiteral(":references")).toArray()) {
+            if (m.references.size() >= 100) break; // catene assurde: bastano le prime
+            const QString id = r.toString();
+            if (!id.isEmpty()) m.references << id;
+        }
         m.accountId = accountFor(m.path);
         out.append(m);
     }
