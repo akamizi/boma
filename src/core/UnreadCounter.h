@@ -17,8 +17,9 @@ namespace boma {
 //   durata non dipende dal numero di cartelle; ogni altra query (per esempio quella vuota
 //   della vista "Non lette", che ha esclusioni e dedup proprie) si conta con una chiamata a
 //   parte (single), una alla volta.
-// - Il risultato di un giro e' pubblicato in un colpo solo (countsReady). Le query il cui
-//   conteggio fallisce non compaiono: restano "sconosciute" (nessun numero), come prima.
+// - Il risultato di un giro e' pubblicato in un colpo solo (countsReady). Se mu fallisce per
+//   una query (con un qWarning) resta il suo ultimo numero noto; una query mai contata con
+//   successo non compare ("sconosciuta": nessun numero).
 // - reset() scarta il giro in corso (per esempio quando cambia l'insieme delle cartelle).
 class UnreadCounter : public QObject {
     Q_OBJECT
@@ -58,6 +59,8 @@ private:
     std::function<QStringList()> queries_;
     bool active_ = true, running_ = false, dirty_ = false;
     quint64 gen_ = 0;
+    QStringList current_;        // query del giro in corso
+    QHash<QString, int> last_;   // ultimo risultato pubblicato
 };
 
 } // namespace boma

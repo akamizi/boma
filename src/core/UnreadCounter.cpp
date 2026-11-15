@@ -36,7 +36,8 @@ void UnreadCounter::run() {
     // Cartelle (raggruppate) e altre query (una alla volta).
     QHash<QString, QString> folderOf; // query -> cartella
     QStringList others;
-    for (const QString& q : queries_()) {
+    current_ = queries_();
+    for (const QString& q : current_) {
         const QString f = maildirOf_ ? maildirOf_(q) : QString();
         if (f.isEmpty() || !byMaildir_) others << q; else folderOf.insert(q, f);
     }
@@ -81,7 +82,13 @@ void UnreadCounter::run() {
 void UnreadCounter::finish(quint64 gen, const QHash<QString, int>& results) {
     if (gen != gen_) return;
     running_ = false;
-    emit countsReady(results);
+    // Se mu ha fallito per una query, resta l'ultimo numero noto (meglio vecchio di qualche
+    // secondo che sparito); non si inventa nulla per le query mai contate.
+    QHash<QString, int> merged = results;
+    for (const QString& q : current_)
+        if (!merged.contains(q) && last_.contains(q)) merged.insert(q, last_.value(q));
+    last_ = merged;
+    emit countsReady(merged);
     if (dirty_) schedule();
 }
 

@@ -93,28 +93,55 @@ private slots:
         QCOMPARE(published_.last().value(fq("/a/INBOX")), 9); // il secondo giro vede i dati nuovi
         QVERIFY(!c_->busy());
     }
-    // mu fallisce sulle cartelle: nessun numero per loro (come prima), "Non lette" resta, riprova al giro dopo.
-    void testByMaildirFailureLeavesFoldersUnknown() {
+    // mu fallisce: al primo giro nessun numero (mai contate); dopo un giro riuscito resta il
+    // numero precedente, anche per le query singole; al giro dopo torna tutto aggiornato.
+    void testByMaildirFailureKeepsPreviousNumbers() {
         failByMaildir_ = "mu: boom";
         QTest::ignoreMessage(QtWarningMsg, QRegularExpression("conteggio non lette fallito: mu: boom"));
         c_->schedule();
         QVERIFY(QTest::qWaitFor([&] { return published_.size() == 1; }, 3000));
-        QVERIFY(!published_.first().contains(fq("/a/INBOX")));
-        QVERIFY(!published_.first().contains(fq("/a/Vuota")));
-        QCOMPARE(published_.first().value(QString(), -1), 4);
+        QVERIFY(!published_.first().contains(fq("/a/INBOX"))); // mai contata: sconosciuta
+        QCOMPARE(published_.first().value(QString(), -1), 4);  // "Non lette" e' riuscita
         QVERIFY(!c_->busy()); // il contatore non resta bloccato
         failByMaildir_.clear();
         c_->schedule();
         QVERIFY(QTest::qWaitFor([&] { return published_.size() == 2; }, 3000));
         QCOMPARE(published_.last().value(fq("/a/INBOX")), 3);
+        // ora un fallimento non cancella i numeri
+        folders_["/a/INBOX"] = 99; failByMaildir_ = "mu: di nuovo";
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression("conteggio non lette fallito: mu: di nuovo"));
+        c_->schedule();
+        QVERIFY(QTest::qWaitFor([&] { return published_.size() == 3; }, 3000));
+        QCOMPARE(published_.last().value(fq("/a/INBOX")), 3);  // il vecchio, non 99 e non sparito
+        QCOMPARE(published_.last().value(fq("/a/Sent")), 1);
+        QCOMPARE(published_.last().value(fq("/a/Vuota")), 0);
+        failByMaildir_.clear();
+        c_->schedule();
+        QVERIFY(QTest::qWaitFor([&] { return published_.size() == 4; }, 3000));
+        QCOMPARE(published_.last().value(fq("/a/INBOX")), 99);
     }
-    void testSingleFailureLeavesThatQueryUnknown() {
-        failSingle_ = "mu: giu";
-        QTest::ignoreMessage(QtWarningMsg, QRegularExpression("conteggio non lette fallito per .*mu: giu"));
+    void testSingleFailureKeepsPreviousNumber() {
         c_->schedule();
         QVERIFY(QTest::qWaitFor([&] { return published_.size() == 1; }, 3000));
-        QVERIFY(!published_.first().contains(QString()));
-        QCOMPARE(published_.first().value(fq("/a/INBOX")), 3);
+        QCOMPARE(published_.last().value(QString()), 4);
+        singles_[QString()] = 7; failSingle_ = "mu: giu";
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression("conteggio non lette fallito per .*mu: giu"));
+        c_->schedule();
+        QVERIFY(QTest::qWaitFor([&] { return published_.size() == 2; }, 3000));
+        QCOMPARE(published_.last().value(QString()), 4);
+        QCOMPARE(published_.last().value(fq("/a/INBOX")), 3);
+    }
+    // Una cartella che sparisce dall'elenco non lascia il suo vecchio numero.
+    void testRemovedQueryDropsPreviousNumber() {
+        c_->schedule();
+        QVERIFY(QTest::qWaitFor([&] { return published_.size() == 1; }, 3000));
+        queries_ = {QString(), fq("/a/INBOX")};
+        failByMaildir_ = "mu: boom";
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression("conteggio non lette fallito"));
+        c_->schedule();
+        QVERIFY(QTest::qWaitFor([&] { return published_.size() == 2; }, 3000));
+        QVERIFY(!published_.last().contains(fq("/a/Sent")));
+        QCOMPARE(published_.last().value(fq("/a/INBOX")), 3);
     }
     // Query che non sono una cartella: ognuna con la propria chiamata, in serie (comportamento di prima).
     void testNonFolderQueriesAreCountedOneByOne() {
