@@ -113,6 +113,37 @@ QString MaildirWriter::saveFallback(const QString& dir, const QByteArray& messag
     return {};
 }
 
+bool MaildirWriter::discard(const QString& path, QString* error)
+{
+    const QFileInfo fi(path);
+    const QString dirName = fi.dir().dirName();
+    if (path.isEmpty() || (dirName != QLatin1String("cur") && dirName != QLatin1String("new"))) {
+        setError(error, QStringLiteral("Non e' un messaggio di una Maildir: %1").arg(path));
+        return false;
+    }
+    auto unlinkOne = [&](const QString& p) {
+        if (::unlink(QFile::encodeName(p).constData()) == 0 || errno == ENOENT) return true;
+        setError(error, QStringLiteral("Rimozione di %1 non riuscita: %2").arg(p, errnoText()));
+        return false;
+    };
+    if (fi.exists()) return unlinkOne(path);
+    // Rinominato da mbsync/mu: la parte unica (prima di ':' e ',U=') resta la stessa.
+    const QString name = fi.fileName();
+    const QString unique = name.left(name.indexOf(QLatin1Char(':')) < 0 ? name.size() : name.indexOf(QLatin1Char(':')));
+    if (unique.isEmpty()) return true;
+    const QString maildir = fi.dir().absolutePath() + QStringLiteral("/..");
+    bool ok = true;
+    for (const char* sub : {"cur", "new"}) {
+        QDir d(maildir + QLatin1Char('/') + QLatin1String(sub));
+        for (const QString& f : d.entryList(QDir::Files | QDir::NoDotAndDotDot)) {
+            const QString u = f.left(f.indexOf(QLatin1Char(':')) < 0 ? f.size() : f.indexOf(QLatin1Char(':')));
+            if (u == unique || u.startsWith(unique + QLatin1Char(',')))
+                ok = unlinkOne(d.filePath(f)) && ok;
+        }
+    }
+    return ok;
+}
+
 void MaildirWriter::setNameGeneratorForTest(std::function<QString()> gen) { generator() = std::move(gen); }
 
 QString MaildirWriter::deliver(const QString& maildirFolder, const QByteArray& message,

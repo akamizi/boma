@@ -50,6 +50,45 @@ private slots:
         QVERIFY(!QFileInfo::exists(td.path() + "/Half/new"));
         QVERIFY(QDir(td.path() + "/Half/cur").entryList(QDir::Files).isEmpty());
     }
+    void testDiscardRemovesDeliveredMessage() {
+        QTemporaryDir td(QDir::currentPath() + "/maildirXXXXXX");
+        const QString folder = td.path() + "/Drafts";
+        mk(folder);
+        QString err;
+        const QString a = MaildirWriter::deliver(folder, "x", "D", &err);
+        const QString b = MaildirWriter::deliver(folder, "y", "D", &err);
+        QVERIFY(MaildirWriter::discard(a, &err));
+        QVERIFY(!QFileInfo::exists(a));
+        QVERIFY(QFileInfo::exists(b)); // solo quello indicato
+        QVERIFY(MaildirWriter::discard(a, &err)); // gia' assente: non e' un errore
+        QVERIFY(QFileInfo::exists(b));
+    }
+    // mbsync rinomina il file (aggiunge ,U=n e cambia i flag): la bozza si trova ancora.
+    void testDiscardFindsFileRenamedBySync() {
+        QTemporaryDir td(QDir::currentPath() + "/maildirXXXXXX");
+        const QString folder = td.path() + "/Drafts";
+        mk(folder);
+        QString err;
+        const QString a = MaildirWriter::deliver(folder, "x", "D", &err);
+        const QString other = MaildirWriter::deliver(folder, "y", "D", &err);
+        const QFileInfo fi(a);
+        const QString unique = fi.fileName().left(fi.fileName().indexOf(':'));
+        QVERIFY(QFile::rename(a, folder + "/cur/" + unique + ",U=42:2,DS"));
+        QVERIFY(MaildirWriter::discard(a, &err));
+        QCOMPARE(QDir(folder + "/cur").entryList(QDir::Files).size(), 1);
+        QVERIFY(QFileInfo::exists(other));
+    }
+    void testDiscardRefusesPathsOutsideMaildir() {
+        QTemporaryDir td(QDir::currentPath() + "/maildirXXXXXX");
+        QFile f(td.path() + "/importante.txt");
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.close();
+        QString err;
+        QVERIFY(!MaildirWriter::discard(f.fileName(), &err));
+        QVERIFY(!err.isEmpty());
+        QVERIFY(f.exists());
+        QVERIFY(!MaildirWriter::discard(QString(), &err));
+    }
     void testDeliverRejectsInvalidFlags() {
         QTemporaryDir td(QDir::currentPath() + "/maildirXXXXXX");
         const QString folder = td.path() + "/Sent";

@@ -49,6 +49,8 @@ void SendController::onResult(const Surface& s, const OutgoingMessage& msg, bool
     case SendResult::Sent:
         emit statusMessage(r.message.isEmpty() ? tr("Inviato") : tr("Inviato (avviso: %1)").arg(r.message), 15000);
         if (!r.message.isEmpty()) emit notice(tr("Inviato, con un avviso"), r.message);
+        // La copia in Inviata e' scritta: la bozza non serve piu'. Con copyFailed resta (mai perdere posta).
+        if (!r.copyFailed && s.discardDraft) s.discardDraft();
         if (alive && r.copyFailed) {
             // I4: il messaggio E' partito ma la copia in Inviata manca: la finestra resta
             // aperta (il testo non va perso) ma segnata come inviata, mai reinviabile.

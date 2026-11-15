@@ -64,9 +64,60 @@ private slots:
         QCOMPARE(p.subject, QString("Bozza"));
         QVERIFY(p.to.contains("Rossi, Anna"));
         QVERIFY(!w.isDirty());
-        // secondo salvataggio: nuovo file, nessuna sovrascrittura
+        // secondo salvataggio: sostituisce la bozza, non ne crea una nuova
         QVERIFY(w.saveDraft());
-        QCOMPARE(count(dir_.path() + "/b/Drafts"), 2);
+        QCOMPARE(count(dir_.path() + "/b/Drafts"), 1);
+    }
+    void testRepeatedSaveKeepsOnlyTheLatestDraft() {
+        ComposeWindow w(makeConfig());
+        w.toEdit()->setText("x@y.it");
+        w.subjectEdit()->setText("v1");
+        for (int i = 1; i <= 4; ++i) {
+            w.subjectEdit()->setText(QString("v%1").arg(i));
+            QVERIFY(w.saveDraft());
+            QCOMPARE(count(dir_.path() + "/a/Drafts"), 1);
+        }
+        const QString d = dir_.path() + "/a/Drafts/cur";
+        QFile f(d + "/" + QDir(d).entryList(QDir::Files).first());
+        QVERIFY(f.open(QIODevice::ReadOnly));
+        QCOMPARE(MessageParser::parse(f.readAll()).subject, QString("v4"));
+        QCOMPARE(QFileInfo(w.draftPath()).absoluteFilePath(), QFileInfo(f).absoluteFilePath());
+    }
+    // Se il nuovo salvataggio fallisce la bozza precedente resta intatta.
+    void testFailedResaveKeepsPreviousDraft() {
+        ComposeWindow w(makeConfig());
+        w.subjectEdit()->setText("prima");
+        QVERIFY(w.saveDraft());
+        const QString before = w.draftPath();
+        QVERIFY(QFileInfo::exists(before));
+        QVERIFY(QDir(dir_.path() + "/a/Drafts/tmp").removeRecursively()); // la consegna ora fallisce
+        w.subjectEdit()->setText("dopo");
+        QVERIFY(!w.saveDraft());
+        QVERIFY(QFileInfo::exists(before));
+        QCOMPARE(w.draftPath(), before);
+        QCOMPARE(count(dir_.path() + "/a/Drafts"), 1);
+    }
+    // La bozza rinominata da mbsync (,U=n e flag diversi) viene comunque sostituita.
+    void testResaveReplacesDraftRenamedBySync() {
+        ComposeWindow w(makeConfig());
+        w.subjectEdit()->setText("uno");
+        QVERIFY(w.saveDraft());
+        const QFileInfo fi(w.draftPath());
+        const QString unique = fi.fileName().left(fi.fileName().indexOf(':'));
+        QVERIFY(QFile::rename(fi.filePath(), fi.dir().filePath(unique + ",U=7:2,DS")));
+        w.subjectEdit()->setText("due");
+        QVERIFY(w.saveDraft());
+        QCOMPARE(count(dir_.path() + "/a/Drafts"), 1);
+    }
+    void testDiscardDraftRemovesFileOnce() {
+        ComposeWindow w(makeConfig());
+        QVERIFY(w.discardDraft()); // nessuna bozza: nulla da fare
+        w.subjectEdit()->setText("x");
+        QVERIFY(w.saveDraft());
+        QCOMPARE(count(dir_.path() + "/a/Drafts"), 1);
+        QVERIFY(w.discardDraft());
+        QCOMPARE(count(dir_.path() + "/a/Drafts"), 0);
+        QVERIFY(w.draftPath().isEmpty());
     }
     void testDraftFailureEmitsErrorAndBlocksClose() {
         ComposeWindow w(makeConfig(false)); // nessuna cartella Drafts

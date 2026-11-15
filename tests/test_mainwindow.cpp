@@ -1130,6 +1130,63 @@ private slots:
         QVERIFY(log(QStringLiteral("argv")).contains(QStringLiteral("--")));
         QVERIFY(!log(QStringLiteral("argv")).contains(QStringLiteral("segreto@x.test"))); // Bcc del messaggio originale mai
     }
+    int draftsCountA() { return QDir(dir_ + QStringLiteral("/mail/a/Drafts/cur")).entryList(QDir::Files).size(); }
+    int sentCountA() { return QDir(dir_ + QStringLiteral("/mail/a/Sent/cur")).entryList(QDir::Files).size(); }
+    // Bozza salvata e poi inviato: la bozza sparisce, una sola copia in Inviata.
+    void testSavedDraftIsRemovedAfterSuccessfulSend() {
+        for (const char* d : {"Drafts", "Sent"})
+            for (const char* s : {"cur", "new"})
+                for (const QString& f : QDir(dir_ + QStringLiteral("/mail/a/") + QLatin1String(d) + QLatin1Char('/') + QLatin1String(s)).entryList(QDir::Files))
+                    QFile::remove(dir_ + QStringLiteral("/mail/a/") + QLatin1String(d) + QLatin1Char('/') + QLatin1String(s) + QLatin1Char('/') + f);
+        MainWindow w(makeConfig(false), opts());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        w.newButton()->click();
+        QPointer<ComposeWindow> c = firstComposer(w);
+        QVERIFY(c);
+        c->toEdit()->setText(QStringLiteral("bob@x.test"));
+        c->bodyEdit()->setPlainText(QStringLiteral("Testo bozza 7070"));
+        QVERIFY(c->saveDraft());
+        c->bodyEdit()->setPlainText(QStringLiteral("Testo bozza 7071"));
+        QVERIFY(c->saveDraft());
+        QCOMPARE(draftsCountA(), 1); // salvataggi ripetuti: una sola bozza
+        c->sendButton()->click();
+        QVERIFY(QTest::qWaitFor([&] { return c.isNull(); }, 20000));
+        QCOMPARE(draftsCountA(), 0);
+        QCOMPARE(sentCountA(), 1);
+    }
+    // Inviato ma copia in Inviata non scritta: la bozza resta.
+    void testSavedDraftSurvivesWhenSentCopyFails() {
+        const QString sent = dir_ + QStringLiteral("/mail/a/Sent");
+        for (const QString& f : QDir(dir_ + QStringLiteral("/mail/a/Drafts/cur")).entryList(QDir::Files))
+            QFile::remove(dir_ + QStringLiteral("/mail/a/Drafts/cur/") + f);
+        MainWindowOptions o = opts();
+        o.msmtpProgram = writeScript(dir_, QStringLiteral("msmtpbreak3"),
+                                     ("#!/bin/sh\nd=$(dirname \"$0\")\necho run >> \"$d/count\"\ncat > \"$d/stdin\"\nrm -rf '" +
+                                      sent.toUtf8() + "'\nexit 0\n"));
+        MainWindow w(makeConfig(false), o);
+        Noticed n;
+        w.setNoticeCallback([&](const QString& t, const QString& x) { n.titles << t; n.texts << x; });
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        w.newButton()->click();
+        QPointer<ComposeWindow> c = firstComposer(w);
+        QVERIFY(c);
+        c->toEdit()->setText(QStringLiteral("bob@x.test"));
+        c->bodyEdit()->setPlainText(QStringLiteral("Testo bozza 6060"));
+        QVERIFY(c->saveDraft());
+        c->sendButton()->click();
+        QVERIFY(QTest::qWaitFor([&] { return !n.titles.isEmpty(); }, 20000));
+        QTest::qWait(300);
+        for (const char* d : {"cur", "new", "tmp"}) QDir().mkpath(sent + QLatin1Char('/') + QLatin1String(d)); // per gli altri test
+        QVERIFY(c);
+        QCOMPARE(draftsCountA(), 1); // bozza intatta
+        QDir(dir_ + QStringLiteral("/non-salvati")).removeRecursively();
+        c->setConfirmCallback([] { return true; });
+        c->close();
+        for (const QString& f : QDir(dir_ + QStringLiteral("/mail/a/Drafts/cur")).entryList(QDir::Files))
+            QFile::remove(dir_ + QStringLiteral("/mail/a/Drafts/cur/") + f);
+    }
     // I4: Inviata non valida segnalata all'avvio (account gia' sincronizzato).
     void testInvalidSpecialFolderWarnsAtStartup() {
         const QString p = dir_ + QStringLiteral("/config-bad%1.ini").arg(++n_);

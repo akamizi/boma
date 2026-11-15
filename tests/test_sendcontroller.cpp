@@ -1,6 +1,7 @@
 #include <QtTest>
 #include "core/SendController.h"
 #include "send/Sender.h"
+#include "core/MaildirWriter.h"
 using namespace boma;
 
 namespace {
@@ -8,7 +9,7 @@ namespace {
 // Una "finestra di scrittura" finta: registra che cosa il controller le fa.
 struct FakeWin : QObject {
     bool enabled = true, clean = false, closed = false;
-    int closes = 0, cleans = 0;
+    int closes = 0, cleans = 0, discards = 0;
     QString status;
     SendController::Surface surface() {
         SendController::Surface s;
@@ -17,6 +18,7 @@ struct FakeWin : QObject {
         s.setStatus = [this](const QString& t) { status = t; };
         s.markClean = [this]() { clean = true; ++cleans; };
         s.close = [this]() { closed = true; ++closes; };
+        s.discardDraft = [this]() { ++discards; };
         return s;
     }
 };
@@ -143,6 +145,56 @@ private slots:
         QVERIFY(w.clean);                                     // chiusa senza chiedere conferma
         QCOMPARE(statuses_.last().first, QString("Inviato"));
         QVERIFY(notices_.isEmpty());
+    }
+    // Bozza di partenza: tolta solo a invio riuscito con la copia in Inviata scritta.
+    void testDraftDiscardedOnlyAfterSentCopyWritten() {
+        FakeWin w;
+        c_->start(w.surface(), someMessage(), false, false);
+        QTRY_VERIFY(w.closed);
+        QCOMPARE(w.discards, 1);
+    }
+    void testDraftKeptWhenSentCopyFailed() {
+        for (const QString fb : {QString("/x/emergenza.eml"), QString()}) {
+            FakeWin w; next_ = res(SendResult::Sent, "copia"); next_.copyFailed = true; next_.fallbackPath = fb;
+            c_->start(w.surface(), someMessage(), false, false);
+            QTRY_VERIFY(c_->isSent(&w));
+            QCOMPARE(w.discards, 0);
+        }
+    }
+    void testDraftKeptOnEveryFailureAndOnCancel() {
+        for (SendResult::Kind k : {SendResult::SmtpFailed, SendResult::SignFailed, SendResult::EncryptFailed,
+                                   SendResult::BuildFailed, SendResult::Busy, SendResult::MissingKeys}) {
+            FakeWin w; next_ = res(k, "x");
+            const int before = notices_.size();
+            c_->start(w.surface(), someMessage(), false, false);
+            QTRY_VERIFY(notices_.size() > before);
+            QCOMPARE(w.discards, 0);
+        }
+        FakeWin w; next_ = res(SendResult::NeedsConfirmationUnsigned); answer_ = false;
+        c_->start(w.surface(), someMessage(), true, false);
+        QTRY_COMPARE(asked_, 1);
+        QTRY_VERIFY(w.enabled);
+        QCOMPARE(w.discards, 0);
+    }
+    // Annullamento e poi invio confermato: la bozza si toglie una volta sola, alla fine.
+    void testDraftDiscardedOnceAfterConfirmedUnsignedSend() {
+        FakeWin w; answer_ = true; next_ = res(SendResult::NeedsConfirmationUnsigned);
+        c_->start(w.surface(), someMessage(), true, false);
+        QTRY_VERIFY(w.closed);
+        QCOMPARE(w.discards, 1);
+    }
+    // Finestra chiusa durante l'invio riuscito: la bozza va tolta comunque.
+    void testDraftDiscardedEvenIfWindowClosedDuringSend() {
+        int discards = 0; hold_ = true;
+        {
+            auto* w = new FakeWin;
+            SendController::Surface s = w->surface();
+            s.discardDraft = [&discards] { ++discards; };
+            c_->start(s, someMessage(), false, false);
+            delete w;
+        }
+        finish(res(SendResult::Sent));
+        QTRY_COMPARE(discards, 1);
     }
     void testSuccessWithWarningShowsNotice() {
         FakeWin w; next_ = res(SendResult::Sent, "avviso X");
@@ -313,7 +365,7 @@ private slots:
     // msmtp esce con errore: nulla in Inviata, la finestra resta con il testo e si puo' riprovare.
     void testRealMsmtpErrorNoCopyAndNothingLost() {
         newRealEnv(); FakeWin w;
-        QFile(dir_ + "/fail").open(QIODevice::WriteOnly);
+        QVERIFY(QFile(dir_ + "/fail").open(QIODevice::WriteOnly));
         real_->start(w.surface(), realMsg(), false, false);
         QTRY_VERIFY_WITH_TIMEOUT(!notices_.isEmpty(), 20000);
         QVERIFY(notices_[0].second.contains("authentication failed"));
@@ -342,10 +394,63 @@ private slots:
         QVERIFY(!real_->isSent(&w));
         QVERIFY(!notices_[0].second.isEmpty());
     }
+    // Bozza di partenza: un file in Bozze, scritto come fa la finestra di scrittura.
+    QString makeDraft() {
+        for (const char* x : {"cur", "new", "tmp"}) QDir().mkpath(dir_ + "/mail/a/Drafts/" + x);
+        QString err;
+        const QString p = MaildirWriter::deliver(dir_ + "/mail/a/Drafts", "From: a@b.c\nSubject: Prova\n\ntesto\n", "D", &err);
+        if (p.isEmpty()) qFatal("bozza non scritta: %s", qPrintable(err));
+        return p;
+    }
+    int draftsCount() { return QDir(dir_ + "/mail/a/Drafts/cur").entryList(QDir::Files).size(); }
+    void testRealSuccessRemovesDraftKeepsOneSentCopy() {
+        newRealEnv(); FakeWin w;
+        const QString draft = makeDraft();
+        auto s = w.surface();
+        s.discardDraft = [draft] { MaildirWriter::discard(draft, nullptr); };
+        QCOMPARE(draftsCount(), 1);
+        real_->start(s, realMsg(), false, false);
+        QTRY_VERIFY_WITH_TIMEOUT(w.closed, 20000);
+        QCOMPARE(draftsCount(), 0);                            // bozza sparita
+        QCOMPARE(sentFiles().size(), 1);                       // una sola copia in Inviata
+    }
+    // msmtp ha spedito ma la scrittura in Inviata fallisce: la bozza resta (mai perdere posta).
+    void testRealSentCopyFailureKeepsDraft() {
+        newRealEnv(); FakeWin w;
+        const QString draft = makeDraft();
+        QFile b(dir_ + "/breaksent");
+        QVERIFY(b.open(QIODevice::WriteOnly));
+        b.write((dir_ + "/mail/a/Sent").toUtf8());
+        b.close();
+        // msmtp finto: dopo aver letto il messaggio distrugge Inviata
+        writeScript(QDir(dir_), "msmtp",
+                    "#!/bin/sh\nd=$(dirname \"$0\")\necho run >> \"$d/count\"\ncat > \"$d/stdin\"\nrm -rf \"$(cat \"$d/breaksent\")\"\nexit 0\n");
+        sender_->setUnsavedDir(dir_ + "/non-salvati");
+        auto s = w.surface();
+        s.discardDraft = [draft] { MaildirWriter::discard(draft, nullptr); };
+        real_->start(s, realMsg(), false, false);
+        QTRY_VERIFY_WITH_TIMEOUT(real_->isSent(&w), 20000);
+        QCOMPARE(msmtpRuns(), 1);
+        QVERIFY(!QFileInfo::exists(dir_ + "/mail/a/Sent/cur"));
+        QCOMPARE(draftsCount(), 1);                            // bozza intatta
+        QVERIFY(QFileInfo::exists(draft));
+        QVERIFY(!w.closed);
+    }
+    void testRealMsmtpErrorKeepsDraft() {
+        newRealEnv(); FakeWin w;
+        const QString draft = makeDraft();
+        QVERIFY(QFile(dir_ + "/fail").open(QIODevice::WriteOnly));
+        auto s = w.surface();
+        s.discardDraft = [draft] { MaildirWriter::discard(draft, nullptr); };
+        real_->start(s, realMsg(), false, false);
+        QTRY_VERIFY_WITH_TIMEOUT(!notices_.isEmpty(), 20000);
+        QCOMPARE(draftsCount(), 1);
+        QVERIFY(sentFiles().isEmpty());
+    }
     // Doppio invio (doppio clic): un solo msmtp, una sola copia.
     void testRealDoubleClickSendsOnce() {
         newRealEnv(); FakeWin w;
-        QFile(dir_ + "/slow").open(QIODevice::WriteOnly);
+        QVERIFY(QFile(dir_ + "/slow").open(QIODevice::WriteOnly));
         real_->start(w.surface(), realMsg(), false, false);
         real_->start(w.surface(), realMsg(), false, false);
         real_->start(w.surface(), realMsg(), false, false);

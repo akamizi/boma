@@ -20,6 +20,12 @@ public:
     // (0600, mai sovrascritto, fsync). Crea dir (0700) se manca. Percorso o vuoto con *error.
     static QString saveFallback(const QString& dir, const QByteArray& message, QString* error);
 
+    // Rimuove un messaggio consegnato da deliver() (es. la bozza sostituita o inviata).
+    // Solo file in cur/ o new/ di una Maildir. Se il percorso non esiste piu' perche'
+    // mbsync ha rinominato il file (stessa parte unica, suffissi cambiati) si rimuove
+    // quello con la stessa parte unica. true = rimosso o gia' assente; false con *error.
+    static bool discard(const QString& path, QString* error);
+
     // Solo per i test: sostituisce il generatore del nome unico (nullptr = default).
     static void setNameGeneratorForTest(std::function<QString()> gen);
 };

@@ -16,6 +16,7 @@ namespace boma {
 // - un messaggio non parta due volte dalla stessa finestra (mentre e' in corso, e mai piu'
 //   dopo un invio riuscito);
 // - dopo un errore la finestra torni utilizzabile e il testo resti li' (non si chiude mai);
+// - la bozza di partenza si tolga solo con la copia in Inviata al sicuro;
 // - la finestra si chiuda da sola solo se il messaggio e' partito E la copia in Inviata c'e';
 //   se la copia manca la finestra resta aperta, segnata come inviata e non reinviabile.
 //
@@ -31,6 +32,9 @@ public:
         std::function<void(const QString&)> setStatus; // etichetta di stato; vuoto = svuota
         std::function<void()> markClean;               // il testo non e' piu' "da salvare"
         std::function<void()> close;
+        // Rimuove la bozza di partenza. Chiamata SOLO quando il messaggio e' partito E la copia
+        // in Inviata e' stata scritta (mai se copyFailed), anche se la finestra e' gia' chiusa.
+        std::function<void()> discardDraft;
     };
     // Invio effettivo (di solito Sender::send).
     using SendFn = std::function<void(const OutgoingMessage&, bool sign, bool encrypt,

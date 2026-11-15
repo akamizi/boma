@@ -236,11 +236,27 @@ bool ComposeWindow::saveDraft() {
     if (raw.isEmpty()) return fail(err);
     const QString folder = acc->maildirRoot + QLatin1Char('/') + acc->draftsFolder;
     const QString path = MaildirWriter::deliver(folder, raw, QStringLiteral("D"), &err);
-    if (path.isEmpty()) return fail(err);
+    if (path.isEmpty()) return fail(err); // la bozza precedente resta intatta
+    // La nuova e' al sicuro: ora la vecchia e' ridondante. Se non si riesce a toglierla resta
+    // un doppione (si preferisce a una perdita), segnalato nello stato.
+    QString staleWhy;
+    if (!draftPath_.isEmpty() && draftPath_ != path && !MaildirWriter::discard(draftPath_, &staleWhy))
+        qWarning("Bozza precedente non rimossa: %s", qPrintable(staleWhy));
+    draftPath_ = path;
     saveFailed_ = false;
     dirty_ = false;
     status_->setText(tr("Bozza salvata"));
-    emit draftSaved(path);
+    return true;
+}
+
+bool ComposeWindow::discardDraft() {
+    if (draftPath_.isEmpty()) return true;
+    QString why;
+    if (!MaildirWriter::discard(draftPath_, &why)) {
+        qWarning("Bozza non rimossa dopo l'invio: %s", qPrintable(why));
+        return false;
+    }
+    draftPath_.clear();
     return true;
 }
 

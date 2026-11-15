@@ -1617,6 +1617,14 @@ ComposeWindow* MainWindow::openCompose(const OutgoingMessage* prefill) {
         };
         s.markClean = [pc]() { if (pc) pc->markClean(); };
         s.close = [pc]() { if (pc) pc->close(); };
+        // Finestra gia' chiusa durante l'invio: la bozza si toglie comunque, dal percorso noto ora.
+        const QString draftNow = pc ? pc->draftPath() : QString();
+        s.discardDraft = [pc, draftNow]() {
+            if (pc) { pc->discardDraft(); return; }
+            QString why;
+            if (!draftNow.isEmpty() && !MaildirWriter::discard(draftNow, &why))
+                qWarning("Bozza non rimossa dopo l'invio: %s", qPrintable(why));
+        };
         sendCtl_->start(s, msg, sign, encrypt);
     });
     c->show();

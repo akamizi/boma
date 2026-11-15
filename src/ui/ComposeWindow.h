@@ -34,6 +34,12 @@ public:
 
     // Costruisce e salva la bozza. false con draftError() in caso di errore.
     bool saveDraft();
+    // Ogni salvataggio SOSTITUISCE la bozza precedente di questa finestra (la vecchia si
+    // rimuove solo dopo aver scritto la nuova: mai nessuna copia in meno del necessario).
+    // Percorso dell'ultima bozza scritta (vuoto se mai salvata o gia' rimossa).
+    QString draftPath() const { return draftPath_; }
+    // Rimuove la bozza di questa finestra (dopo un invio riuscito con copia in Inviata).
+    bool discardDraft();
     bool isDirty() const { return dirty_; }
     void markClean() { dirty_ = false; }
     // Chiamata prima di chiudere con modifiche non salvate: true = scarta.
@@ -63,7 +69,6 @@ public:
 signals:
     void sendRequested(const boma::OutgoingMessage& msg, bool sign, bool encrypt);
     void draftError(const QString& error);
-    void draftSaved(const QString& path);
 
 protected:
     void closeEvent(QCloseEvent* e) override;
@@ -91,6 +96,7 @@ private:
     QLabel* status_ = nullptr;
     bool dirty_ = false;
     bool saveFailed_ = false;
+    QString draftPath_;
     bool loading_ = false;
     QString inReplyTo_;      // dal prefill (risposte): conservati nel messaggio
     QStringList references_;
