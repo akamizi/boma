@@ -47,13 +47,18 @@ void UnreadCounter::run() {
 
     // Seconda fase: le query singole, in serie.
     auto step = std::make_shared<std::function<void(int)>>();
-    *step = [self, gen, others, results, step](int i) {
+    // La lambda tiene `step` solo in modo debole (altrimenti ciclo di
+    // riferimenti e perdita); a tenerlo in vita sono le callback in attesa.
+    std::weak_ptr<std::function<void(int)>> weakStep = step;
+    *step = [self, gen, others, results, weakStep](int i) {
         if (!self || gen != self->gen_) return;
         if (i >= others.size() || !self->single_) {
             self->finish(gen, *results);
             return;
         }
         const QString q = others.at(i);
+        auto step = weakStep.lock();
+        if (!step) return;
         self->single_(q, [self, gen, q, results, step, i](int n, QString err) {
             if (!self || gen != self->gen_) return;
             if (n >= 0) results->insert(q, n);

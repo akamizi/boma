@@ -1,3 +1,4 @@
+#include <memory>
 #include <QtTest>
 #include "core/SendController.h"
 #include "send/Sender.h"
@@ -9,7 +10,11 @@ namespace {
 // Una "finestra di scrittura" finta: registra che cosa il controller le fa.
 struct FakeWin : QObject {
     bool enabled = true, clean = false, closed = false;
-    int closes = 0, cleans = 0, discards = 0;
+    int closes = 0, cleans = 0;
+    // Il contatore sopravvive alla finestra: discardDraft viene chiamato
+    // anche a finestra distrutta (di proposito).
+    std::shared_ptr<int> discardCount = std::make_shared<int>(0);
+    int discards() const { return *discardCount; }
     QString status;
     SendController::Surface surface() {
         SendController::Surface s;
@@ -18,7 +23,7 @@ struct FakeWin : QObject {
         s.setStatus = [this](const QString& t) { status = t; };
         s.markClean = [this]() { clean = true; ++cleans; };
         s.close = [this]() { closed = true; ++closes; };
-        s.discardDraft = [this]() { ++discards; };
+        s.discardDraft = [c = discardCount]() { ++*c; };
         return s;
     }
 };
@@ -151,14 +156,14 @@ private slots:
         FakeWin w;
         c_->start(w.surface(), someMessage(), false, false);
         QTRY_VERIFY(w.closed);
-        QCOMPARE(w.discards, 1);
+        QCOMPARE(w.discards(), 1);
     }
     void testDraftKeptWhenSentCopyFailed() {
         for (const QString& fb : {QString("/x/emergenza.eml"), QString()}) {
             FakeWin w; next_ = res(SendResult::Sent, "copia"); next_.copyFailed = true; next_.fallbackPath = fb;
             c_->start(w.surface(), someMessage(), false, false);
             QTRY_VERIFY(c_->isSent(&w));
-            QCOMPARE(w.discards, 0);
+            QCOMPARE(w.discards(), 0);
         }
     }
     void testDraftKeptOnEveryFailureAndOnCancel() {
@@ -168,20 +173,20 @@ private slots:
             const int before = notices_.size();
             c_->start(w.surface(), someMessage(), false, false);
             QTRY_VERIFY(notices_.size() > before);
-            QCOMPARE(w.discards, 0);
+            QCOMPARE(w.discards(), 0);
         }
         FakeWin w; next_ = res(SendResult::NeedsConfirmationUnsigned); answer_ = false;
         c_->start(w.surface(), someMessage(), true, false);
         QTRY_COMPARE(asked_, 1);
         QTRY_VERIFY(w.enabled);
-        QCOMPARE(w.discards, 0);
+        QCOMPARE(w.discards(), 0);
     }
     // Annullamento e poi invio confermato: la bozza si toglie una volta sola, alla fine.
     void testDraftDiscardedOnceAfterConfirmedUnsignedSend() {
         FakeWin w; answer_ = true; next_ = res(SendResult::NeedsConfirmationUnsigned);
         c_->start(w.surface(), someMessage(), true, false);
         QTRY_VERIFY(w.closed);
-        QCOMPARE(w.discards, 1);
+        QCOMPARE(w.discards(), 1);
     }
     // Finestra chiusa durante l'invio riuscito: la bozza va tolta comunque.
     void testDraftDiscardedEvenIfWindowClosedDuringSend() {
