@@ -69,6 +69,9 @@ public:
 signals:
     void sendRequested(const boma::OutgoingMessage& msg, bool sign, bool encrypt);
     void draftError(const QString& error);
+    // La cartella Bozze e' cambiata su disco (bozza scritta, vecchia o inviata rimossa):
+    // chi ha una vista di Bozze puo' rileggerla.
+    void draftsChanged();
 
 protected:
     void closeEvent(QCloseEvent* e) override;

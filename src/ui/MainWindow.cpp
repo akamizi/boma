@@ -934,6 +934,41 @@ void MainWindow::reindexAndRefresh(std::function<void()> done) {
     });
 }
 
+// Bozze cambiate su disco. Solo lettura: nessun file viene toccato qui. Piu' eventi ravvicinati
+// (nuova bozza + rimozione della vecchia) si fondono in un solo `mu index`. Se non puo' partire
+// o fallisce l'elenco resta vecchio ma i file ci sono: nessun avviso, solo il registro.
+void MainWindow::draftsChanged() {
+    if (config_.isEmpty()) return;
+    if (!draftsTimer_) {
+        draftsTimer_ = new QTimer(this);
+        draftsTimer_->setSingleShot(true);
+        draftsTimer_->setInterval(300);
+        connect(draftsTimer_, &QTimer::timeout, this, [this]() {
+            QPointer<MainWindow> self(this);
+            index_->reindex(QString(), [self](bool ok, QString err) {
+                if (!self) return;
+                if (!ok) {
+                    qWarning().noquote() << "mu index dopo la modifica delle bozze:" << err;
+                    return;
+                }
+                if (self->viewingDrafts()) self->refreshList();
+            });
+        });
+    }
+    draftsTimer_->start();
+}
+
+bool MainWindow::viewingDrafts() const {
+    const QString q = model_->query();
+    if (q.isEmpty()) return false;
+    for (const Account& a : config_.accounts()) {
+        if (a.draftsFolder.isEmpty()) continue;
+        const QString dq = MailIndex::maildirQuery(muRoot_, a.maildirRoot, a.draftsFolder);
+        if (!dq.isEmpty() && q.contains(dq)) return true;
+    }
+    return false;
+}
+
 // ---- lettura ----
 
 void MainWindow::onCurrentChanged(const QModelIndex& cur) {
@@ -1607,6 +1642,7 @@ ComposeWindow* MainWindow::openCompose(const OutgoingMessage* prefill) {
     c->setAttribute(Qt::WA_DeleteOnClose);
     if (prefill) c->setPrefill(*prefill);
     QPointer<ComposeWindow> pc(c);
+    connect(c, &ComposeWindow::draftsChanged, this, &MainWindow::draftsChanged);
     connect(c, &ComposeWindow::sendRequested, this, [this, pc](const OutgoingMessage& msg, bool sign, bool encrypt) {
         SendController::Surface s; // la finestra vista dal controller (che non conosce i widget)
         s.window = pc;
@@ -1619,11 +1655,12 @@ ComposeWindow* MainWindow::openCompose(const OutgoingMessage* prefill) {
         s.close = [pc]() { if (pc) pc->close(); };
         // Finestra gia' chiusa durante l'invio: la bozza si toglie comunque, dal percorso noto ora.
         const QString draftNow = pc ? pc->draftPath() : QString();
-        s.discardDraft = [pc, draftNow]() {
-            if (pc) { pc->discardDraft(); return; }
+        s.discardDraft = [this, pc, draftNow]() {
+            if (pc) { pc->discardDraft(); return; } // emette draftsChanged
             QString why;
-            if (!draftNow.isEmpty() && !MaildirWriter::discard(draftNow, &why))
-                qWarning("Bozza non rimossa dopo l'invio: %s", qPrintable(why));
+            if (draftNow.isEmpty()) return;
+            if (MaildirWriter::discard(draftNow, &why)) draftsChanged();
+            else qWarning("Bozza non rimossa dopo l'invio: %s", qPrintable(why));
         };
         sendCtl_->start(s, msg, sign, encrypt);
     });

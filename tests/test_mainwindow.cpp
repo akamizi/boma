@@ -1155,6 +1155,89 @@ private slots:
         QCOMPARE(draftsCountA(), 0);
         QCOMPARE(sentCountA(), 1);
     }
+    // Dopo salvataggio e dopo scarto la vista Bozze si riallinea: `mu index` e nuova lettura
+    // della cartella (e solo se si sta guardando le Bozze).
+    void testDraftsViewRealignsAfterSaveAndDiscard() {
+        for (const QString& f : QDir(dir_ + QStringLiteral("/mail/a/Drafts/cur")).entryList(QDir::Files))
+            QFile::remove(dir_ + QStringLiteral("/mail/a/Drafts/cur/") + f);
+        writeFile(dir_ + QStringLiteral("/info.txt"), QStringLiteral("| maildir | %1/mail |\n").arg(dir_).toUtf8());
+        MainWindow w(makeConfig(false), opts());
+        w.show();
+        const QString dq = QStringLiteral("maildir:\"/a/Drafts\"");
+        QVERIFY(QTest::qWaitFor([&] { return folderQueries(w).contains(dq); }, 10000));
+        auto* m = w.folderPane()->itemModel();
+        QStandardItem* drafts = nullptr;
+        for (int i = 0; i < m->item(1)->rowCount(); ++i)
+            if (m->item(1)->child(i)->data(Qt::UserRole + 1).toString() == dq) drafts = m->item(1)->child(i);
+        QVERIFY(drafts);
+        w.newButton()->click();
+        // ricerche della vista Bozze (non la clausola "AND NOT maildir:Bozze" della vista Non lette)
+        auto draftsReads = [&] {
+            int n = 0;
+            for (const QString& l : log(QStringLiteral("mu.log")).split(QLatin1Char('\n')))
+                if (l.contains(dq) && !l.contains(QStringLiteral("NOT ") + dq)) ++n;
+            return n;
+        };
+        QPointer<ComposeWindow> c = firstComposer(w);
+        QVERIFY(c);
+        c->toEdit()->setText(QStringLiteral("bob@x.test"));
+        c->bodyEdit()->setPlainText(QStringLiteral("Bozza da riallineare"));
+        // Vista Posta in arrivo: dopo il salvataggio si indicizza ma l'elenco non viene toccato
+        w.folderPane()->setCurrentIndex(m->item(1)->child(0)->index());
+        QVERIFY(QTest::qWaitFor([&] { return w.model()->query() == QStringLiteral("maildir:\"/a/INBOX\""); }, 10000));
+        QTest::qWait(300);
+        resetLogs();
+        QVERIFY(c->saveDraft());
+        QVERIFY(QTest::qWaitFor([&] { return log(QStringLiteral("mu.log")).contains(QStringLiteral("index")); }, 10000));
+        QTest::qWait(300);
+        QCOMPARE(draftsReads(), 0);
+        // Vista Bozze: salvataggio => index + rilettura della cartella
+        w.folderPane()->setCurrentIndex(drafts->index());
+        QVERIFY(QTest::qWaitFor([&] { return w.model()->query() == dq; }, 10000));
+        QTest::qWait(300);
+        resetLogs();
+        c->bodyEdit()->setPlainText(QStringLiteral("Bozza da riallineare 2"));
+        QVERIFY(c->saveDraft()); // sostituzione: un solo giro di index
+        QVERIFY(QTest::qWaitFor([&] { return draftsReads() >= 1; }, 10000));
+        QCOMPARE(countLines(log(QStringLiteral("mu.log")), QStringLiteral("index")), 1);
+        // Scarto (invio riuscito): di nuovo index + rilettura
+        QTest::qWait(300);
+        resetLogs();
+        QVERIFY(c->discardDraft());
+        QVERIFY(QTest::qWaitFor([&] { return log(QStringLiteral("mu.log")).contains(QStringLiteral("index")); }, 10000));
+        QVERIFY(QTest::qWaitFor([&] { return draftsReads() >= 1; }, 10000));
+        QCOMPARE(draftsCountA(), 0);
+        c->setConfirmCallback([] { return true; });
+        c->close();
+    }
+    // Se mu index non parte la bozza resta su disco e non compaiono avvisi.
+    void testDraftsRefreshFailureLeavesFileAndStaysQuiet() {
+        for (const QString& f : QDir(dir_ + QStringLiteral("/mail/a/Drafts/cur")).entryList(QDir::Files))
+            QFile::remove(dir_ + QStringLiteral("/mail/a/Drafts/cur/") + f);
+        MainWindowOptions o = opts();
+        o.muProgram = writeScript(dir_, QStringLiteral("mufail2"),
+                                  "#!/bin/sh\nd=$(dirname \"$0\")\necho \"$*\" >> \"$d/mu.log\"\n"
+                                  "case \"$1\" in find) cat \"$d/search.json\";; index) echo boom >&2; exit 1;; *) exit 0;; esac\n");
+        MainWindow w(makeConfig(false), o);
+        Noticed n;
+        w.setNoticeCallback([&](const QString& t, const QString& x) { n.titles << t; n.texts << x; });
+        w.show();
+        QVERIFY(waitRows(w, 1));
+        w.newButton()->click();
+        QPointer<ComposeWindow> c = firstComposer(w);
+        QVERIFY(c);
+        c->bodyEdit()->setPlainText(QStringLiteral("resta"));
+        resetLogs();
+        QVERIFY(c->saveDraft());
+        QVERIFY(QTest::qWaitFor([&] { return log(QStringLiteral("mu.log")).contains(QStringLiteral("index")); }, 10000));
+        QTest::qWait(300);
+        QCOMPARE(draftsCountA(), 1);
+        QVERIFY(n.titles.isEmpty());
+        c->setConfirmCallback([] { return true; });
+        c->close();
+        for (const QString& f : QDir(dir_ + QStringLiteral("/mail/a/Drafts/cur")).entryList(QDir::Files))
+            QFile::remove(dir_ + QStringLiteral("/mail/a/Drafts/cur/") + f);
+    }
     // Inviato ma copia in Inviata non scritta: la bozza resta.
     void testSavedDraftSurvivesWhenSentCopyFails() {
         const QString sent = dir_ + QStringLiteral("/mail/a/Sent");

@@ -177,6 +177,10 @@ private:
     void startLoad(quint64 token, const MessageSummary& s);
     void runReindex();
     void reindexAndRefresh(std::function<void()> done = {});
+    // La cartella Bozze e' cambiata su disco (salvataggio, sostituzione, scarto dopo l'invio):
+    // `mu index` (incrementale) e, se la vista mostra le Bozze, rilettura dell'elenco.
+    void draftsChanged();
+    bool viewingDrafts() const;
     void onSyncState(SyncService::State st, const QString& accountId, const QString& message);
     void compose(ReplyMode mode);
     ComposeWindow* openCompose(const OutgoingMessage* prefill);
@@ -244,6 +248,7 @@ private:
     QString innerSigner_;
     QDateTime lastSync_;
     bool reindexing_ = false;
+    QTimer* draftsTimer_ = nullptr;
     bool bulkBusy_ = false;
     std::function<bool(const QString&, const QString&)> confirmDestructive_;
     bool bulkAllowed();

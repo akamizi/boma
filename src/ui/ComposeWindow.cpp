@@ -246,6 +246,7 @@ bool ComposeWindow::saveDraft() {
     saveFailed_ = false;
     dirty_ = false;
     status_->setText(tr("Bozza salvata"));
+    emit draftsChanged();
     return true;
 }
 
@@ -257,6 +258,7 @@ bool ComposeWindow::discardDraft() {
         return false;
     }
     draftPath_.clear();
+    emit draftsChanged();
     return true;
 }
 
