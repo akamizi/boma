@@ -22,7 +22,7 @@ class T : public QObject {
     static QString tmpFile(QTemporaryDir& d, const QString& name, const QByteArray& data) {
         const QString p = d.filePath(name);
         QFile f(p);
-        f.open(QIODevice::WriteOnly);
+        if (!f.open(QIODevice::WriteOnly)) qFatal("non scrivibile: %s", qPrintable(f.fileName()));
         f.write(data);
         return p;
     }

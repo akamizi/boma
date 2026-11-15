@@ -190,7 +190,7 @@ private slots:
 
     // --- funzioni pure usate dal contatore ---
     void testMaildirOfQueryInvertsMaildirQuery() {
-        for (const QString f : {QString("INBOX"), QString("Sub/Cartella con spazi"), QString("[Gmail]/Tutti i messaggi"),
+        for (const QString& f : {QString("INBOX"), QString("Sub/Cartella con spazi"), QString("[Gmail]/Tutti i messaggi"),
                                QString("virg\"olette"), QString("back\\slash")}) {
             const QString q = MailIndex::maildirQuery("/home/u/.Mail", "/home/u/.Mail/acc", f);
             QVERIFY(!q.isEmpty());

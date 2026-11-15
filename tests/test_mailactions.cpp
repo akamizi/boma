@@ -28,7 +28,7 @@ class T : public QObject {
             for (auto s : {"INBOX/cur", "INBOX/new", "INBOX/tmp", "Trash/cur", "Trash/new", "Trash/tmp"})
                 QDir().mkpath(mail + "/" + s);
             msg = mail + "/INBOX/cur/m1:2,S";
-            QFile f(msg); f.open(QIODevice::WriteOnly); f.write("Subject: x\n\nhi\n"); f.close();
+            QFile f(msg); if (!f.open(QIODevice::WriteOnly)) qFatal("non scrivibile: %s", qPrintable(f.fileName())); f.write("Subject: x\n\nhi\n"); f.close();
             acc.maildirRoot = mail; acc.trashFolder = "Trash";
         }
     };

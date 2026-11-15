@@ -17,7 +17,7 @@ class T : public QObject {
                 for (auto s : {"tmp", "new", "cur"}) QDir().mkpath(r + "/Drafts/" + s);
         const QString ini = dir_.filePath("config.ini");
         QFile f(ini);
-        f.open(QIODevice::WriteOnly);
+        if (!f.open(QIODevice::WriteOnly)) qFatal("non scrivibile: %s", qPrintable(f.fileName()));
         f.write(("[account:a]\nname=A\nmaildirRoot=" + a + "\n[account:b]\nname=B\nmaildirRoot=" + b + "\n"
                  "[identity:a1]\naccountId=a\naddress=a1@a.it\ndisplayName=Alfa\nsignature=Ciao A\nsignByDefault=true\n"
                  "[identity:b1]\naccountId=b\naddress=b1@b.it\nsignByDefault=false\n").toUtf8());

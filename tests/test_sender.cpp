@@ -92,7 +92,7 @@ class T : public QObject {
         QDir().mkpath(h);
         chmod(h.toLocal8Bit().constData(), 0700);
         QFile f(h + QStringLiteral("/gpg-agent.conf"));
-        f.open(QIODevice::WriteOnly);
+        if (!f.open(QIODevice::WriteOnly)) qFatal("non scrivibile: %s", qPrintable(f.fileName()));
         f.write(agentConf);
         f.close();
         return h;
@@ -315,7 +315,7 @@ private slots:
     }
     void testSmtpFailureWritesNoSentCopy() {
         const Env e = newEnv();
-        QFile(e.dir + QStringLiteral("/fail")).open(QIODevice::WriteOnly);
+        QVERIFY(QFile(e.dir + QStringLiteral("/fail")).open(QIODevice::WriteOnly));
         auto s = makeSender(e, home_);
         const SendResult r = doSend(*s, msgFor(idA_, {QStringLiteral("bob@example.test")}), false, false);
         QCOMPARE(r.kind, SendResult::SmtpFailed);
@@ -515,7 +515,7 @@ private slots:
     }
     void testMsmtpTimeout() {
         const Env e = newEnv();
-        QFile(e.dir + QStringLiteral("/sleep")).open(QIODevice::WriteOnly);
+        QVERIFY(QFile(e.dir + QStringLiteral("/sleep")).open(QIODevice::WriteOnly));
         auto s = makeSender(e, home_);
         s->setMsmtpTimeoutMs(600);
         const SendResult r = doSend(*s, msgFor(idA_, {QStringLiteral("bob@example.test")}), false, false);
@@ -761,7 +761,7 @@ private slots:
     }
     void testDestroyWhileSendingNeverCallsBack() {
         const Env e = newEnv();
-        QFile(e.dir + QStringLiteral("/sleep")).open(QIODevice::WriteOnly);
+        QVERIFY(QFile(e.dir + QStringLiteral("/sleep")).open(QIODevice::WriteOnly));
         bool called = false;
         {
             auto s = makeSender(e, home_);

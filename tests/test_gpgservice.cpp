@@ -69,13 +69,13 @@ struct DecOut {
 VerifyOut doVerify(GpgService& s, const QByteArray& data, const QByteArray& sig) {
     VerifyOut o;
     s.verify(data, sig, [&o](SignatureStatus st, QString who) { o = {true, st, who}; });
-    QTest::qWaitFor([&o] { return o.done; }, 60000);
+    if (!QTest::qWaitFor([&o] { return o.done; }, 60000)) qWarning("gpg: tempo scaduto"); // o.done resta falso
     return o;
 }
 DecOut doDecrypt(GpgService& s, const QByteArray& enc) {
     DecOut o;
     s.decrypt(enc, [&o](bool ok, QByteArray p, QString e) { o = {true, ok, p, e}; });
-    QTest::qWaitFor([&o] { return o.done; }, 60000);
+    if (!QTest::qWaitFor([&o] { return o.done; }, 60000)) qWarning("gpg: tempo scaduto"); // o.done resta falso
     return o;
 }
 
@@ -96,7 +96,7 @@ class T : public QObject {
         QDir().mkpath(h);
         chmod(h.toLocal8Bit().constData(), 0700);
         QFile f(h + QStringLiteral("/gpg-agent.conf"));
-        f.open(QIODevice::WriteOnly);
+        if (!f.open(QIODevice::WriteOnly)) qFatal("non scrivibile: %s", qPrintable(f.fileName()));
         f.write("pinentry-program /bin/false\n");
         f.close();
         homes_ << h;
@@ -174,7 +174,7 @@ private slots:
                                        "  esac\n"
                                        "done\n");
         QFile f(homePw_ + QStringLiteral("/gpg-agent.conf"));
-        f.open(QIODevice::WriteOnly);
+        if (!f.open(QIODevice::WriteOnly)) qFatal("non scrivibile: %s", qPrintable(f.fileName()));
         f.write("pinentry-program " + pe.toUtf8() + "\n");
         f.close();
         r = runGpg(homePw_, {QStringLiteral("--batch"), QStringLiteral("--pinentry-mode"), QStringLiteral("loopback"),
@@ -479,7 +479,7 @@ private slots:
         VerifyOut inner;
         s.decrypt(e.out, [&o](bool ok, QByteArray p, QString er) { o = {true, ok, p, er}; },
                   [&inner](SignatureStatus st, QString who) { inner = {true, st, who}; });
-        QTest::qWaitFor([&o] { return o.done; }, 60000);
+        QVERIFY2(QTest::qWaitFor([&o] { return o.done; }, 60000), "gpg: tempo scaduto");
         QVERIFY2(o.ok, qPrintable(o.err));
         QCOMPARE(o.plain, plain);
         QVERIFY(inner.done);
@@ -492,7 +492,7 @@ private slots:
         inner = {};
         s.decrypt(e.out, [&o](bool ok, QByteArray p, QString er) { o = {true, ok, p, er}; },
                   [&inner](SignatureStatus st, QString who) { inner = {true, st, who}; });
-        QTest::qWaitFor([&o] { return o.done; }, 60000);
+        QVERIFY2(QTest::qWaitFor([&o] { return o.done; }, 60000), "gpg: tempo scaduto");
         QVERIFY2(o.ok, qPrintable(o.err));
         QCOMPARE(inner.st, SignatureStatus::Valid);
 

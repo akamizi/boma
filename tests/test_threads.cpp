@@ -12,11 +12,11 @@ namespace {
 // mu finto: risponde sempre con lo stesso JSON (letto da un file accanto allo script).
 QString fakeMu(const QString& dir, const QByteArray& json) {
     QFile j(dir + "/out.json");
-    j.open(QIODevice::WriteOnly);
+    if (!j.open(QIODevice::WriteOnly)) qFatal("non scrivibile: %s", qPrintable(j.fileName()));
     j.write(json);
     j.close();
     QFile f(dir + "/mu");
-    f.open(QIODevice::WriteOnly);
+    if (!f.open(QIODevice::WriteOnly)) qFatal("non scrivibile: %s", qPrintable(f.fileName()));
     f.write("#!/bin/sh\ncat \"$(dirname \"$0\")/out.json\"\n");
     f.close();
     f.setPermissions(QFile::permissions(f.fileName()) | QFile::ExeOwner);

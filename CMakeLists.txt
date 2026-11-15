@@ -57,6 +57,12 @@ target_link_libraries(boma_core PUBLIC Qt6::Widgets Qt6::Network Qt6::DBus PkgCo
 add_executable(boma src/main.cpp)
 target_link_libraries(boma PRIVATE boma_core)
 
+# Avvisi del compilatore solo per i sorgenti del progetto (le dipendenze non passano da qui),
+# mai -Werror: un compilatore piu' nuovo non deve rompere il build per un avviso.
+set(BOMA_WARNINGS $<$<COMPILE_LANG_AND_ID:CXX,GNU,Clang,AppleClang>:-Wall;-Wextra>)
+target_compile_options(boma_core PRIVATE ${BOMA_WARNINGS})
+target_compile_options(boma PRIVATE ${BOMA_WARNINGS})
+
 include(GNUInstallDirs)
 install(TARGETS boma RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES packaging/boma.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
@@ -67,6 +73,7 @@ enable_testing()
 function(boma_add_test name)
     add_executable(${name} ${ARGN})
     target_link_libraries(${name} PRIVATE boma_core Qt6::Test)
+    target_compile_options(${name} PRIVATE ${BOMA_WARNINGS})
     add_test(NAME ${name} COMMAND ${name})
     set_tests_properties(${name} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endfunction()

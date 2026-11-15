@@ -10,7 +10,7 @@ class TestConfig : public QObject {
     static QString write(const QTemporaryDir& d, const QByteArray& body) {
         QString p = d.filePath("config.ini");
         QFile f(p);
-        f.open(QIODevice::WriteOnly);
+        if (!f.open(QIODevice::WriteOnly)) qFatal("non scrivibile: %s", qPrintable(f.fileName()));
         f.write(body);
         return p;
     }

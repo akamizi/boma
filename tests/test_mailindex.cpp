@@ -41,7 +41,7 @@ private slots:
         idx->setAccounts({a});
         bool done = false, ok = false; QString err;
         idx->reindex("acc", [&](bool o, QString e) { ok = o; err = e; done = true; });
-        QTest::qWaitFor([&] { return done; }, 120000);
+        QVERIFY2(QTest::qWaitFor([&] { return done; }, 120000), "mu index: tempo scaduto");
         QVERIFY2(ok, qPrintable(err));
     }
     void testCountUnreadMatchesList() {
@@ -204,7 +204,7 @@ private slots:
     }
     QString fakeMu(const QString& name, const QString& body) {
         const QString p = td.path() + "/" + name;
-        QFile f(p); f.open(QIODevice::WriteOnly);
+        QFile f(p); if (!f.open(QIODevice::WriteOnly)) qFatal("non scrivibile: %s", qPrintable(f.fileName()));
         f.write("#!/bin/sh\n" + body.toUtf8() + "\n"); f.close();
         f.setPermissions(f.permissions() | QFileDevice::ExeOwner);
         return p;
@@ -275,7 +275,7 @@ private slots:
         // non rovina la copia della paginazione di una ricerca in corso
         auto p0 = runSearch(*idx, "date:2000..", 0, 50);
         Result tmp;
-        idx->newestUnread([&](QList<MessageSummary> l, QString e) { tmp.done = true; });
+        idx->newestUnread([&](QList<MessageSummary>, QString) { tmp.done = true; });
         QVERIFY(QTest::qWaitFor([&] { return tmp.done; }, 60000));
         auto p1 = runSearch(*idx, "date:2000..", 50, 50);
         QCOMPARE(p1.list.size(), 50);

@@ -154,7 +154,7 @@ private slots:
         QCOMPARE(w.discards, 1);
     }
     void testDraftKeptWhenSentCopyFailed() {
-        for (const QString fb : {QString("/x/emergenza.eml"), QString()}) {
+        for (const QString& fb : {QString("/x/emergenza.eml"), QString()}) {
             FakeWin w; next_ = res(SendResult::Sent, "copia"); next_.copyFailed = true; next_.fallbackPath = fb;
             c_->start(w.surface(), someMessage(), false, false);
             QTRY_VERIFY(c_->isSent(&w));
