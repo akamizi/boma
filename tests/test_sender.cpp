@@ -469,7 +469,7 @@ private slots:
             QVERIFY(plain.startsWith("Content-Type: text/plain"));
             QVERIFY(plain.contains(kBody));
             QVERIFY(plain.contains("\r\n"));
-            QVERIFY(!plain.toLower().contains("bcc"));
+            QVERIFY(!QString::fromLatin1(plain).contains(QRegularExpression(QStringLiteral("^bcc:"), QRegularExpression::MultilineOption | QRegularExpression::CaseInsensitiveOption)));
             QVERIFY(readFile(e.dir + QStringLiteral("/gpg.log")).contains("--throw-keyids"));
             // copia in Inviata = Bcc (solo copia) + byte inviati
             const QByteArray copy = readFile(sentDir("a") + QLatin1Char('/') + files(sentDir("a")).first());

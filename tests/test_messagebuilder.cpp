@@ -1,4 +1,5 @@
 #include <QtTest>
+#include <QRegularExpression>
 #include <sys/stat.h>
 #include "mime/MessageBuilder.h"
 #include "mime/MessageParser.h"
@@ -131,7 +132,8 @@ private slots:
         QString err;
         const QByteArray raw = MessageBuilder::build(m, &err);
         QVERIFY2(!raw.isEmpty(), qPrintable(err));
-        QVERIFY(!raw.toLower().contains("bcc"));
+        // niente intestazione Bcc (non si cerca "bcc" ovunque: un UUID casuale puo' contenerlo)
+        QVERIFY(!QString::fromLatin1(raw).contains(QRegularExpression(QStringLiteral("^bcc:"), QRegularExpression::MultilineOption | QRegularExpression::CaseInsensitiveOption)));
         QVERIFY(!raw.contains("hidden@example.net"));
         QVERIFY(MessageBuilder::envelopeRecipients(m).contains("hidden@example.net"));
     }
