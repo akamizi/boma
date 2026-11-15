@@ -259,7 +259,10 @@ private slots:
         QVERIFY(d.contains("hidden@example.net"));
         QVERIFY(headerPart(d).contains("anna@example.com"));
         const QByteArray s = MessageBuilder::build(m, &err, BuildMode::Send);
-        QVERIFY(!s.toLower().contains("bcc"));
+        // l'intestazione Bcc non c'e' (non basta cercare "bcc": un UUID casuale del Message-ID
+        // puo' contenere quelle tre lettere esadecimali, circa 1 volta su 300)
+        const QByteArray sh = headerPart(s).toLower();
+        QVERIFY(!sh.startsWith("bcc:") && !sh.contains("\nbcc:"));
         QVERIFY(!s.contains("hidden@example.net"));
         // la bozza si rilegge: Bcc ricostruibile, ricostruzione Send lo elimina
         const ParsedMessage p = MessageParser::parse(d);
