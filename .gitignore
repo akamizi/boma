@@ -1,4 +1,11 @@
-# Solo sorgenti, build e README di aiuto sono versionati: tutto il resto è escluso
+# Esclusi dal controllo di versione:
+#  - build/                 : uscita di CMake (si rigenera con "cmake -S . -B build")
+#  - __pycache__/, *.pyc    : bytecode che Python crea da solo accanto a gmail_labels.py
+#  - docs/superpowers/      : piano, specifica e note di collaudo di lavoro, solo locali
+#                             (non fanno parte del codice e non sono documentazione per gli utenti)
+#  - .superpowers/          : stato locale degli strumenti di lavoro
+build/
+__pycache__/
+*.pyc
 docs/superpowers/
 .superpowers/
-build/
