@@ -33,3 +33,8 @@ boma_add_test(test_richtext test_richtext.cpp)
 boma_add_test(test_sender test_sender.cpp)
 boma_add_test(test_mainwindow test_mainwindow.cpp)
 boma_add_test(test_realtools test_realtools.cpp)
+
+# test_cli lancia il binario vero (boma --version) in un ambiente senza display
+boma_add_test(test_cli test_cli.cpp)
+target_compile_definitions(test_cli PRIVATE BOMA_EXE="$<TARGET_FILE:boma>")
+add_dependencies(test_cli boma)

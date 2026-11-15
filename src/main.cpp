@@ -5,7 +5,11 @@
 #include "ui/Theme.h"
 #include <QStatusBar>
 
+#include "core/Version.h"
+
 int main(int argc, char *argv[]) {
+    int code = 0;
+    if (boma::handleCommandLine(argc, argv, &code)) return code; // prima di QApplication: niente display
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("Boma"));
     QApplication::setOrganizationName(QStringLiteral("Boma"));

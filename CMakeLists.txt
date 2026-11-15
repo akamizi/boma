@@ -19,6 +19,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DI
 
 add_library(boma_core STATIC
     src/core/Config.cpp
+    src/core/Version.cpp
     src/core/ConfigCheck.cpp
     src/ui/SettingsDialog.cpp
     src/ui/Theme.cpp
@@ -53,6 +54,19 @@ add_library(boma_core STATIC
 )
 target_include_directories(boma_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(boma_core PUBLIC Qt6::Widgets Qt6::Network Qt6::DBus PkgConfig::GMIME)
+
+# Unica fonte della versione: project(boma VERSION ...). Il commit e' facoltativo (build da git).
+target_compile_definitions(boma_core PUBLIC BOMA_VERSION="${PROJECT_VERSION}")
+if(NOT DEFINED BOMA_COMMIT)
+    execute_process(COMMAND git -C ${CMAKE_SOURCE_DIR} rev-parse --short=9 HEAD
+                    OUTPUT_VARIABLE BOMA_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE BOMA_GIT_RC)
+    if(NOT BOMA_GIT_RC EQUAL 0)
+        set(BOMA_COMMIT "")
+    endif()
+endif()
+if(BOMA_COMMIT)
+    set_source_files_properties(src/core/Version.cpp PROPERTIES COMPILE_DEFINITIONS "BOMA_COMMIT=\"${BOMA_COMMIT}\"")
+endif()
 
 add_executable(boma src/main.cpp)
 target_link_libraries(boma PRIVATE boma_core)

@@ -149,6 +149,19 @@ ctest --test-dir build --output-on-failure
 ./build/boma
 ```
 
+### Opzioni da riga di comando
+
+```sh
+boma --version   # (o -V) una riga: "boma 0.1.4 (abc123def)"; esce con 0
+boma --help      # (o -h) elenco delle opzioni
+```
+
+`--version` non apre la finestra, non richiede display né configurazione e non lancia programmi
+esterni: serve a verificare la versione installata (per esempio `boma --version | cut -d' ' -f2`).
+Il numero viene da `project(boma VERSION ...)` in `CMakeLists.txt`, l'unica fonte. Tra parentesi
+c'è il commit del build, se compilato da un checkout git (calcolato al `cmake` di configurazione;
+si può fissare con `-DBOMA_COMMIT=...`); nei pacchetti compilati dal tarball c'è solo la versione.
+
 ## Configurazione
 
 Boma non sostituisce i file di configurazione dei programmi che usa; li lascia
