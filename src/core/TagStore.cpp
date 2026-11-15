@@ -148,7 +148,7 @@ int TagStore::addTags(const QHash<QString, QStringList>& byId) {
 
 bool TagStore::renameTag(const QString& from, const QString& to) {
     const QString n = normalize(to);
-    if (n.isEmpty() || from.compare(n, Qt::CaseInsensitive) == 0 && from == n) return true;
+    if (n.isEmpty() || from == n) return true; // nulla da fare (un cambio di sole maiuscole invece procede)
     const QString target = canonical(n);
     bool any = false;
     for (auto it = byId_.begin(); it != byId_.end(); ++it) {

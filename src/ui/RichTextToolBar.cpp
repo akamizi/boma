@@ -96,8 +96,8 @@ RichTextToolBar::RichTextToolBar(QTextEdit* edit, QWidget* parent) : QToolBar(pa
         }
         edit_->setFocus();
     };
-    connect(bullets_, &QAction::triggered, this, [=]() { list(QTextListFormat::ListDisc, bullets_, numbers_); });
-    connect(numbers_, &QAction::triggered, this, [=]() { list(QTextListFormat::ListDecimal, numbers_, bullets_); });
+    connect(bullets_, &QAction::triggered, this, [this, list]() { list(QTextListFormat::ListDisc, bullets_, numbers_); });
+    connect(numbers_, &QAction::triggered, this, [this, list]() { list(QTextListFormat::ListDecimal, numbers_, bullets_); });
     connect(left_, &QAction::triggered, this, [this]() { edit_->setAlignment(Qt::AlignLeft); });
     connect(center_, &QAction::triggered, this, [this]() { edit_->setAlignment(Qt::AlignHCenter); });
     connect(right_, &QAction::triggered, this, [this]() { edit_->setAlignment(Qt::AlignRight); });
