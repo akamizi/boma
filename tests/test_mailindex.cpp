@@ -56,6 +56,30 @@ private slots:
         QCOMPARE(n, 0); // nessuna corrispondenza non e' un errore
         QVERIFY(err.isEmpty());
     }
+    // Una sola chiamata per tutte le cartelle deve dare gli stessi numeri di una query per cartella.
+    void testUnreadByMaildirMatchesPerFolderCount() {
+        QHash<QString, int> by; QString err; bool done = false;
+        idx->unreadByMaildir([&](QHash<QString, int> h, QString e) { by = h; err = e; done = true; });
+        QVERIFY(QTest::qWaitFor([&] { return done; }, 60000));
+        QVERIFY2(err.isEmpty(), qPrintable(err));
+        QVERIFY(!by.isEmpty());
+        int sum = 0;
+        for (auto it = by.cbegin(); it != by.cend(); ++it) {
+            sum += it.value();
+            int n = -2; bool d = false;
+            idx->countUnread(QStringLiteral("maildir:\"%1\"").arg(it.key()), [&](int c, QString) { n = c; d = true; });
+            QVERIFY(QTest::qWaitFor([&] { return d; }, 60000));
+            QCOMPARE(it.value(), n);
+        }
+        QCOMPARE(sum, (N + 2) / 3);
+    }
+    void testUnreadByMaildirFailureIsReported() {
+        MailIndex bad(nullptr, "/nonexistent/mu", muhome);
+        QString err; bool done = false;
+        bad.unreadByMaildir([&](QHash<QString, int>, QString e) { err = e; done = true; });
+        QVERIFY(QTest::qWaitFor([&] { return done; }, 10000));
+        QVERIFY(!err.isEmpty());
+    }
     void testUnreadReturnsOnlyUnread() {
         auto r = runSearch(*idx, {}, 0, 5000, true);
         QVERIFY2(r.error.isEmpty(), qPrintable(r.error));

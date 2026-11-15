@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QDebug>
 #include <QPointer>
+#include <QSet>
 #include <QTimer>
 #include <algorithm>
 #include <QRegularExpression>
@@ -192,6 +193,23 @@ QString MailIndex::maildirQuery(const QString& muRoot, const QString& maildirRoo
     return QStringLiteral("maildir:\"%1\"").arg(rel);
 }
 
+QString MailIndex::maildirOfQuery(const QString& query)
+{
+    static const QString pre = QStringLiteral("maildir:\"");
+    if (!query.startsWith(pre) || !query.endsWith(QLatin1Char('"')) || query.size() < pre.size() + 1)
+        return {};
+    const QString body = query.mid(pre.size(), query.size() - pre.size() - 1);
+    QString out;
+    for (int i = 0; i < body.size(); ++i) {
+        if (body[i] == QLatin1Char('"'))
+            return {}; // virgolette non protette: non e' una query prodotta da maildirQuery
+        if (body[i] == QLatin1Char('\\') && ++i >= body.size())
+            return {};
+        out += body[i];
+    }
+    return out;
+}
+
 QString MailIndex::unreadQuery() const
 {
     // Cestino, Bozze (salvate con la sola bandiera D) e Inviata non sono "da leggere".
@@ -288,6 +306,57 @@ void MailIndex::countUnread(const QString& query, std::function<void(int, QStrin
         }
         if (cb)
             cb(n, err);
+    });
+}
+
+QHash<QString, int> MailIndex::parseUnreadByMaildir(const QByteArray& plain)
+{
+    QHash<QString, int> out;
+    QSet<QString> seen;
+    for (const QByteArray& raw : plain.split('\n')) {
+        QString line = QString::fromUtf8(raw);
+        while (line.endsWith(QLatin1Char('\r')) || line.endsWith(QLatin1Char(' ')))
+            line.chop(1); // a sinistra niente: con il Message-ID vuoto la riga inizia con lo spazio
+        const qsizetype sp = line.indexOf(QLatin1Char(' '));
+        if (line.isEmpty() || sp < 0)
+            continue;
+        const QString id = line.left(sp), folder = line.mid(sp + 1);
+        if (folder.isEmpty())
+            continue;
+        if (!id.isEmpty()) {
+            const QString key = folder + QLatin1Char('\x1f') + id;
+            if (seen.contains(key))
+                continue; // stesso Message-ID gia' contato in questa cartella
+            seen.insert(key);
+        }
+        ++out[folder];
+    }
+    return out;
+}
+
+void MailIndex::unreadByMaildir(std::function<void(QHash<QString, int>, QString)> cb)
+{
+    QStringList args = baseArgs(QStringLiteral("find"));
+    args << QStringLiteral("--format=plain") << QStringLiteral("--fields=i m") << QStringLiteral("--")
+         << QStringLiteral("flag:unread AND NOT flag:trashed");
+    m_runner.run(m_mu, args, std::chrono::seconds(60), [cb = std::move(cb)](ProcessResult r) {
+        QHash<QString, int> out;
+        QString err;
+        if (r.crashed || r.timedOut || r.exitCode == -1) {
+            err = QString::fromUtf8(r.err).trimmed();
+            if (err.isEmpty())
+                err = QStringLiteral("mu: non eseguibile");
+        } else if (r.exitCode == 2) {
+            // nessuna corrispondenza: nessuna non letta
+        } else if (r.exitCode != 0) {
+            err = QString::fromUtf8(r.err).trimmed();
+            if (err.isEmpty())
+                err = QStringLiteral("mu: errore (codice %1)").arg(r.exitCode);
+        } else {
+            out = parseUnreadByMaildir(r.out);
+        }
+        if (cb)
+            cb(std::move(out), err);
     });
 }
 

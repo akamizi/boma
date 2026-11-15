@@ -3,6 +3,7 @@
 #include "core/MailActions.h"
 #include "core/ProcessRunner.h"
 #include <QDateTime>
+#include <QHash>
 #include <QList>
 #include <QObject>
 #include <QString>
@@ -58,6 +59,9 @@ public:
     // Query di una cartella `maildir:"/<rel>"`, relativa alla radice di mu.
     // Vuota se la Maildir dell'account non e' sotto la radice o la cartella e' vuota.
     static QString maildirQuery(const QString& muRoot, const QString& maildirRoot, const QString& folder);
+    // Inverso di maildirQuery: la cartella ("/a/INBOX") di una query `maildir:"..."`; vuota
+    // se `query` non ha esattamente quella forma.
+    static QString maildirOfQuery(const QString& query);
 
     // Ordinamento dei risultati di search (field: date, from, subject, size; altri valori
     // = date). Predefinito: data, dal piu' recente. Il chiamante azzera il modello dopo.
@@ -76,6 +80,13 @@ public:
     // Numero di messaggi non letti (non cestinati) che soddisfano `query` (vuota = la vista
     // "Non lette"). Asincrono; cb(-1, errore) se mu fallisce.
     void countUnread(const QString& query, std::function<void(int count, QString error)> cb);
+    // Non letti (non cestinati) di TUTTE le cartelle con una sola chiamata a mu: cartella
+    // ("/a/INBOX") -> numero di messaggi, contando una volta sola i Message-ID ripetuti nella
+    // stessa cartella (come `--skip-dups` su una query per cartella). Le cartelle senza non
+    // lette non compaiono. cb(vuoto, errore) se mu fallisce.
+    void unreadByMaildir(std::function<void(QHash<QString, int> byMaildir, QString error)> cb);
+    // Analisi dell'output di `mu find --format=plain --fields="i m"` (esposta per i test).
+    static QHash<QString, int> parseUnreadByMaildir(const QByteArray& plain);
     // Percorsi dei messaggi non letti che soddisfano `query` (cestino compreso).
     void unreadPaths(const QString& query, std::function<void(QStringList paths, QString error)> cb);
     void reindex(const QString& accountId, Callback cb);
