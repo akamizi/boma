@@ -436,6 +436,13 @@ private slots:
         QVERIFY(t.elapsed() < 5000);
     }
     void testHugeFilenameIsFast() {
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
+        QSKIP("tempi non confrontabili sotto sanitizer");
+#elif defined(__has_feature)
+#  if __has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)
+        QSKIP("tempi non confrontabili sotto sanitizer");
+#  endif
+#endif
         QElapsedTimer t;
         t.start();
         const QString a = MessageParser::sanitizeFilename(QString(1000000, QLatin1Char(' ')) + QString(1000000, QLatin1Char('a')) + QStringLiteral(".txt"));

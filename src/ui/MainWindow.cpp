@@ -801,7 +801,10 @@ void MainWindow::markFolderRead(const QString&, const QString& query, const QStr
         auto st = std::make_shared<State>();
         st->paths = paths;
         auto step = std::make_shared<std::function<void()>>();
-        *step = [self, st, step, label]() {
+        *step = [self, st, ws = std::weak_ptr<std::function<void()>>(step), label]() {
+            // `step` solo debole nella propria lambda (niente ciclo); la tiene in vita la callback in volo
+            auto step = ws.lock();
+            if (!step) return;
             if (!self) return;
             if (st->i >= st->paths.size()) {
                 self->bulkBusy_ = false;
@@ -1248,7 +1251,10 @@ void MainWindow::markCheckedRead() {
     st->items = sel;
     QPointer<MainWindow> self(this);
     auto step = std::make_shared<std::function<void()>>();
-    *step = [self, st, step]() {
+    *step = [self, st, ws = std::weak_ptr<std::function<void()>>(step)]() {
+        // `step` solo debole nella propria lambda (niente ciclo); la tiene in vita la callback in volo
+        auto step = ws.lock();
+        if (!step) return;
         if (!self) return;
         if (st->i >= st->items.size()) {
             self->bulkBusy_ = false;
@@ -1305,7 +1311,10 @@ void MainWindow::bulkApply(const QString& title, const QList<MessageSummary>& it
     st->items = items;
     QPointer<MainWindow> self(this);
     auto step = std::make_shared<std::function<void()>>();
-    *step = [self, st, step, op, removesFromList, title, doneText]() {
+    *step = [self, st, ws = std::weak_ptr<std::function<void()>>(step), op, removesFromList, title, doneText]() {
+        // `step` solo debole nella propria lambda (niente ciclo); la tiene in vita la callback in volo
+        auto step = ws.lock();
+        if (!step) return;
         if (!self) return;
         if (st->i >= st->items.size()) {
             self->bulkBusy_ = false;
@@ -1447,7 +1456,10 @@ void MainWindow::deleteChecked() {
     st->items = sel;
     QPointer<MainWindow> self(this);
     auto step = std::make_shared<std::function<void()>>();
-    *step = [self, st, step]() {
+    *step = [self, st, ws = std::weak_ptr<std::function<void()>>(step)]() {
+        // `step` solo debole nella propria lambda (niente ciclo); la tiene in vita la callback in volo
+        auto step = ws.lock();
+        if (!step) return;
         if (!self) return;
         if (st->i >= st->items.size()) {
             self->bulkBusy_ = false;

@@ -180,6 +180,21 @@ private slots:
         QCOMPARE(byMaildirCalls_, 0);
     }
     // Il contatore puo' sparire mentre mu sta ancora rispondendo.
+    // Il passo ricorsivo e' tenuto solo debolmente dalla propria lambda: a tenerlo in vita
+    // devono essere le callback in volo. Con piu' query singole tutte asincrone, la catena
+    // deve arrivare fino in fondo e pubblicare ogni numero.
+    void testSerialSinglesSurviveInFlight() {
+        singles_ = {{"flag:a", 1}, {"flag:b", 2}, {"flag:c", 3}};
+        queries_ = {QStringLiteral("flag:a"), QStringLiteral("flag:b"), QStringLiteral("flag:c")};
+        delay_ = 30;
+        c_->schedule();
+        QVERIFY(QTest::qWaitFor([&] { return published_.size() == 1; }, 5000));
+        QCOMPARE(singleCalls_, 3);
+        const auto r = published_.first();
+        QCOMPARE(r.value(QStringLiteral("flag:a")), 1);
+        QCOMPARE(r.value(QStringLiteral("flag:b")), 2);
+        QCOMPARE(r.value(QStringLiteral("flag:c")), 3);
+    }
     void testDestroyedWhileRunning() {
         delay_ = 50;
         c_->schedule();
