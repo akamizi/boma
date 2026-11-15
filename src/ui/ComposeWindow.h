@@ -10,17 +10,21 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QStackedWidget>
+#include <QTemporaryDir>
 #include <QTextEdit>
 #include <functional>
+#include <memory>
 
 namespace boma {
 
 // Finestra di scrittura. Non invia (Task 9: ascolta sendRequested) e non
 // gestisce PGP: espone solo i pulsanti Firma/Cifra.
 // Le bozze sono scritte con MaildirWriter in Bozze dell'account proprietario
-// dell'identita' scelta; ogni salvataggio crea un nuovo file (mai
-// sovrascrive). Il Bcc non e' mai nel messaggio costruito, quindi non e'
-// conservato nella bozza.
+// dell'identita' scelta, in modalita' BuildMode::Draft: il Bcc e i destinatari non
+// analizzabili sono conservati (intestazioni Bcc e X-Boma-Raw-*), la firma non e'
+// aggiunta. Ogni salvataggio SOSTITUISCE la bozza della finestra: il nuovo file si scrive
+// per primo e solo dopo si rimuove il vecchio. Una bozza riaperta (setDraftPath) viene
+// sostituita allo stesso modo, quindi non si accumulano copie.
 class ComposeWindow : public QMainWindow {
     Q_OBJECT
 public:
@@ -38,6 +42,24 @@ public:
     // rimuove solo dopo aver scritto la nuova: mai nessuna copia in meno del necessario).
     // Percorso dell'ultima bozza scritta (vuoto se mai salvata o gia' rimossa).
     QString draftPath() const { return draftPath_; }
+    // Lega la finestra a una bozza esistente (riaperta per modificarla): il prossimo
+    // salvataggio la sostituisce e l'invio riuscito la rimuove. Da chiamare dopo setPrefill.
+    void setDraftPath(const QString& path);
+    // Registra `path` come origine della finestra SENZA legarla: la bozza originale non sara'
+    // mai sostituita ne' rimossa (serve per le bozze non riproducibili fedelmente), ma la
+    // stessa bozza non si riapre in una seconda finestra.
+    void markOpenedFrom(const QString& path);
+    // Vero se `path` e' (o e' stata, in questa finestra) la bozza legata alla finestra.
+    // Confronta la parte unica del nome (mbsync rinomina i file cambiando i suffissi).
+    bool ownsDraft(const QString& path) const;
+    // Identita' stabile di una bozza: cartella Maildir + parte unica del nome file.
+    static QString draftKey(const QString& path);
+    // La finestra possiede la cartella temporanea con gli allegati estratti: viene
+    // eliminata alla chiusura (qualunque via), dopo l'invio e alla distruzione.
+    void adoptTempDir(std::shared_ptr<QTemporaryDir> dir) { tempDir_ = std::move(dir); }
+    // Riferimento condiviso: chi ha un invio pendente lo tiene finche' non si risolve, cosi'
+    // la chiusura della finestra non cancella gli allegati prima del nuovo tentativo.
+    std::shared_ptr<QTemporaryDir> tempDir() const { return tempDir_; }
     // Rimuove la bozza di questa finestra (dopo un invio riuscito con copia in Inviata).
     bool discardDraft();
     bool isDirty() const { return dirty_; }
@@ -100,6 +122,8 @@ private:
     bool dirty_ = false;
     bool saveFailed_ = false;
     QString draftPath_;
+    QStringList draftKeys_; // chiavi di tutte le bozze legate (la corrente e le sostituite)
+    std::shared_ptr<QTemporaryDir> tempDir_;
     bool loading_ = false;
     QString inReplyTo_;      // dal prefill (risposte): conservati nel messaggio
     QStringList references_;

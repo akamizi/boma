@@ -61,8 +61,11 @@ struct MainWindowOptions {
 // azioni sui messaggi passano da MailActions (mu move). Mai cancellazione
 // definitiva: "Elimina" sposta nel cestino dell'account, senza conferma (come da
 // specifica) ma con pulsante rosso, distinto dalle azioni sicure.
-// Limite noto (rinvio del registro): la bozza salvata in Drafts durante la
-// scrittura resta in Drafts anche dopo l'invio riuscito.
+// Bozze: da Bozze un messaggio si riapre in ComposeWindow (doppio clic, Invio, pulsante
+// Modifica). Il salvataggio sostituisce la stessa bozza e l'invio riuscito (con copia in
+// Inviata) la rimuove; se la copia in Inviata fallisce la bozza resta. Una bozza non si
+// apre in due finestre. Gli allegati si estraggono in una cartella temporanea eliminata
+// alla chiusura della finestra.
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
@@ -82,6 +85,11 @@ public:
     QPushButton* replyButton() const { return replyBtn_; }
     QPushButton* replyAllButton() const { return replyAllBtn_; }
     QPushButton* forwardButton() const { return fwdBtn_; }
+    // Visibile solo nella cartella Bozze; riapre la bozza selezionata nel composer.
+    QPushButton* editButton() const { return editBtn_; }
+    // Riapre una bozza (anche per i test). Se e' gia' aperta porta in primo piano la finestra.
+    void openDraft(const MessageSummary& s);
+    bool isDraftSummary(const MessageSummary& s) const;
     QPushButton* deleteButton() const { return delBtn_; }
     // Operazioni sui messaggi selezionati con le caselle (barra sopra l'elenco).
     QWidget* bulkBar() const { return bulkBar_; }
@@ -184,6 +192,10 @@ private:
     void onSyncState(SyncService::State st, const QString& accountId, const QString& message);
     void compose(ReplyMode mode);
     ComposeWindow* openCompose(const OutgoingMessage* prefill);
+    void updateDraftUi();
+    void editSelectedDraft();
+    QPushButton* editBtn_ = nullptr;
+    QSet<QString> openingDrafts_; // chiavi delle bozze in lettura (evita doppie aperture)
     SendController* sendCtl_ = nullptr; // flusso di invio (logica in core/SendController)
     void showNotice(const QString& title, const QString& text);
     void setHaveMessage(bool on);

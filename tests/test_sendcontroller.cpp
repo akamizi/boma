@@ -322,6 +322,50 @@ private slots:
         QTest::qWait(50);
         QCOMPARE(sendCalls_, 1);
     }
+    // Cartella temporanea (allegati di una bozza riaperta) legata al tentativo di invio:
+    // viva finche' c'e' un passo pendente, anche a finestra chiusa; libera alla risoluzione.
+    void testKeepAliveSurvivesWindowCloseWhileAskingThenFreedOnCancel() {
+        auto tmp = std::make_shared<QTemporaryDir>(QDir::currentPath() + "/keepXXXXXX");
+        QVERIFY(tmp->isValid());
+        const QString file = tmp->path() + "/allegato.txt";
+        { QFile f(file); QVERIFY(f.open(QIODevice::WriteOnly)); f.write("x"); }
+        auto* w = new FakeWin; next_ = res(SendResult::NeedsConfirmationUnsigned);
+        SendController::Surface s = w->surface();
+        s.keepAlive = tmp;
+        tmp.reset(); // la "finestra" (qui: solo la Surface) e' l'ultimo riferimento
+        bool existedWhileAsking = false;
+        c_->setConfirmUnsigned([&] {
+            ++asked_;
+            delete w; // finestra chiusa mentre la domanda e' aperta
+            existedWhileAsking = QFile::exists(file);
+            return false;
+        });
+        c_->start(s, someMessage(), true, false);
+        s = SendController::Surface(); // il chiamante non tiene nulla
+        QTRY_COMPARE(asked_, 1);
+        QVERIFY(existedWhileAsking);
+        QTRY_VERIFY(!QFile::exists(file)); // annullato: la cartella sparisce
+    }
+    void testKeepAliveHeldDuringRetryAndFreedAfterSend() {
+        auto tmp = std::make_shared<QTemporaryDir>(QDir::currentPath() + "/keepXXXXXX");
+        QVERIFY(tmp->isValid());
+        const QString file = tmp->path() + "/allegato.txt";
+        { QFile f(file); QVERIFY(f.open(QIODevice::WriteOnly)); f.write("x"); }
+        FakeWin w; answer_ = true; hold_ = true;
+        SendController::Surface s = w.surface();
+        s.keepAlive = tmp;
+        tmp.reset();
+        c_->start(s, someMessage(), true, false);
+        s = SendController::Surface();
+        QTRY_VERIFY(held_);
+        finish(res(SendResult::NeedsConfirmationUnsigned));
+        QTRY_COMPARE(sendCalls_, 2);   // nuovo tentativo con allowUnsigned, ora pendente
+        QTRY_VERIFY(held_);
+        QVERIFY(QFile::exists(file));  // finche' e' pendente la cartella c'e'
+        finish(res(SendResult::Sent));
+        QTRY_VERIFY(w.closed);
+        QTRY_VERIFY(!QFile::exists(file));
+    }
     void testNoConfirmCallbackMeansNo() {
         FakeWin w; next_ = res(SendResult::NeedsConfirmationUnsigned);
         c_->setConfirmUnsigned(nullptr);

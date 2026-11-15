@@ -1210,6 +1210,171 @@ private slots:
         c->setConfirmCallback([] { return true; });
         c->close();
     }
+    // Riapertura di una bozza: doppio clic / Invio / Modifica, destinatari A+Cc+Ccn e allegati
+    // ripristinati, una sola finestra per bozza, cartella temporanea eliminata alla chiusura.
+    void testReopenDraftFromDraftsView() {
+        for (const QString& f : QDir(dir_ + QStringLiteral("/mail/a/Drafts/cur")).entryList(QDir::Files))
+            QFile::remove(dir_ + QStringLiteral("/mail/a/Drafts/cur/") + f);
+        writeFile(dir_ + QStringLiteral("/info.txt"), QStringLiteral("| maildir | %1/mail |\n").arg(dir_).toUtf8());
+        writeFile(dir_ + QStringLiteral("/allegato.txt"), "contenuto allegato 5151");
+        QString draft;
+        {
+            ComposeWindow c(makeConfig(false));
+            c.toEdit()->setText(QStringLiteral("to@x.test"));
+            c.ccEdit()->setText(QStringLiteral("cc@x.test"));
+            c.bccEdit()->setText(QStringLiteral("ccn@x.test"));
+            c.subjectEdit()->setText(QStringLiteral("Bozza riaperta"));
+            c.bodyEdit()->setPlainText(QStringLiteral("Corpo bozza 4242"));
+            c.addAttachment(dir_ + QStringLiteral("/allegato.txt"));
+            QVERIFY(c.saveDraft());
+            draft = c.draftPath();
+            c.markClean();
+        }
+        QVERIFY(!draft.isEmpty());
+        listSearch({jsonMsg(draft, QStringLiteral("d1@x"), QStringLiteral("Alice"), QStringLiteral("Bozza riaperta"), false)});
+        MainWindow w(makeConfig(false), opts());
+        w.show();
+        const QString dq = QStringLiteral("maildir:\"/a/Drafts\"");
+        QVERIFY(QTest::qWaitFor([&] { return folderQueries(w).contains(dq); }, 10000));
+        QVERIFY(waitRows(w, 2));
+        QVERIFY(!w.editButton()->isVisibleTo(&w)); // fuori da Bozze il pulsante non c'e'
+        auto* m = w.folderPane()->itemModel();
+        QStandardItem* drafts = nullptr;
+        for (int i = 0; i < m->item(1)->rowCount(); ++i)
+            if (m->item(1)->child(i)->data(Qt::UserRole + 1).toString() == dq) drafts = m->item(1)->child(i);
+        QVERIFY(drafts);
+        w.folderPane()->setCurrentIndex(drafts->index());
+        QVERIFY(QTest::qWaitFor([&] { return w.model()->query() == dq && w.model()->rowCount() == 1; }, 10000));
+        QVERIFY(w.editButton()->isVisibleTo(&w));
+        w.listView()->setCurrentIndex(w.model()->index(0, 0));
+        QVERIFY(QTest::qWaitFor([&] { return w.editButton()->isEnabled(); }, 10000));
+        // doppio clic
+        // QTest::mouseDClick non produce doubleClicked su QListView offscreen: si emette il segnale
+        emit w.listView()->doubleClicked(w.model()->index(0, 0));
+        QVERIFY(QTest::qWaitFor([&] { return w.composers().size() == 1; }, 10000));
+        QPointer<ComposeWindow> c = firstComposer(w);
+        QCOMPARE(c->toEdit()->text(), QStringLiteral("to@x.test"));
+        QCOMPARE(c->ccEdit()->text(), QStringLiteral("cc@x.test"));
+        QCOMPARE(c->bccEdit()->text(), QStringLiteral("ccn@x.test"));
+        QCOMPARE(c->subjectEdit()->text(), QStringLiteral("Bozza riaperta"));
+        QVERIFY(c->bodyEdit()->toPlainText().contains(QStringLiteral("Corpo bozza 4242")));
+        QCOMPARE(c->identityCombo()->currentIndex(), 0);
+        QCOMPARE(c->attachmentList()->count(), 1);
+        const QString att = c->attachmentList()->item(0)->text();
+        QCOMPARE(QString::fromUtf8(readFile(att)), QStringLiteral("contenuto allegato 5151"));
+        QVERIFY(!c->isDirty());
+        QCOMPARE(c->draftPath(), draft);
+        // chiusura pulita (X/Esc): la cartella temporanea sparisce, poi Invio riapre la bozza
+        c->close();
+        QVERIFY(QTest::qWaitFor([&] { return c.isNull(); }, 10000));
+        QVERIFY(!QDir(QFileInfo(att).absolutePath()).exists());
+        w.listView()->setFocus();
+        QTest::keyClick(w.listView(), Qt::Key_Return);
+        QVERIFY(QTest::qWaitFor([&] { return w.composers().size() == 1; }, 10000));
+        c = firstComposer(w);
+        QCOMPARE(c->attachmentList()->count(), 1);
+        const QString att2 = c->attachmentList()->item(0)->text();
+        QVERIFY(QFile::exists(att2));
+        // gia' aperta: Invio e Modifica riportano in primo piano la stessa finestra
+        w.listView()->setFocus();
+        QTest::keyClick(w.listView(), Qt::Key_Return);
+        w.editButton()->click();
+        QTest::qWait(300);
+        QCOMPARE(w.composers().size(), 1);
+        // il salvataggio sostituisce l'originale
+        c->subjectEdit()->setText(QStringLiteral("Bozza riaperta 2"));
+        QVERIFY(c->saveDraft());
+        QCOMPARE(draftsCountA(), 1);
+        QVERIFY(!QFile::exists(draft));
+        // chiusura (come X/Esc): la cartella temporanea sparisce
+        c->setConfirmCallback([] { return true; });
+        c->close();
+        QVERIFY(QTest::qWaitFor([&] { return c.isNull(); }, 10000));
+        QVERIFY(!QFile::exists(att2));
+        QVERIFY(!QDir(QFileInfo(att2).absolutePath()).exists());
+        QCOMPARE(draftsCountA(), 1); // chiudere non cancella la bozza
+    }
+    // Invio dopo la riapertura: msmtp riceve un messaggio ricostruito (Bcc fuori dalle
+    // intestazioni) e la bozza e' rimossa.
+    void testReopenedDraftSendRemovesDraftAndHidesBcc() {
+        for (const QString& f : QDir(dir_ + QStringLiteral("/mail/a/Drafts/cur")).entryList(QDir::Files))
+            QFile::remove(dir_ + QStringLiteral("/mail/a/Drafts/cur/") + f);
+        QString draft;
+        {
+            ComposeWindow c(makeConfig(false));
+            c.toEdit()->setText(QStringLiteral("to@x.test"));
+            c.bccEdit()->setText(QStringLiteral("ccn@x.test"));
+            c.subjectEdit()->setText(QStringLiteral("Da inviare"));
+            c.bodyEdit()->setPlainText(QStringLiteral("Corpo 9393"));
+            QVERIFY(c.saveDraft());
+            draft = c.draftPath();
+            c.markClean();
+        }
+        listSearch({jsonMsg(draft, QStringLiteral("d2@x"), QStringLiteral("Alice"), QStringLiteral("Da inviare"), false)});
+        MainWindow w(makeConfig(false), opts());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        MessageSummary s;
+        s.path = draft;
+        s.accountId = QStringLiteral("a");
+        w.openDraft(s);
+        QVERIFY(QTest::qWaitFor([&] { return w.composers().size() == 1; }, 10000));
+        QPointer<ComposeWindow> c = firstComposer(w);
+        QCOMPARE(c->bccEdit()->text(), QStringLiteral("ccn@x.test"));
+        c->sendButton()->click();
+        QVERIFY(QTest::qWaitFor([&] { return c.isNull(); }, 20000));
+        QCOMPARE(draftsCountA(), 0);
+        const QString sent = log(QStringLiteral("stdin"));
+        QVERIFY(sent.contains(QStringLiteral("Corpo 9393")));
+        QVERIFY(!sent.contains(QStringLiteral("ccn@x.test")));
+        QVERIFY(!sent.contains(QStringLiteral("X-Boma-Raw")));
+        QVERIFY(log(QStringLiteral("argv")).contains(QStringLiteral("ccn@x.test"))); // ma e' nella busta
+    }
+    // Invio "senza firma" su una bozza riaperta con allegati: la cartella temporanea resta
+    // finche' la domanda e' aperta (anche se la finestra si chiude) e sparisce se si annulla.
+    void testReopenedDraftAttachmentsSurvivePendingUnsignedConfirmation() {
+        for (const QString& f : QDir(dir_ + QStringLiteral("/mail/a/Drafts/cur")).entryList(QDir::Files))
+            QFile::remove(dir_ + QStringLiteral("/mail/a/Drafts/cur/") + f);
+        writeFile(dir_ + QStringLiteral("/allegato.txt"), "contenuto 6161");
+        QString draft;
+        {
+            ComposeWindow c(makeConfig(false));
+            for (int i = 0; i < c.identityCombo()->count(); ++i)
+                if (c.identityCombo()->itemText(i).contains(QStringLiteral("sales@example.test"))) c.identityCombo()->setCurrentIndex(i);
+            c.toEdit()->setText(QStringLiteral("to@x.test"));
+            c.bodyEdit()->setPlainText(QStringLiteral("corpo"));
+            c.addAttachment(dir_ + QStringLiteral("/allegato.txt"));
+            QVERIFY(c.saveDraft());
+            draft = c.draftPath();
+            c.markClean();
+        }
+        MainWindow w(makeConfig(false), opts());
+        w.show();
+        QVERIFY(waitRows(w, 2));
+        MessageSummary s;
+        s.path = draft;
+        s.accountId = QStringLiteral("a");
+        w.openDraft(s);
+        QVERIFY(QTest::qWaitFor([&] { return w.composers().size() == 1; }, 10000));
+        QPointer<ComposeWindow> c = firstComposer(w);
+        QCOMPARE(c->attachmentList()->count(), 1);
+        const QString att = c->attachmentList()->item(0)->text();
+        c->signButton()->setChecked(true); // identita' senza chiave: chiede "inviare senza firma?"
+        bool existedWhileAsking = false, asked = false;
+        w.setConfirmUnsignedCallback([&] {
+            asked = true;
+            c->markClean();
+            c->close(); // la finestra si chiude con la domanda aperta
+            existedWhileAsking = QFile::exists(att);
+            return false; // annullato
+        });
+        c->sendButton()->click();
+        QVERIFY(QTest::qWaitFor([&] { return asked; }, 10000));
+        QVERIFY(existedWhileAsking);
+        QVERIFY(QTest::qWaitFor([&] { return !QFile::exists(att); }, 10000));
+        QVERIFY(!QDir(QFileInfo(att).absolutePath()).exists());
+        QCOMPARE(draftsCountA(), 1); // nulla inviato: la bozza resta
+    }
     // Se mu index non parte la bozza resta su disco e non compaiono avvisi.
     void testDraftsRefreshFailureLeavesFileAndStaysQuiet() {
         for (const QString& f : QDir(dir_ + QStringLiteral("/mail/a/Drafts/cur")).entryList(QDir::Files))

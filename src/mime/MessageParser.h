@@ -17,6 +17,13 @@ struct Attachment {
 
 struct ParsedMessage {
     QString from, to, cc, subject;
+    // Bcc: presente solo nei messaggi che lo conservano (le bozze e la copia in Inviata).
+    QString bcc;
+    // Destinatari che GMime non sa interpretare, da NON perdere riaprendo una bozza.
+    // Bozza di Boma: valore di X-Boma-Raw-To/-Cc/-Bcc. Bozza di altro client: se To/Cc/Bcc
+    // c'e' ma non e' stato interpretato (campo vuoto sopra), il testo originale
+    // dell'intestazione, decodificato. Vuoti se non c'e' nulla da conservare.
+    QString rawTo, rawCc, rawBcc;
     // Per rispondere: Message-ID (senza <>), catena References (senza <>), Reply-To.
     QString messageId, replyTo;
     QStringList references;

@@ -26,7 +26,9 @@
 #include <QMessageBox>
 #include <QSettings>
 #include <QToolButton>
+#include <QKeyEvent>
 #include <QMouseEvent>
+#include <QTemporaryDir>
 #include <QScrollBar>
 #include <QShortcut>
 #include <QSplitter>
@@ -171,6 +173,9 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     replyBtn_ = new QPushButton(tr("Rispondi"), right);
     replyAllBtn_ = new QPushButton(tr("Rispondi a tutti"), right);
     fwdBtn_ = new QPushButton(tr("Inoltra"), right);
+    editBtn_ = new QPushButton(tr("Modifica"), right);
+    editBtn_->setToolTip(tr("Riapre la bozza per modificarla e inviarla (doppio clic o Invio)"));
+    editBtn_->setVisible(false);
     delBtn_ = new QPushButton(tr("Elimina"), right);
     delBtn_->setToolTip(tr("Sposta nel cestino (Canc). Senza conferma, ma recuperabile dal cestino."));
     // azione distruttiva (anche se recuperabile): visivamente distinta
@@ -181,6 +186,7 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     btnRow->addWidget(replyBtn_);
     btnRow->addWidget(replyAllBtn_);
     btnRow->addWidget(fwdBtn_);
+    btnRow->addWidget(editBtn_);
     btnRow->addStretch(1);
     btnRow->addSpacing(24);
     btnRow->addWidget(delBtn_);
@@ -321,6 +327,11 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
         bulkLabel_->setText(tr("%n selezionati", nullptr, n));
     });
     list_->viewport()->installEventFilter(this);
+    list_->installEventFilter(this); // Invio su una bozza la riapre
+    connect(list_, &QAbstractItemView::doubleClicked, this, [this](const QModelIndex& i) {
+        if (i.isValid() && i.row() < model_->rowCount()) openDraft(model_->summary(i.row()));
+    });
+    connect(model_, &QAbstractItemModel::modelReset, this, [this] { updateDraftUi(); });
     split->addWidget(listPane);
     split->addWidget(right);
     split->setStretchFactor(0, 1);
@@ -387,6 +398,7 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     connect(replyBtn_, &QPushButton::clicked, this, &MainWindow::reply);
     connect(replyAllBtn_, &QPushButton::clicked, this, &MainWindow::replyAll);
     connect(fwdBtn_, &QPushButton::clicked, this, &MainWindow::forward);
+    connect(editBtn_, &QPushButton::clicked, this, &MainWindow::editSelectedDraft);
     connect(delBtn_, &QPushButton::clicked, this, &MainWindow::deleteSelected);
     connect(syncBtn_, &QPushButton::clicked, this, &MainWindow::syncNow);
     connect(settingsBtn_, &QPushButton::clicked, this, &MainWindow::openSettings);
@@ -602,6 +614,7 @@ void MainWindow::setHaveMessage(bool on) {
     replyAllBtn_->setEnabled(on);
     fwdBtn_->setEnabled(on);
     delBtn_->setEnabled(on && !deleting_);
+    updateDraftUi();
 }
 
 void MainWindow::focusSearch() {
@@ -1239,6 +1252,16 @@ bool MainWindow::eventFilter(QObject* o, QEvent* e) {
             return true;
         }
     }
+    if (o == list_ && e->type() == QEvent::KeyPress) {
+        const int k = static_cast<QKeyEvent*>(e)->key();
+        if (k == Qt::Key_Return || k == Qt::Key_Enter) {
+            const QModelIndex cur = list_->currentIndex();
+            if (cur.isValid() && cur.row() < model_->rowCount() && isDraftSummary(model_->summary(cur.row()))) {
+                openDraft(model_->summary(cur.row()));
+                return true;
+            }
+        }
+    }
     return QMainWindow::eventFilter(o, e);
 }
 
@@ -1649,6 +1672,117 @@ void MainWindow::compose(ReplyMode mode) {
     openCompose(&m);
 }
 
+// ---- riapertura delle bozze ----
+
+bool MainWindow::isDraftSummary(const MessageSummary& s) const {
+    if (s.path.isEmpty()) return false;
+    const QString dir = QFileInfo(QFileInfo(s.path).absolutePath()).fileName();
+    if (dir != QLatin1String("cur") && dir != QLatin1String("new")) return false;
+    const QString folder = QFileInfo(QFileInfo(s.path).absolutePath()).absolutePath();
+    for (const Account& a : config_.accounts()) {
+        if (a.draftsFolder.isEmpty()) continue;
+        if (QDir::cleanPath(a.maildirRoot + QLatin1Char('/') + a.draftsFolder) == QDir::cleanPath(folder)) return true;
+    }
+    return false;
+}
+
+void MainWindow::updateDraftUi() {
+    const bool drafts = viewingDrafts();
+    editBtn_->setVisible(drafts);
+    const QModelIndex cur = list_->currentIndex();
+    editBtn_->setEnabled(drafts && haveMsg_ && cur.isValid() && cur.row() < model_->rowCount() &&
+                         isDraftSummary(model_->summary(cur.row())));
+}
+
+void MainWindow::editSelectedDraft() {
+    const QModelIndex cur = list_->currentIndex();
+    if (cur.isValid() && cur.row() < model_->rowCount()) openDraft(model_->summary(cur.row()));
+}
+
+namespace {
+struct DraftLoaded {
+    ParsedMessage pm;
+    QString error;
+    std::shared_ptr<QTemporaryDir> tmp; // allegati estratti; si elimina con l'ultimo riferimento
+    QStringList paths;
+    QStringList problems; // allegati non estratti
+};
+} // namespace
+
+void MainWindow::openDraft(const MessageSummary& s) {
+    if (!isDraftSummary(s)) return;
+    const QString key = ComposeWindow::draftKey(s.path);
+    for (ComposeWindow* c : composers()) {
+        if (c->ownsDraft(s.path)) { // gia' aperta: mai due finestre sulla stessa bozza
+            c->show();
+            c->raise();
+            c->activateWindow();
+            return;
+        }
+    }
+    if (openingDrafts_.contains(key)) return; // lettura gia' in corso
+    openingDrafts_.insert(key);
+    offThread<DraftLoaded>(
+        this,
+        [path = s.path]() {
+            DraftLoaded d;
+            QFile f(path);
+            if (!f.open(QIODevice::ReadOnly)) {
+                d.error = QObject::tr("Impossibile leggere il file: %1").arg(f.errorString());
+                return d;
+            }
+            if (f.size() > kMaxMessageBytes) {
+                d.error = QObject::tr("Bozza troppo grande per essere aperta");
+                return d;
+            }
+            const QByteArray raw = f.read(kMaxMessageBytes + 1);
+            d.pm = MessageParser::parse(raw, &d.error);
+            if (!d.error.isEmpty() || d.pm.attachments.isEmpty()) return d;
+            d.tmp = std::make_shared<QTemporaryDir>(QDir::tempPath() + QStringLiteral("/boma-bozza-XXXXXX"));
+            if (!d.tmp->isValid()) {
+                d.problems << QObject::tr("cartella temporanea non creata");
+                d.tmp.reset();
+                return d;
+            }
+            int n = 0;
+            for (const Attachment& a : d.pm.attachments) {
+                // una sottocartella per allegato: nomi uguali non si sovrascrivono
+                const QString sub = d.tmp->filePath(QString::number(n++));
+                QString err;
+                if (!QDir().mkpath(sub)) { d.problems << a.filename; continue; }
+                const QString dest = sub + QLatin1Char('/') + a.filename;
+                if (MessageParser::saveAttachment(raw, a.partIndex, dest, &err)) d.paths << dest;
+                else d.problems << a.filename;
+            }
+            return d;
+        },
+        [this, s, key](DraftLoaded d) {
+            openingDrafts_.remove(key);
+            if (!d.error.isEmpty()) {
+                showNotice(tr("Bozza"), tr("Impossibile aprire la bozza: %1\nL'originale e' rimasto invariato.").arg(d.error));
+                return;
+            }
+            bool matched = true;
+            const OutgoingMessage m = draftToOutgoing(d.pm, s.accountId, config_, d.paths, &matched);
+            ComposeWindow* c = openCompose(&m);
+            if (d.tmp) c->adoptTempDir(d.tmp);
+            // Se il contenuto non e' interamente riproducibile la finestra NON si lega alla
+            // bozza: salvare o inviare non sostituisce ne' rimuove l'originale.
+            QStringList lossy;
+            if (!matched) lossy << tr("non e' stata creata da Boma (mittente non riconosciuto)");
+            if (!d.pm.inlineImages.isEmpty()) lossy << tr("contiene immagini incorporate");
+            if (d.pm.signedPgp || d.pm.encryptedPgp || d.pm.pgpNested) lossy << tr("e' firmata o cifrata");
+            if (!d.problems.isEmpty()) lossy << tr("allegati non recuperati: %1").arg(d.problems.join(QStringLiteral(", ")));
+            if (lossy.isEmpty()) {
+                c->setDraftPath(s.path);
+            } else {
+                c->markOpenedFrom(s.path);
+                c->statusLabel()->setText(tr("Attenzione: la bozza %1. L'originale resta in Bozze e non verra' sostituito.")
+                                              .arg(lossy.join(QStringLiteral("; "))));
+            }
+        });
+}
+
 ComposeWindow* MainWindow::openCompose(const OutgoingMessage* prefill) {
     auto* c = new ComposeWindow(config_, this);
     c->setAttribute(Qt::WA_DeleteOnClose);
@@ -1658,6 +1792,7 @@ ComposeWindow* MainWindow::openCompose(const OutgoingMessage* prefill) {
     connect(c, &ComposeWindow::sendRequested, this, [this, pc](const OutgoingMessage& msg, bool sign, bool encrypt) {
         SendController::Surface s; // la finestra vista dal controller (che non conosce i widget)
         s.window = pc;
+        if (pc) s.keepAlive = pc->tempDir(); // allegati vivi finche' l'invio e' pendente
         s.setSendEnabled = [pc](bool on) { if (pc) pc->sendButton()->setEnabled(on); };
         s.setStatus = [pc](const QString& t) {
             if (!pc) return;

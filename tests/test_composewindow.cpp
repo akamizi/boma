@@ -4,6 +4,7 @@
 #include "core/Config.h"
 #include "mime/MessageParser.h"
 #include "ui/ComposeWindow.h"
+#include "ui/ReplyBuilder.h"
 using namespace boma;
 
 class T : public QObject {
@@ -227,6 +228,116 @@ private slots:
         QCOMPARE(w.currentMessage().attachmentPaths.size(), 1);
         QCOMPARE(ComposeWindow::splitAddresses("a@b, \"R, A\" <c@d>,  <e@f>"),
                  (QStringList{"a@b", "\"R, A\" <c@d>", "<e@f>"}));
+    }
+    // Riapre una bozza come fa MainWindow::openDraft (parse + draftToOutgoing + setDraftPath).
+    static ParsedMessage parseFile(const QString& path) {
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly)) qFatal("illeggibile");
+        return MessageParser::parse(f.readAll());
+    }
+    static QString onlyFile(const QString& folder) {
+        const QStringList l = QDir(folder + "/cur").entryList(QDir::Files);
+        return l.size() == 1 ? folder + "/cur/" + l.first() : QString();
+    }
+    void testReopenedDraftKeepsToCcAndBcc() {
+        const Config cfg = makeConfig();
+        QString path;
+        {
+            ComposeWindow w(cfg);
+            w.identityCombo()->setCurrentIndex(1);
+            w.toEdit()->setText("x@y.it");
+            w.ccEdit()->setText("\"Rossi, Anna\" <anna@y.it>");
+            w.bccEdit()->setText("nascosto@y.it, mezzo");
+            w.subjectEdit()->setText("Oggetto");
+            w.bodyEdit()->setPlainText("corpo");
+            QVERIFY(w.saveDraft());
+            path = w.draftPath();
+            w.markClean();
+        }
+        bool matched = false;
+        const OutgoingMessage m = draftToOutgoing(parseFile(path), "b", cfg, {}, &matched);
+        QVERIFY(matched);
+        QCOMPARE(m.identity.id, QString("b1"));
+        QCOMPARE(m.to, QStringList{"x@y.it"});
+        QCOMPARE(m.cc, QStringList{"\"Rossi, Anna\" <anna@y.it>"});
+        QCOMPARE(m.bcc, (QStringList{"nascosto@y.it", "mezzo"})); // anche l'indirizzo non analizzabile
+        QCOMPARE(m.subject, QString("Oggetto"));
+        QVERIFY(m.plainText.contains("corpo"));
+        ComposeWindow w2(cfg);
+        w2.setPrefill(m);
+        QCOMPARE(w2.identityCombo()->currentIndex(), 1);
+        QVERIFY(w2.toEdit()->text().contains("x@y.it"));
+        QVERIFY(w2.ccEdit()->text().contains("anna@y.it"));
+        QVERIFY(w2.bccEdit()->text().contains("nascosto@y.it"));
+        QVERIFY(w2.bccEdit()->text().contains("mezzo"));
+    }
+    void testReopenedDraftIsOverwrittenNotDuplicated() {
+        const Config cfg = makeConfig();
+        QString path;
+        {
+            ComposeWindow w(cfg);
+            w.toEdit()->setText("x@y.it");
+            w.bccEdit()->setText("n@y.it");
+            w.subjectEdit()->setText("uno");
+            QVERIFY(w.saveDraft());
+            path = w.draftPath();
+        }
+        const QString folder = dir_.path() + "/a/Drafts";
+        QCOMPARE(count(folder), 1);
+        ComposeWindow w2(cfg);
+        w2.setPrefill(draftToOutgoing(parseFile(path), "a", cfg, {}));
+        w2.setDraftPath(path);
+        QVERIFY(w2.ownsDraft(path));
+        w2.subjectEdit()->setText("due");
+        QVERIFY(w2.saveDraft());
+        QCOMPARE(count(folder), 1);
+        QVERIFY(!QFile::exists(path));
+        QVERIFY(w2.ownsDraft(path)); // anche dopo la sostituzione e col nome cambiato da mbsync
+        QVERIFY(w2.ownsDraft(w2.draftPath() + "x"));
+        const ParsedMessage p = parseFile(onlyFile(folder));
+        QCOMPARE(p.subject, QString("due"));
+        QVERIFY(p.bcc.contains("n@y.it"));
+        QVERIFY(w2.discardDraft()); // l'invio riuscito la toglie
+        QCOMPARE(count(folder), 0);
+    }
+    void testForeignDraftUnknownSenderIsFlaggedAndKept() {
+        const Config cfg = makeConfig();
+        const QByteArray raw = "From: Altri <altri@z.it>\nTo: broken@@\nSubject: s\nMIME-Version: 1.0\n"
+                               "Content-Type: text/plain\n\nciao\n";
+        bool matched = true;
+        const OutgoingMessage m = draftToOutgoing(MessageParser::parse(raw), "b", cfg, {}, &matched);
+        QVERIFY(!matched);
+        QCOMPARE(m.identity.id, QString("b1"));  // ripiego: prima identita' dell'account
+        QVERIFY(m.to.join(",").contains("broken")); // il destinatario non analizzabile non si perde
+        QCOMPARE(m.subject, QString("s"));
+    }
+    void testTempDirRemovedOnCloseAndOnDestroy() {
+        const Config cfg = makeConfig();
+        auto tmp = std::make_shared<QTemporaryDir>(dir_.filePath("tmpXXXXXX"));
+        QVERIFY(tmp->isValid());
+        const QString p = tmp->path();
+        QFile f(p + "/a.txt");
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.close();
+        {
+            auto* w = new ComposeWindow(cfg);
+            w->setAttribute(Qt::WA_DeleteOnClose);
+            w->adoptTempDir(tmp);
+            tmp.reset(); // l'unico riferimento e' ora della finestra
+            QVERIFY(QDir(p).exists());
+            w->show();
+            QVERIFY(w->close()); // pulita: chiude senza chiedere (come X o Esc)
+            QVERIFY(!QDir(p).exists());
+        }
+        auto tmp2 = std::make_shared<QTemporaryDir>(dir_.filePath("tmpXXXXXX"));
+        const QString p2 = tmp2->path();
+        {
+            ComposeWindow w(cfg);
+            w.adoptTempDir(tmp2);
+            tmp2.reset();
+            QVERIFY(QDir(p2).exists());
+        }
+        QVERIFY(!QDir(p2).exists());
     }
 };
 

@@ -51,6 +51,20 @@ QString addresses(GMimeMessage* msg, GMimeAddressType t) {
     return fromG(s.get());
 }
 
+// Destinatari non interpretati di un'intestazione: l'eventuale X-Boma-Raw-* (bozza di Boma) oppure,
+// se l'intestazione esiste ma GMime non ne ha ricavato nulla, il suo testo originale.
+QString unparsedRecipients(GMimeMessage* msg, const char* bomaHeader, const char* stdHeader, const QString& parsed) {
+    auto decoded = [&](const char* name) {
+        const char* v = g_mime_object_get_header(GMIME_OBJECT(msg), name);
+        if (!v || !*v) return QString();
+        GStr d(g_mime_utils_header_decode_text(nullptr, v));
+        return fromG(d.get());
+    };
+    const QString boma = decoded(bomaHeader);
+    if (!boma.isEmpty()) return boma;
+    return parsed.isEmpty() ? decoded(stdHeader) : QString();
+}
+
 QString decodeText(const QByteArray& bytes, const QString& charset) {
     const QByteArray cs = charset.trimmed().toLower().toLatin1();
     if (!cs.isEmpty() && cs != "us-ascii" && cs != "ascii" && cs != "utf-8" && cs != "utf8") {
@@ -327,6 +341,10 @@ ParsedMessage MessageParser::parse(const QByteArray& raw, QString* error) {
     r.from = addresses(msg, GMIME_ADDRESS_TYPE_FROM);
     r.to = addresses(msg, GMIME_ADDRESS_TYPE_TO);
     r.cc = addresses(msg, GMIME_ADDRESS_TYPE_CC);
+    r.bcc = addresses(msg, GMIME_ADDRESS_TYPE_BCC);
+    r.rawTo = unparsedRecipients(msg, "X-Boma-Raw-To", "To", r.to);
+    r.rawCc = unparsedRecipients(msg, "X-Boma-Raw-Cc", "Cc", r.cc);
+    r.rawBcc = unparsedRecipients(msg, "X-Boma-Raw-Bcc", "Bcc", r.bcc);
     r.replyTo = addresses(msg, GMIME_ADDRESS_TYPE_REPLY_TO);
     r.messageId = fromG(g_mime_message_get_message_id(msg));
     if (const char* refs = g_mime_object_get_header(GMIME_OBJECT(msg), "References")) {

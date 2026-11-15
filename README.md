@@ -303,9 +303,29 @@ ricerca):
 | `R` / Maiusc+`R` | rispondi / rispondi a tutti |
 | `F` | inoltra |
 | Canc | sposta nel cestino |
+| Invio (o doppio clic) | in Bozze: riapre la bozza per modificarla |
 
 La finestra di scrittura non ha scorciatoie proprie: Firma, Cifra, Salva bozza,
 Invia e Chiudi sono pulsanti.
+
+### Bozze
+
+Nella cartella Bozze un messaggio si riapre per modificarlo con doppio clic, Invio o il
+pulsante **Modifica** (visibile solo in Bozze). Si ritrovano destinatari A, Cc e Ccn,
+oggetto, corpo, identità e allegati.
+
+- Salvare la bozza riaperta **sostituisce** quella originale (nessun doppione); dopo
+  l'invio riuscito, con la copia in Inviata, la bozza viene rimossa. Se la copia in
+  Inviata non riesce la bozza resta.
+- La stessa bozza non si apre in due finestre: se è già aperta, viene portata in primo
+  piano.
+- Gli allegati si estraggono in una cartella temporanea (`boma-bozza-*` in `/tmp`)
+  eliminata alla chiusura della finestra, comunque avvenga.
+- Se la bozza non è stata creata da Boma (mittente non riconosciuto), contiene
+  immagini incorporate, è firmata/cifrata o ha allegati non recuperabili, la finestra
+  lo segnala e **non** sostituisce né rimuove l'originale, che resta in Bozze.
+- L'invio ricostruisce sempre il messaggio dal contenuto della finestra: i byte della
+  bozza non vanno mai a `msmtp`, quindi il Ccn non compare nelle intestazioni inviate.
 
 ## Cartelle e non letti
 
@@ -384,7 +404,7 @@ non passa mai da Boma.
 
 - La cartella della posta in arrivo è assunta chiamarsi `INBOX` (relativa alla
   radice dell'account).
-- Dopo l'invio la bozza resta nella cartella Bozze: va eliminata a mano.
+- Se l'invio riesce ma la copia in Inviata non si scrive, la bozza resta in Bozze (va eliminata a mano).
 - Notifiche di posta nuova: si basano sulla data dell'intestazione `Date`, non su quella di arrivo. Un messaggio
   consegnato in ritardo con una data anteriore all'ultimo messaggio già notificato non viene segnalato
   (compare comunque nell'elenco e tra le non lette).

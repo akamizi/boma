@@ -6,6 +6,7 @@
 #include <QPointer>
 #include <QString>
 #include <functional>
+#include <memory>
 
 namespace boma {
 
@@ -35,6 +36,12 @@ public:
         // Rimuove la bozza di partenza. Chiamata SOLO quando il messaggio e' partito E la copia
         // in Inviata e' stata scritta (mai se copyFailed), anche se la finestra e' gia' chiusa.
         std::function<void()> discardDraft;
+        // Risorse che il messaggio da inviare usa ancora (es. la cartella temporanea con gli
+        // allegati di una bozza riaperta). La Surface e' copiata in ogni passo pendente
+        // (invio in corso, domanda "senza firma?", nuovo tentativo): finche' ne esiste uno la
+        // risorsa vive anche se la finestra e' stata chiusa, e si libera quando l'ultimo
+        // tentativo si risolve (inviato, fallito o annullato).
+        std::shared_ptr<void> keepAlive;
     };
     // Invio effettivo (di solito Sender::send).
     using SendFn = std::function<void(const OutgoingMessage&, bool sign, bool encrypt,

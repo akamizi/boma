@@ -20,6 +20,16 @@ enum class ReplyMode { Reply, ReplyAll, Forward };
 // - In-Reply-To = Message-ID dell'originale; References = catena + Message-ID.
 OutgoingMessage buildReply(const ParsedMessage& m, const QString& accountId, const Config& config, ReplyMode mode);
 
+// Contenuto iniziale per riaprire in modifica una bozza salvata (ComposeWindow::setPrefill).
+// - Destinatari: A/Cc/Ccn dalle intestazioni, piu' quelli che GMime non sa interpretare
+//   (rawTo/rawCc/rawBcc), cosi' nessun destinatario si perde.
+// - Identita': quella il cui indirizzo e' il Da della bozza; se non c'e' (bozza di un altro
+//   client) la prima dell'account, e *identityMatched e' false.
+// - attachmentPaths: file gia' estratti dal chiamante (la bozza non contiene percorsi).
+// - In-Reply-To e' l'ultimo elemento di References (e' cosi' che MessageBuilder li scrive).
+OutgoingMessage draftToOutgoing(const ParsedMessage& draft, const QString& accountId, const Config& config,
+                                const QStringList& attachmentPaths, bool* identityMatched = nullptr);
+
 // Indirizzo nudo (minuscolo) di un elemento "Nome <a@b>" o "a@b".
 QString bareAddress(const QString& item);
 

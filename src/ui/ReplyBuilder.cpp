@@ -60,6 +60,38 @@ QString bodyText(const ParsedMessage& m, bool* truncated) {
 
 } // namespace
 
+OutgoingMessage draftToOutgoing(const ParsedMessage& pm, const QString& accountId, const Config& config,
+                                const QStringList& attachmentPaths, bool* identityMatched) {
+    OutgoingMessage out;
+    Identity id;
+    for (const QString& f : ComposeWindow::splitAddresses(oneLine(pm.from))) {
+        id = config.identityForAddress(bareAddress(f));
+        if (!id.id.isEmpty()) break;
+    }
+    const bool matched = !id.id.isEmpty();
+    if (!matched) {
+        const QList<Identity> mine = config.identities(accountId);
+        if (!mine.isEmpty()) id = mine.first();
+    }
+    if (identityMatched) *identityMatched = matched;
+    out.identity = id;
+    auto recipients = [](const QString& parsed, const QString& raw) {
+        return ComposeWindow::splitAddresses(oneLine(parsed)) + ComposeWindow::splitAddresses(oneLine(raw));
+    };
+    out.to = recipients(pm.to, pm.rawTo);
+    out.cc = recipients(pm.cc, pm.rawCc);
+    out.bcc = recipients(pm.bcc, pm.rawBcc);
+    out.subject = oneLine(pm.subject);
+    out.plainText = pm.plainText;
+    out.html = pm.html;
+    out.attachmentPaths = attachmentPaths;
+    if (!pm.references.isEmpty()) {
+        out.inReplyToMessageId = pm.references.last();
+        out.referencesIds = pm.references;
+    }
+    return out;
+}
+
 OutgoingMessage buildReply(const ParsedMessage& orig, const QString& accountId, const Config& config, ReplyMode mode) {
     OutgoingMessage out;
     ParsedMessage m = orig;

@@ -3,9 +3,11 @@
 #include "ui/RichTextToolBar.h"
 #include <QCloseEvent>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QMessageBox>
+#include <QRegularExpression>
 #include <QVBoxLayout>
 
 namespace boma {
@@ -243,11 +245,37 @@ bool ComposeWindow::saveDraft() {
     if (!draftPath_.isEmpty() && draftPath_ != path && !MaildirWriter::discard(draftPath_, &staleWhy))
         qWarning("Bozza precedente non rimossa: %s", qPrintable(staleWhy));
     draftPath_ = path;
+    const QString key = draftKey(path);
+    if (!draftKeys_.contains(key)) draftKeys_ << key;
     saveFailed_ = false;
     dirty_ = false;
     status_->setText(tr("Bozza salvata"));
     emit draftsChanged();
     return true;
+}
+
+QString ComposeWindow::draftKey(const QString& path) {
+    const QFileInfo fi(path);
+    QString name = fi.fileName();
+    const int cut = name.indexOf(QRegularExpression(QStringLiteral("[:,]")));
+    if (cut > 0) name.truncate(cut);
+    // cartella Maildir = genitore di cur/ o new/
+    return QFileInfo(fi.absolutePath()).absolutePath() + QLatin1Char('/') + name;
+}
+
+void ComposeWindow::markOpenedFrom(const QString& path) {
+    if (path.isEmpty()) return;
+    const QString key = draftKey(path);
+    if (!draftKeys_.contains(key)) draftKeys_ << key;
+}
+
+void ComposeWindow::setDraftPath(const QString& path) {
+    draftPath_ = path;
+    markOpenedFrom(path);
+}
+
+bool ComposeWindow::ownsDraft(const QString& path) const {
+    return !path.isEmpty() && draftKeys_.contains(draftKey(path));
 }
 
 bool ComposeWindow::discardDraft() {
@@ -278,6 +306,7 @@ void ComposeWindow::onSend() {
 
 void ComposeWindow::closeEvent(QCloseEvent* e) {
     if (!dirty_) {
+        tempDir_.reset();
         e->accept();
         return;
     }
@@ -290,8 +319,12 @@ void ComposeWindow::closeEvent(QCloseEvent* e) {
             : tr("Ci sono modifiche non salvate. Chiudere e perderle?");
         discard = QMessageBox::question(this, tr("Chiudi"), text) == QMessageBox::Yes;
     }
-    if (discard) e->accept();
-    else e->ignore();
+    if (discard) {
+        tempDir_.reset();
+        e->accept();
+    } else {
+        e->ignore();
+    }
 }
 
 } // namespace boma
