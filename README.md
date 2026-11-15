@@ -103,8 +103,9 @@ scritto e sincronizzato su disco in `tmp/`, poi pubblicato in `cur/` con `link()
   (tramite `mu move`) e «Svuota la casella» (cancellazione DEFINITIVA dei file in
   `cur/` e `new/`, con conferma che indica il numero di messaggi; con `Expunge`
   attivo in mbsync la cancellazione arriva anche al server al sync successivo).
-- Elenco per messaggio (senza conversazioni), vista delle non lette all'avvio,
-  ricerca veloce.
+- Vista delle non lette all'avvio, ricerca veloce. L'elenco raggruppa per conversazione
+  (disattivabile: «Ordina → Raggruppa per conversazione»); `mu` lavora comunque per
+  messaggio.
 - Testo semplice, HTML visualizzabile senza immagini remote, allegati
   («Salva allegato...»: nome ripulito, proposto in Scaricati; un file esistente
   non viene mai sovrascritto).
@@ -126,8 +127,8 @@ scritto e sincronizzato su disco in `tmp/`, poi pubblicato in `cur/` con `link()
   conferma ma recuperabile dal cestino. La cancellazione definitiva automatica non
   è prevista. Vedi «Cancellare i messaggi» per il limite importante.
 
-Non previsto nella v1: conversazioni, ricerche salvate, gestione delle chiavi
-(si usa direttamente `gpg`), cancellazione automatica del cestino.
+Non previsto nella v1: ricerche salvate, gestione delle chiavi (si usa direttamente
+`gpg`), cancellazione automatica del cestino.
 
 ## Requisiti
 
@@ -371,9 +372,12 @@ non passa mai da Boma.
 - La cartella della posta in arrivo è assunta chiamarsi `INBOX` (relativa alla
   radice dell'account).
 - Dopo l'invio la bozza resta nella cartella Bozze: va eliminata a mano.
+- Notifiche di posta nuova: si basano sulla data dell'intestazione `Date`, non su quella di arrivo. Un messaggio
+  consegnato in ritardo con una data anteriore all'ultimo messaggio già notificato non viene segnalato
+  (compare comunque nell'elenco e tra le non lette).
 - Il cestino non viene mai svuotato in automatico.
-- Niente conversazioni, niente ricerche salvate, nessuna gestione delle chiavi
-  (si usa `gpg`).
+- Niente ricerche salvate, nessuna gestione delle chiavi (si usa `gpg`). Le conversazioni
+  raggruppano solo i messaggi già caricati nell'elenco (stessa cartella o ricerca).
 - Inoltrare non include gli allegati del messaggio originale.
 - `mbsync` non è lanciato in un proprio gruppo di processi: all'uscita il segnale
   arriva al processo `mbsync`; non è verificato che raggiunga anche i suoi figli
@@ -419,7 +423,7 @@ di quiete ne arriva di nuova, esegue `mu index` e rilegge l'elenco da solo, senz
 «Aggiorna». Non parte se è già in corso una sincronizzazione di Boma. Le modifiche arrivate
 dal server alle sole bandiere (letto/non letto) restano al prossimo aggiornamento.
 
-Quando dopo un aggiornamento (o dopo posta scaricata da altri) compaiono messaggi non letti mai visti prima, Boma mostra una notifica del desktop (D-Bus, `org.freedesktop.Notifications`): mittente e oggetto se è uno solo, altrimenti il numero. Quelli già presenti all'avvio non vengono notificati. Si disattiva in Impostazioni; se il servizio di notifiche manca non succede nulla.
+Quando l'indice di `mu` si aggiorna (dopo «Aggiorna» o dopo posta scaricata da altri) e compaiono messaggi non letti nuovi, Boma mostra una notifica del desktop (D-Bus, `org.freedesktop.Notifications`): mittente e oggetto se è uno solo, altrimenti il numero. Si ricorda solo la data dell'ultimo messaggio notificato (più i Message-ID con quella data), non l'elenco di tutti: un messaggio che torna «non letto» dopo essere stato letto non viene notificato di nuovo, e non c'è limite al numero di messaggi nuovi per giro. Le non lette già presenti all'avvio non vengono notificate. Limite: la data è quella dell'intestazione `Date`, quindi un messaggio che arriva in ritardo con una data anteriore all'ultima notificata non viene segnalato. Se `mu` fallisce non si perde nulla (si riprova da soli e al giro successivo). Si disattiva in Impostazioni; se il servizio di notifiche manca non succede nulla (un avviso sul terminale).
 
 ## Licenza
 
