@@ -32,6 +32,8 @@
 
 namespace boma {
 
+class NewMailNotifier;
+
 // Programmi esterni e percorsi (iniettabili nei test).
 struct MainWindowOptions {
     QString muProgram = QStringLiteral("mu");
@@ -194,9 +196,8 @@ private:
     TagStore* tags_ = nullptr;
     MailWatcher* watcher_ = nullptr;
     void watchMail();
-    void checkNewMail(bool silent);
-    QSet<QString> seenUnread_;
-    bool seenInit_ = false;
+    void setupNewMailNotifier();
+    NewMailNotifier* newMail_ = nullptr;
     FolderPane* folders_;
     QListView* list_;
     QLineEdit* search_;

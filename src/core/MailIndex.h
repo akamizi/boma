@@ -66,6 +66,13 @@ public:
     bool sortDescending() const { return m_sortDesc; }
     void search(const QString& query, int offset, int limit, SearchCallback cb);
     void unread(int offset, int limit, SearchCallback cb);
+    // Per le notifiche. NON toccano la copia usata per la paginazione di search():
+    // ordinano sempre per data, a prescindere dall'ordine scelto per l'elenco.
+    // - non lette con data >= since (estremo incluso, risoluzione al secondo), dalla piu' vecchia,
+    //   al massimo `limit`: se sono di piu' le restanti si ottengono rilanciando da una data piu' avanti;
+    // - la non letta piu' recente (lista di zero o un elemento).
+    void unreadSince(const QDateTime& since, int limit, SearchCallback cb);
+    void newestUnread(SearchCallback cb);
     // Numero di messaggi non letti (non cestinati) che soddisfano `query` (vuota = la vista
     // "Non lette"). Asincrono; cb(-1, errore) se mu fallisce.
     void countUnread(const QString& query, std::function<void(int count, QString error)> cb);
@@ -80,7 +87,13 @@ public:
     // Esposto per i test.
     QList<MessageSummary> parse(const QByteArray& json, QString* error) const;
 
+signals:
+    // `mu index` e' terminato con successo (da chiunque sia stato chiesto): l'insieme dei
+    // messaggi, e quindi delle non lette, puo' essere cambiato.
+    void indexUpdated();
+
 private:
+    void findUnread(const QString& query, bool newestFirst, int limit, SearchCallback cb);
     QStringList baseArgs(const QString& sub) const;
     QString accountFor(const QString& path) const;
     QString m_mu, m_muHome, m_muRoot;

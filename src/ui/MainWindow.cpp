@@ -1,4 +1,5 @@
 #include "ui/MainWindow.h"
+#include "core/NewMailNotifier.h"
 #include "core/Notifier.h"
 
 #include "ui/MessageDelegate.h"
@@ -95,7 +96,6 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
             runReindex();
         });
         watchMail();
-        QTimer::singleShot(0, this, [this]() { checkNewMail(true); });
     }
     model_->setTagStore(tags_);
     connect(tags_, &TagStore::changed, this, [this] {
@@ -1580,27 +1580,17 @@ void MainWindow::onSyncState(SyncService::State st, const QString&, const QStrin
     }
 }
 
-void MainWindow::checkNewMail(bool silent) {
-    // Notifica i non letti mai visti prima. La prima lettura (all'avvio) fissa solo il punto di partenza.
-    if (!seenInit_ && !silent) return;
-    QPointer<MainWindow> self(this);
-    index_->unread(0, 100, [self, silent](QList<MessageSummary> list, QString err) {
-        if (!self || !err.isEmpty()) return;
-        QList<MessageSummary> fresh;
-        for (const MessageSummary& m : list)
-            if (!self->seenUnread_.contains(m.messageId)) {
-                self->seenUnread_.insert(m.messageId);
-                fresh << m;
-            }
-        const bool first = !self->seenInit_;
-        self->seenInit_ = true;
-        if (silent || first || fresh.isEmpty()) return;
-        if (!QSettings().value(QStringLiteral("ui/notifyNewMail"), true).toBool()) return;
-        if (fresh.size() == 1)
-            Notifier::show(fresh[0].from, fresh[0].subject);
-        else
-            Notifier::show(tr("%1 nuovi messaggi").arg(fresh.size()), fresh[0].from + QStringLiteral(": ") + fresh[0].subject);
-    });
+// Notifica della posta nuova (logica in NewMailNotifier). Si controlla quando l'indice cambia,
+// da chiunque sia stato aggiornato; il punto di partenza si fissa dopo aver conosciuto la
+// radice di mu, perche' le esclusioni (Cestino, Bozze, Inviata) dipendono da essa.
+void MainWindow::setupNewMailNotifier() {
+    if (config_.isEmpty() || newMail_ || !opts_.watchMail) return;
+    newMail_ = new NewMailNotifier(this);
+    newMail_->setFetch([this](const QDateTime& since, int limit, SearchCallback cb) { index_->unreadSince(since, limit, std::move(cb)); });
+    newMail_->setNewest([this](SearchCallback cb) { index_->newestUnread(std::move(cb)); });
+    newMail_->setShow([](const QString& title, const QString& body) { Notifier::show(title, body); });
+    newMail_->setEnabled([]() { return QSettings().value(QStringLiteral("ui/notifyNewMail"), true).toBool(); });
+    connect(index_, &MailIndex::indexUpdated, newMail_, &NewMailNotifier::check);
 }
 
 void MainWindow::runReindex() {
@@ -1611,7 +1601,6 @@ void MainWindow::runReindex() {
         if (!self) return;
         self->reindexing_ = false;
         self->setSyncEnabled(true);
-        self->checkNewMail(false);
     });
 }
 
@@ -1794,6 +1783,8 @@ void MainWindow::applyMuRoot(QString root, const QString& error)
     index_->setMuRoot(root);
     if (changed && model_->query().isEmpty()) refreshList();
     scheduleUnreadCounts();
+    setupNewMailNotifier();
+    if (newMail_) newMail_->check(); // la prima volta fissa il punto di partenza; poi e' un giro in piu', innocuo
     if (!warning.isEmpty()) statusBar()->showMessage(warning);
 }
 

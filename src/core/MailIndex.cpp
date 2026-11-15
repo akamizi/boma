@@ -210,6 +210,55 @@ void MailIndex::unread(int offset, int limit, SearchCallback cb)
     search(unreadQuery(), offset, limit, std::move(cb));
 }
 
+void MailIndex::findUnread(const QString& query, bool newestFirst, int limit, SearchCallback cb)
+{
+    QStringList args = baseArgs(QStringLiteral("find"));
+    args << QStringLiteral("--format=json") << QStringLiteral("--skip-dups") << QStringLiteral("--sortfield=date");
+    if (newestFirst)
+        args << QStringLiteral("--reverse");
+    args << QStringLiteral("--maxnum=%1").arg(limit) << QStringLiteral("--") << query;
+    QPointer<MailIndex> self(this);
+    m_runner.run(m_mu, args, std::chrono::seconds(60), [self, cb = std::move(cb)](ProcessResult r) {
+        QList<MessageSummary> list;
+        QString err;
+        if (!self) return;
+        if (r.crashed || r.timedOut || r.exitCode == -1) {
+            err = QString::fromUtf8(r.err).trimmed();
+            if (err.isEmpty())
+                err = r.timedOut ? QStringLiteral("mu: tempo scaduto") : QStringLiteral("mu: non eseguibile");
+        } else if (r.exitCode == 2) {
+            // nessuna corrispondenza: risultato vuoto
+        } else if (r.exitCode != 0) {
+            err = QString::fromUtf8(r.err).trimmed();
+            if (err.isEmpty())
+                err = QStringLiteral("mu: errore (codice %1)").arg(r.exitCode);
+        } else {
+            list = self->parse(r.out, &err);
+            if (!err.isEmpty())
+                list.clear();
+        }
+        if (cb)
+            cb(std::move(list), err);
+    });
+}
+
+void MailIndex::unreadSince(const QDateTime& since, int limit, SearchCallback cb)
+{
+    if (limit <= 0 || !since.isValid()) {
+        if (cb)
+            cb({}, QStringLiteral("Parametri non validi"));
+        return;
+    }
+    // mu legge le date nel fuso orario locale
+    const QString when = since.toLocalTime().toString(QStringLiteral("yyyy-MM-ddTHH:mm:ss"));
+    findUnread(QStringLiteral("(%1) AND date:%2..").arg(unreadQuery(), when), false, limit, std::move(cb));
+}
+
+void MailIndex::newestUnread(SearchCallback cb)
+{
+    findUnread(unreadQuery(), true, 1, std::move(cb));
+}
+
 void MailIndex::countUnread(const QString& query, std::function<void(int, QString)> cb)
 {
     const QString q = query.trimmed().isEmpty()
@@ -299,6 +348,8 @@ void MailIndex::reindexAttempt(Callback cb, std::chrono::milliseconds waited, st
                      }
                      if (cb)
                          cb(ok, err);
+                     if (ok && self)
+                         emit self->indexUpdated();
                  });
 }
 

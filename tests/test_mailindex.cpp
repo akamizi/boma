@@ -212,6 +212,65 @@ private slots:
         QFile f(cnt); QVERIFY(f.open(QIODevice::ReadOnly));
         QCOMPARE(f.readAll().count('x'), 2);
     }
+    // Notifiche: non lette dalla data indicata, dalla piu' vecchia; estremo incluso.
+    void testUnreadSinceAndNewestUnread() {
+        auto all = runSearch(*idx, {}, 0, 5000, true);
+        QVERIFY2(all.error.isEmpty(), qPrintable(all.error));
+        const QDateTime newestDate = all.list.first().date;
+        Result nw;
+        idx->newestUnread([&](QList<MessageSummary> l, QString e) { nw.list = l; nw.error = e; nw.done = true; });
+        QVERIFY(QTest::qWaitFor([&] { return nw.done; }, 60000));
+        QVERIFY2(nw.error.isEmpty(), qPrintable(nw.error));
+        QCOMPARE(nw.list.size(), 1);
+        QCOMPARE(nw.list[0].date, newestDate);
+        QVERIFY(nw.list[0].unread);
+
+        // dalla data del 50esimo piu' recente: ordine crescente, tutti >= since, nessuna letta
+        const QDateTime since = all.list.at(49).date;
+        Result r;
+        idx->unreadSince(since, 1000, [&](QList<MessageSummary> l, QString e) { r.list = l; r.error = e; r.done = true; });
+        QVERIFY(QTest::qWaitFor([&] { return r.done; }, 60000));
+        QVERIFY2(r.error.isEmpty(), qPrintable(r.error));
+        QVERIFY(r.list.size() >= 50);
+        for (int i = 0; i < r.list.size(); ++i) {
+            QVERIFY(r.list[i].unread);
+            QVERIFY(r.list[i].date >= since);
+            if (i) QVERIFY(r.list[i - 1].date <= r.list[i].date);
+        }
+        // il limite taglia dalla parte dei piu' vecchi: il resto esce rilanciando da piu' avanti
+        Result lim;
+        idx->unreadSince(since, 5, [&](QList<MessageSummary> l, QString e) { lim.list = l; lim.error = e; lim.done = true; });
+        QVERIFY(QTest::qWaitFor([&] { return lim.done; }, 60000));
+        QCOMPARE(lim.list.size(), 5);
+        QCOMPARE(lim.list.first().messageId, r.list.first().messageId);
+        // oltre l'ultima: vuoto, non e' un errore
+        Result none;
+        idx->unreadSince(newestDate.addDays(1), 10, [&](QList<MessageSummary> l, QString e) { none.list = l; none.error = e; none.done = true; });
+        QVERIFY(QTest::qWaitFor([&] { return none.done; }, 60000));
+        QVERIFY(none.error.isEmpty()); QVERIFY(none.list.isEmpty());
+        // non rovina la copia della paginazione di una ricerca in corso
+        auto p0 = runSearch(*idx, "date:2000..", 0, 50);
+        Result tmp;
+        idx->newestUnread([&](QList<MessageSummary> l, QString e) { tmp.done = true; });
+        QVERIFY(QTest::qWaitFor([&] { return tmp.done; }, 60000));
+        auto p1 = runSearch(*idx, "date:2000..", 50, 50);
+        QCOMPARE(p1.list.size(), 50);
+        QVERIFY(p1.list.first().messageId != p0.list.first().messageId);
+    }
+    void testIndexUpdatedSignalOnlyOnSuccess() {
+        MailIndex ok(nullptr, fakeMu("muok", "exit 0"), muhome);
+        QSignalSpy spy(&ok, &MailIndex::indexUpdated);
+        bool done = false;
+        ok.reindex("acc", [&](bool, QString) { done = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(done, 10000);
+        QCOMPARE(spy.count(), 1);
+        MailIndex bad(nullptr, fakeMu("mubad", "echo boom >&2; exit 1"), muhome);
+        QSignalSpy spy2(&bad, &MailIndex::indexUpdated);
+        done = false;
+        bad.reindex("acc", [&](bool, QString) { done = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(done, 10000);
+        QCOMPARE(spy2.count(), 0);
+    }
     void testModelDestroyedWhileQueryInFlight() {
         const QString marker = td.path() + "/slow-done";
         QFile::remove(marker);
