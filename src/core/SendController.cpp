@@ -51,6 +51,15 @@ void SendController::onResult(const Surface& s, const OutgoingMessage& msg, bool
         if (!r.message.isEmpty()) emit notice(tr("Inviato, con un avviso"), r.message);
         // La copia in Inviata e' scritta: la bozza non serve piu'. Con copyFailed resta (mai perdere posta).
         if (!r.copyFailed && s.discardDraft) s.discardDraft();
+        if (!alive && r.copyFailed) {
+            // Nessuna finestra su cui segnarlo: l'avviso e' l'unico posto in cui l'utente lo vede.
+            emit notice(tr("Inviato, ma la copia in Inviata non e' stata salvata"),
+                        r.fallbackPath.isEmpty()
+                            ? tr("Il messaggio e' partito ma non e' stato possibile salvarne una copia in Inviata, "
+                                 "e la finestra di scrittura era gia' chiusa: il testo non e' piu' disponibile. La bozza e' stata lasciata in Bozze.")
+                            : tr("Il messaggio e' partito ma la copia in Inviata non e' stata salvata. Copia di emergenza: %1")
+                                  .arg(r.fallbackPath));
+        }
         if (alive && r.copyFailed) {
             // I4: il messaggio E' partito ma la copia in Inviata manca: la finestra resta
             // aperta (il testo non va perso) ma segnata come inviata, mai reinviabile.
@@ -78,7 +87,20 @@ void SendController::onResult(const Surface& s, const OutgoingMessage& msg, bool
             [this, s, msg, sign, encrypt]() {
                 const bool yes = confirmUnsigned_ ? confirmUnsigned_() : false;
                 if (!s.window.isNull()) state_[s.window.data()].sending = false;
-                if (yes) {
+                if (yes && s.window.isNull()) {
+                    // La conferma dell'utente prevale: la finestra e' stata chiusa durante la
+                    // domanda, ma il messaggio e' completo e parte lo stesso. Esiti (avvisi,
+                    // rimozione della bozza) arrivano da onResult, senza la finestra.
+                    emit statusMessage(tr("Invio in corso..."), 0);
+                    QPointer<SendController> self(this);
+                    send_(
+                        msg, sign, encrypt,
+                        [self, s, msg, sign, encrypt](SendResult r) {
+                            if (!self) return;
+                            self->onResult(s, msg, sign, encrypt, r);
+                        },
+                        true);
+                } else if (yes) {
                     start(s, msg, sign, encrypt, true);
                 } else {
                     if (!s.window.isNull()) {

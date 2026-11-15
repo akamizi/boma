@@ -49,6 +49,7 @@ QByteArray readFile(const QString& p) {
     QFile f(p);
     return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
 }
+int closedAskDiscards = 0; // bozze rimosse nei test a finestra chiusa
 } // namespace
 
 class T : public QObject {
@@ -365,6 +366,59 @@ private slots:
         finish(res(SendResult::Sent));
         QTRY_VERIFY(w.closed);
         QTRY_VERIFY(!QFile::exists(file));
+    }
+    // Finestra chiusa mentre la domanda "senza firma?" e' aperta. Esegue il flusso fino alla
+    // risposta e lascia il secondo tentativo (se parte) pendente in held_.
+    void startAskClosed(bool answer) {
+        closedAskDiscards = 0; hold_ = true;
+        auto* w = new FakeWin;
+        SendController::Surface s = w->surface();
+        s.discardDraft = [] { ++closedAskDiscards; };
+        c_->setConfirmUnsigned([this, w, answer] {
+            ++asked_;
+            delete w; // la finestra si chiude con la domanda aperta
+            return answer;
+        });
+        c_->start(s, someMessage(), true, false);
+        QTRY_VERIFY(held_);
+        finish(res(SendResult::NeedsConfirmationUnsigned));
+        QTRY_COMPARE(asked_, 1);
+    }
+    void testConfirmedUnsignedSendsEvenIfWindowClosedAndRemovesDraft() {
+        startAskClosed(true);
+        QTRY_COMPARE(sendCalls_, 2); // la conferma prevale: il messaggio parte
+        QVERIFY(lastAllowUnsigned_);
+        QTRY_VERIFY(held_);
+        finish(res(SendResult::Sent));
+        QTRY_COMPARE(closedAskDiscards, 1);
+        QVERIFY(statuses_.last().first.contains("Inviato"));
+        QVERIFY(notices_.isEmpty());
+    }
+    void testConfirmedUnsignedClosedWindowSendFailureIsVisible() {
+        startAskClosed(true);
+        QTRY_COMPARE(sendCalls_, 2);
+        QTRY_VERIFY(held_);
+        finish(res(SendResult::SmtpFailed, "rifiutato dal server"));
+        QTRY_COMPARE(notices_.size(), 1);
+        QVERIFY(notices_[0].second.contains("rifiutato dal server"));
+        QVERIFY(notices_[0].second.contains("chiusa")); // dice che la finestra non c'e' piu'
+        QCOMPARE(closedAskDiscards, 0);                // nulla e' partito: la bozza resta
+    }
+    void testConfirmedUnsignedClosedWindowCopyFailureIsVisible() {
+        startAskClosed(true);
+        QTRY_COMPARE(sendCalls_, 2);
+        QTRY_VERIFY(held_);
+        SendResult r = res(SendResult::Sent, "copia non salvata"); r.copyFailed = true; r.fallbackPath = "/x/emergenza.eml";
+        finish(r);
+        QTRY_VERIFY(!notices_.isEmpty());
+        QVERIFY(notices_.last().second.contains("/x/emergenza.eml"));
+        QCOMPARE(closedAskDiscards, 0); // senza copia in Inviata la bozza non si tocca
+    }
+    void testRefusedUnsignedClosedWindowIsReported() {
+        startAskClosed(false);
+        QTRY_VERIFY(statuses_.last().first.contains("annullato"));
+        QCOMPARE(sendCalls_, 1);
+        QCOMPARE(closedAskDiscards, 0);
     }
     void testNoConfirmCallbackMeansNo() {
         FakeWin w; next_ = res(SendResult::NeedsConfirmationUnsigned);
