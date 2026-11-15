@@ -1,6 +1,7 @@
 #include "ui/MainWindow.h"
 #include "core/NewMailNotifier.h"
 #include "core/Notifier.h"
+#include "core/UnreadCounter.h"
 
 #include "ui/MessageDelegate.h"
 #include "ui/ReplyBuilder.h"
@@ -347,10 +348,13 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
         searchTimer_->stop();
         applyQuery(q);
     });
-    countTimer_ = new QTimer(this);
-    countTimer_->setSingleShot(true);
-    countTimer_->setInterval(300);
-    connect(countTimer_, &QTimer::timeout, this, &MainWindow::runUnreadCounts);
+    unread_ = new UnreadCounter(this);
+    unread_->setActive(!config_.isEmpty());
+    unread_->setQueries([this] { return folders_->countableQueries(); });
+    unread_->setMaildirOf([](const QString& q) { return MailIndex::maildirOfQuery(q); });
+    unread_->setByMaildir([this](auto done) { index_->unreadByMaildir(std::move(done)); });
+    unread_->setSingle([this](const QString& q, auto done) { index_->countUnread(q, std::move(done)); });
+    connect(unread_, &UnreadCounter::countsReady, folders_, &FolderPane::setUnreadCounts);
     openTimer_ = new QTimer(this);
     openTimer_->setSingleShot(true);
     openTimer_->setInterval(100);
@@ -440,6 +444,7 @@ void MainWindow::watchMail() {
 
 void MainWindow::applyConfig(const Config& c) {
     config_ = c;
+    unread_->setActive(!c.isEmpty());
     if (opts_.watchMail) watchMail();
     index_->setAccounts(c.accounts());
     sender_->setAccounts(c.accounts());
@@ -859,44 +864,8 @@ void MainWindow::emptyFolder(const QString& accountId, const QString& dir, const
     });
 }
 
-void MainWindow::scheduleUnreadCounts() {
-    if (config_.isEmpty()) return;
-    countTimer_->start();
-}
-
-void MainWindow::runUnreadCounts() {
-    if (config_.isEmpty()) return;
-    if (counting_) { // un giro e' in corso: ne segue un altro con i dati nuovi
-        countDirty_ = true;
-        return;
-    }
-    counting_ = true;
-    countDirty_ = false;
-    const quint64 gen = ++countGen_;
-    auto queries = std::make_shared<QStringList>(folders_->countableQueries());
-    auto results = std::make_shared<QHash<QString, int>>();
-    QPointer<MainWindow> self(this);
-    auto step = std::make_shared<std::function<void(int)>>();
-    *step = [self, gen, queries, results, step](int i) {
-        if (!self) return;
-        if (gen != self->countGen_ || i >= queries->size()) {
-            if (gen == self->countGen_) self->folders_->setUnreadCounts(*results);
-            self->counting_ = false;
-            if (self->countDirty_) self->scheduleUnreadCounts();
-            return;
-        }
-        const QString q = queries->at(i);
-        self->index_->countUnread(q, [self, q, results, step, i](int n, QString) {
-            if (!self) return;
-            if (n >= 0) results->insert(q, n);
-            (*step)(i + 1);
-        });
-    };
-    (*step)(0);
-}
-
 void MainWindow::refreshList() {
-    scheduleUnreadCounts();
+    unread_->schedule();
     keepPending_ = haveMsg_ && !curSummary_.path.isEmpty();
     keepPath_ = curSummary_.path;
     keepScroll_ = list_->verticalScrollBar()->value();
@@ -1019,7 +988,7 @@ void MainWindow::markReadAfterOpen(const MessageSummary& s) {
         }
         auto apply = [self, s](const QString& newPath) {
             if (!self) return;
-            self->scheduleUnreadCounts();
+            self->unread_->schedule();
             const int row = self->rowForPath(s.path);
             if (row >= 0) self->model_->markReadLocal(row, newPath);
             else self->model_->markReadPath(s.path, newPath);
@@ -1291,7 +1260,7 @@ void MainWindow::bulkApply(const QString& title, const QList<MessageSummary>& it
             self->bulkBusy_ = false;
             const int done = int(st->items.size()) - st->failed;
             if (!removesFromList) self->refreshList();
-            else self->scheduleUnreadCounts();
+            else self->unread_->schedule();
             self->statusBar()->showMessage(st->failed ? tr("%1 %2, %3 non riusciti (%4)").arg(done).arg(doneText).arg(st->failed).arg(st->firstError)
                                                       : tr("%1 messaggi %2").arg(done).arg(doneText), 10000);
             return;
@@ -1434,7 +1403,7 @@ void MainWindow::deleteChecked() {
             const int done = int(st->items.size()) - st->failed;
             self->statusBar()->showMessage(st->failed ? tr("%1 spostati nel cestino, %2 non riusciti (%3)").arg(done).arg(st->failed).arg(st->firstError)
                                                       : tr("%1 messaggi spostati nel cestino").arg(done), 10000);
-            self->scheduleUnreadCounts();
+            self->unread_->schedule();
             return;
         }
         const MessageSummary s = st->items.at(st->i);
@@ -1528,7 +1497,7 @@ void MainWindow::deleteSelected() {
             self->model_->removePath(s.path);
         }
         self->statusBar()->showMessage(tr("Spostato nel cestino"), 5000);
-        self->scheduleUnreadCounts();
+        self->unread_->schedule();
     });
 }
 
@@ -1776,13 +1745,14 @@ void MainWindow::applyMuRoot(QString root, const QString& error)
     muRootDetected_ = true;
     // Elimina solo con radice affidabile; l'euristica serve alle sole viste delle cartelle
     actions_->setMuRoot(muRootReliable_ ? root : QString());
+    unread_->reset(); // l'elenco delle cartelle cambia: un giro in corso e' superato
     folders_->setMuRoot(root);
     // "Non lette" esclude Cestino/Bozze/Inviata (cartelle relative alla radice di mu).
     // Con una radice dedotta male le esclusioni non trovano nulla: nessun danno.
     const bool changed = index_->muRoot() != root;
     index_->setMuRoot(root);
     if (changed && model_->query().isEmpty()) refreshList();
-    scheduleUnreadCounts();
+    unread_->schedule();
     setupNewMailNotifier();
     if (newMail_) newMail_->check(); // la prima volta fissa il punto di partenza; poi e' un giro in piu', innocuo
     if (!warning.isEmpty()) statusBar()->showMessage(warning);
