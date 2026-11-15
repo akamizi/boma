@@ -39,6 +39,7 @@ add_library(boma_core STATIC
     src/core/Notifier.cpp
     src/core/NewMailNotifier.cpp
     src/core/UnreadCounter.cpp
+    src/core/SendController.cpp
     src/ui/MessageListModel.cpp
     src/ui/MainWindow.cpp
     src/ui/FolderPane.cpp

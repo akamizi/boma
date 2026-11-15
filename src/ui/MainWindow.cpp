@@ -1,6 +1,7 @@
 #include "ui/MainWindow.h"
 #include "core/NewMailNotifier.h"
 #include "core/Notifier.h"
+#include "core/SendController.h"
 #include "core/UnreadCounter.h"
 
 #include "ui/MessageDelegate.h"
@@ -86,6 +87,21 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     if (!opts_.unsavedDir.isEmpty()) sender_->setUnsavedDir(opts_.unsavedDir);
     if (!opts_.gpgProgram.isEmpty()) sender_->gpg().setGpgProgram(opts_.gpgProgram);
     if (!opts_.gnupgHome.isEmpty()) sender_->gpg().setGnupgHome(opts_.gnupgHome);
+    sendCtl_ = new SendController(
+        [this](const OutgoingMessage& m, bool sign, bool encrypt, std::function<void(SendResult)> done, bool allowUnsigned) {
+            sender_->send(m, sign, encrypt, std::move(done), allowUnsigned);
+        },
+        this);
+    sendCtl_->setConfirmUnsigned([this]() {
+        return confirmUnsigned_ ? confirmUnsigned_()
+                                : QMessageBox::question(this, tr("Firma non disponibile"),
+                                                        tr("L'identita' scelta non ha una chiave PGP.\n\nInviare SENZA firma?"),
+                                                        QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+    });
+    connect(sendCtl_, &SendController::statusMessage, this, [this](const QString& t, int ms) {
+        if (t.isEmpty()) statusBar()->clearMessage(); else statusBar()->showMessage(t, ms);
+    });
+    connect(sendCtl_, &SendController::notice, this, &MainWindow::showNotice);
     model_ = new MessageListModel(config_.isEmpty() ? nullptr : index_, this);
     tags_ = new TagStore(opts_.tagsFile, this);
     watcher_ = new MailWatcher(this);
@@ -1591,110 +1607,20 @@ ComposeWindow* MainWindow::openCompose(const OutgoingMessage* prefill) {
     c->setAttribute(Qt::WA_DeleteOnClose);
     if (prefill) c->setPrefill(*prefill);
     QPointer<ComposeWindow> pc(c);
-    connect(c, &ComposeWindow::sendRequested, this,
-            [this, pc](const OutgoingMessage& msg, bool sign, bool encrypt) { startSend(pc, msg, sign, encrypt, false); });
+    connect(c, &ComposeWindow::sendRequested, this, [this, pc](const OutgoingMessage& msg, bool sign, bool encrypt) {
+        SendController::Surface s; // la finestra vista dal controller (che non conosce i widget)
+        s.window = pc;
+        s.setSendEnabled = [pc](bool on) { if (pc) pc->sendButton()->setEnabled(on); };
+        s.setStatus = [pc](const QString& t) {
+            if (!pc) return;
+            if (t.isEmpty()) pc->statusLabel()->clear(); else pc->statusLabel()->setText(t);
+        };
+        s.markClean = [pc]() { if (pc) pc->markClean(); };
+        s.close = [pc]() { if (pc) pc->close(); };
+        sendCtl_->start(s, msg, sign, encrypt);
+    });
     c->show();
     return c;
-}
-
-void MainWindow::startSend(QPointer<ComposeWindow> c, const OutgoingMessage& msg, bool sign, bool encrypt, bool allowUnsigned) {
-    if (!c || c->property("bomaSending").toBool() || c->property("bomaSent").toBool()) return; // mai un secondo invio
-    c->setProperty("bomaSending", true);
-    c->sendButton()->setEnabled(false);
-    c->statusLabel()->setText(tr("Invio in corso..."));
-    statusBar()->showMessage(tr("Invio in corso..."));
-    QPointer<MainWindow> self(this);
-    sender_->send(
-        msg, sign, encrypt,
-        [self, c, msg, sign, encrypt](SendResult r) {
-            if (!self) return;
-            self->onSendResult(c, msg, sign, encrypt, r);
-        },
-        allowUnsigned);
-}
-
-void MainWindow::onSendResult(QPointer<ComposeWindow> c, const OutgoingMessage& msg, bool sign, bool encrypt, const SendResult& r) {
-    const bool keepLocked = r.kind == SendResult::NeedsConfirmationUnsigned;
-    // Se la finestra di scrittura e' stata chiusa durante l'invio il messaggio non e'
-    // piu' "nella finestra": il testo dell'avviso lo dice.
-    const QString closedNote = tr("\n\nLa finestra di scrittura e' stata chiusa durante l'invio: il messaggio non e' piu' disponibile qui.");
-    if (c && !keepLocked) {
-        c->setProperty("bomaSending", false);
-        if (r.kind != SendResult::Sent) {
-            c->sendButton()->setEnabled(true);
-            c->statusLabel()->clear();
-        }
-    }
-    switch (r.kind) {
-    case SendResult::Sent:
-        statusBar()->showMessage(r.message.isEmpty() ? tr("Inviato") : tr("Inviato (avviso: %1)").arg(r.message), 15000);
-        if (!r.message.isEmpty()) showNotice(tr("Inviato, con un avviso"), r.message);
-        if (c && r.copyFailed) {
-            // I4: il messaggio E' partito ma la copia in Inviata manca: la finestra resta
-            // aperta (il testo non va perso) ma segnata come inviata, mai reinviabile.
-            c->setProperty("bomaSent", true);
-            c->sendButton()->setEnabled(false);
-            c->statusLabel()->setText(r.fallbackPath.isEmpty()
-                                          ? tr("INVIATO. Copia in Inviata non salvata: copia il testo prima di chiudere.")
-                                          : tr("INVIATO. Copia in Inviata non salvata; copia di emergenza: %1").arg(r.fallbackPath));
-            // Se anche la copia di emergenza e' fallita il testo esiste solo qui: la
-            // finestra resta "modificata", cosi' chiuderla chiede conferma.
-            if (!r.fallbackPath.isEmpty()) c->markClean();
-        } else if (c) {
-            c->markClean();
-            c->close();
-        }
-        break;
-    case SendResult::NeedsConfirmationUnsigned:
-        statusBar()->clearMessage();
-        // Il Sender resta "occupato" fino al ritorno di questo callback: domanda ed
-        // eventuale nuovo invio (allowUnsigned) partono subito dopo, dal ciclo eventi.
-        // La finestra di scrittura resta bloccata (nessun invio doppio) fino alla risposta.
-        QMetaObject::invokeMethod(
-            this,
-            [this, c, msg, sign, encrypt]() {
-                const bool yes = confirmUnsigned_
-                                     ? confirmUnsigned_()
-                                     : QMessageBox::question(this, tr("Firma non disponibile"),
-                                                             tr("L'identita' scelta non ha una chiave PGP.\n\nInviare SENZA firma?"),
-                                                             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
-                if (c) c->setProperty("bomaSending", false);
-                if (yes) {
-                    startSend(c, msg, sign, encrypt, true);
-                } else {
-                    if (c) {
-                        c->sendButton()->setEnabled(true);
-                        c->statusLabel()->clear();
-                    }
-                    statusBar()->showMessage(tr("Invio annullato: nulla e' stato inviato"), 8000);
-                }
-            },
-            Qt::QueuedConnection);
-        break;
-    case SendResult::MissingKeys:
-        statusBar()->clearMessage();
-        showNotice(tr("Chiavi mancanti"),
-                   tr("Nulla e' stato inviato: manca una chiave pubblica utilizzabile per:\n\n%1").arg(r.missing.join(QLatin1Char('\n'))) +
-                       (c ? QString() : closedNote));
-        break;
-    case SendResult::SmtpFailed:
-        statusBar()->clearMessage();
-        showNotice(tr("Invio non riuscito"),
-                   r.message + (c ? tr("\n\nIl messaggio resta nella finestra di scrittura e non viene ripetuto automaticamente. "
-                                       "Se l'esito e' incerto controlla la cartella Inviata prima di riprovare.")
-                                  : tr("\n\nNon viene ripetuto automaticamente. Se l'esito e' incerto controlla la cartella Inviata.") + closedNote));
-        break;
-    case SendResult::SignFailed:
-    case SendResult::EncryptFailed:
-    case SendResult::BuildFailed:
-    case SendResult::Busy:
-        statusBar()->clearMessage();
-        showNotice(r.kind == SendResult::Busy ? tr("Invio in corso") : tr("Invio non riuscito"),
-                   r.kind == SendResult::Busy ? tr("Un altro invio e' in corso: riprova tra poco. Nulla e' stato inviato.")
-                                              : r.message + (c ? tr("\n\nNulla e' stato inviato; il messaggio resta nella finestra di scrittura.")
-                                                             : tr("\n\nNulla e' stato inviato.") + closedNote));
-        break;
-    }
 }
 
 } // namespace boma

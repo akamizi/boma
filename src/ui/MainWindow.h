@@ -34,6 +34,7 @@ namespace boma {
 
 class NewMailNotifier;
 class UnreadCounter;
+class SendController;
 
 // Programmi esterni e percorsi (iniettabili nei test).
 struct MainWindowOptions {
@@ -179,8 +180,7 @@ private:
     void onSyncState(SyncService::State st, const QString& accountId, const QString& message);
     void compose(ReplyMode mode);
     ComposeWindow* openCompose(const OutgoingMessage* prefill);
-    void startSend(QPointer<ComposeWindow> c, const OutgoingMessage& msg, bool sign, bool encrypt, bool allowUnsigned);
-    void onSendResult(QPointer<ComposeWindow> c, const OutgoingMessage& msg, bool sign, bool encrypt, const SendResult& r);
+    SendController* sendCtl_ = nullptr; // flusso di invio (logica in core/SendController)
     void showNotice(const QString& title, const QString& text);
     void setHaveMessage(bool on);
     int rowForPath(const QString& path) const;
