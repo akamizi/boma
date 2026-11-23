@@ -3,6 +3,7 @@
 #include <QStandardItemModel>
 #include <QHash>
 #include <QMenu>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QTreeView>
@@ -23,6 +24,10 @@ public:
     explicit FolderPane(const Config& config, QWidget* parent = nullptr);
     // Nuova configurazione: va seguita da setMuRoot per ricostruire l'albero.
     void setConfig(const Config& config) { config_ = config; }
+    // Account Gmail con la "Posta in arrivo" virtuale (etichetta \Inbox importata, vedi InboxStore):
+    // al posto della cartella INBOX (che non si scarica) compare un nodo con la query
+    // gminbox:"<id>", espansa dal chiamante. Va seguito da setMuRoot.
+    void setGmailInbox(const QSet<QString>& accountIds) { gmailInbox_ = accountIds; }
     // (Ri)costruisce le cartelle con la radice di mu data.
     void setMuRoot(const QString& muRoot);
     QStandardItemModel* itemModel() const { return model_; }
@@ -55,6 +60,7 @@ signals:
 
 private:
     Config config_;
+    QSet<QString> gmailInbox_;
     QStandardItemModel* model_;
 };
 

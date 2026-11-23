@@ -3,6 +3,7 @@
 #include <QTemporaryDir>
 #include "core/TagStore.h"
 #include "core/GmailLabels.h"
+#include "core/InboxStore.h"
 
 using namespace boma;
 
@@ -88,6 +89,22 @@ private slots:
         QCOMPARE(done, 1);
         QCOMPARE(m.size(), 1);
         QCOMPARE(m.value("a@x"), (QStringList{"Lavoro", QString::fromUtf8("Citt\u00e0")}));
+    }
+    void testInboxStoreReplaces() {
+        const QString f = dir_.path() + "/gmail-inbox.json";
+        {
+            InboxStore s(f);
+            QVERIFY(!s.has("g"));
+            QVERIFY(s.replace("g", {"b@x", "a@x", "a@x"}));
+            QCOMPARE(s.messageIds("g"), (QStringList{"a@x", "b@x"}));
+            QVERIFY(s.replace("g", {"b@x"})); // archiviato: esce dalla Posta in arrivo
+        }
+        InboxStore r(f);
+        QCOMPARE(r.messageIds("g"), QStringList{"b@x"});
+        QVERIFY(r.replace("g", {}));
+        QVERIFY(r.has("g")); // importata ma vuota
+        QVERIFY(r.messageIds("g").isEmpty());
+        QVERIFY(!r.has("altro"));
     }
     void testEmbeddedScriptSelfTest() {
         QProcess p;

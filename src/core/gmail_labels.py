@@ -3,6 +3,8 @@
 # Ultima riga: {"done": N}. In caso di errore: messaggio su stderr, codice di uscita != 0.
 #
 # Uso:  gmail_labels.py CONFIG CANALE            importa (CONFIG = ~/.mbsyncrc)
+#       gmail_labels.py --inbox CONFIG CANALE          solo i messaggi con l'etichetta di sistema \Inbox
+#                                                      (stesso formato; serve alla "Posta in arrivo" virtuale)
 #       gmail_labels.py --show-account CONFIG CANALE   host/utente/porta, senza password
 #       gmail_labels.py --selftest
 #
@@ -215,7 +217,7 @@ def quote(s):
     return '"%s"' % s.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def run(config_path, channel, out=sys.stdout):
+def run(config_path, channel, out=sys.stdout, inbox=False):
     with open(config_path, encoding="utf-8", errors="replace") as f:
         acc = parse_config(f.read(), channel)
     if acc["tls"] not in ("IMAPS", "STARTTLS"):
@@ -240,7 +242,7 @@ def run(config_path, channel, out=sys.stdout):
         state["conn"] = conn
         if state["box"] is None:
             typ, boxes = conn.list()
-            state["names"] = user_labels(boxes)
+            state["names"] = ["\\Inbox"] if inbox else user_labels(boxes)
             state["box"] = find_all_mail(conn)
         typ, _ = conn.select(quote(state["box"]), readonly=True)
         if typ != "OK":
@@ -264,7 +266,9 @@ def run(config_path, channel, out=sys.stdout):
         # traffico che leggere tutta la cartella (Gmail limita la banda: OVERQUOTA).
         found = []
         for name in state["names"]:
-            typ, res = retrying(lambda c: c.search(None, "X-GM-LABELS", quote(name)))
+            # \Inbox e' un attributo di sistema: va passato come atomo, non come stringa tra virgolette
+            arg = name if inbox else quote(name)
+            typ, res = retrying(lambda c: c.search(None, "X-GM-LABELS", arg))
             if typ == "OK" and res and res[0]:
                 found.append((len(res[0].split()), name, res[0].split()))
         found.sort(key=lambda t: t[0])  # prima le piccole: se si viene interrotti, resta il piu' utile
@@ -272,7 +276,7 @@ def run(config_path, channel, out=sys.stdout):
         partial = False
         try:
             for _, name, ids in found:
-                label = decode_mutf7(name)
+                label = "\\Inbox" if inbox else decode_mutf7(name)
                 for a in range(0, len(ids), CHUNK):
                     part = b",".join(ids[a:a + CHUNK]).decode()
                     typ, data = retrying(lambda c: c.fetch(part, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])"))
@@ -352,10 +356,12 @@ if __name__ == "__main__":
             acc.pop("pass", None)
             acc["passcmd"] = bool(acc["passcmd"])
             print(json.dumps(acc))
+        elif len(sys.argv) == 4 and sys.argv[1] == "--inbox":
+            run(sys.argv[2], sys.argv[3], inbox=True)
         elif len(sys.argv) == 3:
             run(sys.argv[1], sys.argv[2])
         else:
-            sys.exit("uso: gmail_labels.py CONFIG CANALE | --show-account CONFIG CANALE | --selftest")
+            sys.exit("uso: gmail_labels.py CONFIG CANALE | --inbox CONFIG CANALE | --show-account CONFIG CANALE | --selftest")
     except SystemExit:
         raise
     except Exception as e:  # nessun dettaglio sensibile: solo il messaggio

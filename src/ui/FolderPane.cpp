@@ -136,7 +136,15 @@ void FolderPane::setMuRoot(const QString& muRoot) {
             parent->setData(QDir::cleanPath(QDir(a.maildirRoot).filePath(folder.trimmed())), Qt::UserRole + 6);
             parent->setData(a.id, Qt::UserRole + 7);
         };
-        add(tr("Posta in arrivo"), QStringLiteral("INBOX"));
+        if (gmailInbox_.contains(a.id) && !muRoot.isEmpty()) {
+            // virtuale: nessuna Maildir, quindi niente menu contestuale ne' destinazione di spostamento
+            auto* inbox = new QStandardItem(tr("Posta in arrivo"));
+            inbox->setData(QStringLiteral("gminbox:\"%1\"").arg(a.id), QueryRole);
+            inbox->setData(true, FolderRole);
+            top->appendRow(inbox);
+        } else {
+            add(tr("Posta in arrivo"), QStringLiteral("INBOX"));
+        }
         add(tr("Inviata"), a.sentFolder);
         add(tr("Bozze"), a.draftsFolder);
         add(tr("Cestino"), a.trashFolder);

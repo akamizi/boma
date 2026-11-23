@@ -33,11 +33,15 @@ QHash<QString, QStringList> GmailLabels::parseOutput(const QByteArray& out, int*
 }
 
 void GmailLabels::fetch(ProcessRunner* runner, const QString& python, const QString& mbsyncConfig,
-                        const QString& channel, std::function<void(QHash<QString, QStringList>, QString)> cb) {
+                        const QString& channel, std::function<void(QHash<QString, QStringList>, QString)> cb,
+                        bool inboxOnly) {
     const QString cfg = mbsyncConfig.isEmpty() ? QDir::homePath() + QStringLiteral("/.mbsyncrc") : mbsyncConfig;
     const QString py = python.isEmpty() ? QStringLiteral("python3") : python;
     // -I: modalita' isolata (niente directory corrente ne' variabili PYTHON* nel percorso di import)
-    runner->run(py, {QStringLiteral("-I"), QStringLiteral("-c"), script(), cfg, channel}, std::chrono::minutes(30),
+    QStringList args{QStringLiteral("-I"), QStringLiteral("-c"), script()};
+    if (inboxOnly) args << QStringLiteral("--inbox");
+    args << cfg << channel;
+    runner->run(py, args, std::chrono::minutes(30),
                 [cb = std::move(cb)](ProcessResult r) {
                     int done = -1;
                     auto map = parseOutput(r.out, &done);

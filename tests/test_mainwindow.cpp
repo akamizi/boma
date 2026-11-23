@@ -348,6 +348,28 @@ private slots:
         QStandardItem* ar = child(acc, "Arch");
         QVERIFY(ar && child(ar, "2020")); // Maildir++ .Arch.2020
     }
+    void testGmailInboxIsAVirtualNode() {
+        const QString r = dir_ + QStringLiteral("/gminbox");
+        for (const char* s : {"cur", "new", "tmp"}) QDir().mkpath(r + QStringLiteral("/INBOX/") + QLatin1String(s));
+        QFile f(dir_ + QStringLiteral("/gi.ini"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write(QStringLiteral("[account:g]\nname=G\nmaildirRoot=%1\nmbsyncChannel=g\n").arg(r).toUtf8());
+        f.close();
+        const Config c = Config::load(dir_ + QStringLiteral("/gi.ini"), nullptr);
+        FolderPane p(c);
+        p.setGmailInbox({QStringLiteral("g")});
+        p.setMuRoot(dir_);
+        auto* m = qobject_cast<QStandardItemModel*>(p.model());
+        QStandardItem* acc = m->item(1);
+        QStandardItem* inbox = nullptr;
+        int n = 0;
+        for (int i = 0; i < acc->rowCount(); ++i)
+            if (acc->child(i)->data(Qt::UserRole + 5).toString() == QLatin1String("Posta in arrivo")) { inbox = acc->child(i); ++n; }
+        QCOMPARE(n, 1); // niente doppione con l'INBOX su disco
+        QCOMPARE(inbox->data(Qt::UserRole + 1).toString(), QStringLiteral("gminbox:\"g\""));
+        QVERIFY(inbox->data(Qt::UserRole + 6).toString().isEmpty()); // niente Maildir: niente menu "svuota"
+        QVERIFY(!p.contextMenuFor(inbox->index()));
+    }
     void testUnreadCountsShownOnFolders() {
         writeFile(dir_ + QStringLiteral("/plain.txt"), "/x/1\n/x/2\n/x/3\n");                        // "Non lette"
         writeFile(dir_ + QStringLiteral("/bymaildir.txt"), "m1@x /a/INBOX\nm2@x /a/INBOX\nm1@x /a/INBOX\n"); // cartelle: 2 distinti

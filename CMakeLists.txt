@@ -35,6 +35,7 @@ add_library(boma_core STATIC
     src/core/SyncService.cpp
     src/core/MailIndex.cpp
     src/core/TagStore.cpp
+    src/core/InboxStore.cpp
     src/core/GmailLabels.cpp
     src/core/MailWatcher.cpp
     src/core/Notifier.cpp

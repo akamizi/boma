@@ -2,6 +2,7 @@
 #include <QUrl>
 
 #include "core/Config.h"
+#include "core/InboxStore.h"
 #include "core/MailActions.h"
 #include "core/MailIndex.h"
 #include "core/ProcessRunner.h"
@@ -50,6 +51,7 @@ struct MainWindowOptions {
     QString msmtpConfig;  // ~/.msmtprc (vuoto = predefinito)
     QString unsavedDir;   // copie di emergenza degli inviati (vuoto = default di Sender)
     bool watchMail = true; // osserva le cartelle "new" per la posta scaricata da altri programmi
+    QString inboxFile;    // file JSON della Posta in arrivo Gmail (vuoto = <dati app>/gmail-inbox.json)
     QString tagsFile;     // file JSON delle etichette (vuoto = <dati app>/tags.json)
 };
 
@@ -175,9 +177,14 @@ private:
     void applyQuery(const QString& query);
     // Sostituisce i termini tag:nome / tag:"nome con spazi" con una query msgid: equivalente.
     QString expandTagQuery(const QString& query) const;
+    QString lastQuery_; // ultima query applicata (prima dell'espansione di tag:/gminbox:)
     void setCheckedTag(const QString& tag, bool on);
     void buildTagMenu(QMenu* menu);
     void importGmailLabels(const QString& channel, const QString& name);
+    void importGmailInbox(const Account& account);
+    void runGmailInboxQueue(); // aggiorna, un account alla volta, quelli gia' importati
+    QStringList inboxQueue_;
+    void refreshGmailInboxNodes(); // ricostruisce le cartelle quando cambia l'insieme degli account con Posta in arrivo virtuale
     bool gmailBusy_ = false;
     void refreshList();
     void onPageLoaded(int added, const QString& error);
@@ -211,6 +218,8 @@ private:
     Sender* sender_;
     MessageListModel* model_;
     TagStore* tags_ = nullptr;
+    QSet<QString> shownGmailInbox_;
+    InboxStore* inbox_ = nullptr; // Posta in arrivo virtuale degli account Gmail
     MailWatcher* watcher_ = nullptr;
     void watchMail();
     void setupNewMailNotifier();

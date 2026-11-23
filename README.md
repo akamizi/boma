@@ -80,6 +80,14 @@ scritto e sincronizzato su disco in `tmp/`, poi pubblicato in `cur/` con `link()
   incorporato (`src/core/gmail_labels.py`, richiede `python3`). Host, utente e password vengono da
   `~/.mbsyncrc` (PassCmd); le etichette di sistema (Inbox, Sent...) sono escluse, quelle già presenti
   non vengono mai tolte e Gmail non viene modificato.
+  Sempre per Gmail: «Posta in arrivo Gmail: aggiorna da» legge (stessa sola lettura) quali messaggi
+  hanno l'etichetta di sistema `\Inbox` e la cartella «Posta in arrivo» dell'account diventa quella
+  vista, **senza scaricare INBOX** (niente duplicati con «Tutti i messaggi»). L'elenco è in
+  `~/.local/share/Boma/gmail-inbox.json` (Message-ID per account) e viene sostituito a ogni
+  aggiornamento, quindi un messaggio archiviato su Gmail esce dalla Posta in arrivo; dopo il primo
+  consenso si aggiorna da solo a ogni sincronizzazione. È una vista: non si può spostare nulla
+  «dentro» e l'archiviazione dal programma non toglie l'etichetta sul server. Mostra al massimo
+  1500 messaggi, come i filtri per etichetta.
 - Conversazioni: i messaggi che si citano a vicenda (Message-ID/References, letti da `mu`)
   sono raggruppati in una riga con il numero dei messaggi; il clic sull'etichetta «N ▸» apre
   e chiude la conversazione, spuntare la riga seleziona tutti i suoi messaggi. Il

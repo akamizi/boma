@@ -117,6 +117,13 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
         watchMail();
     }
     model_->setTagStore(tags_);
+    inbox_ = new InboxStore(opts_.inboxFile, this);
+    connect(inbox_, &InboxStore::changed, this, [this] {
+        // nuovi messaggi (o archiviati) in Posta in arrivo: se e' la vista aperta, si rilegge
+        if (lastQuery_.contains(QLatin1String("gminbox:"))) applyQuery(lastQuery_);
+        refreshGmailInboxNodes();
+        unread_->schedule();
+    });
     connect(tags_, &TagStore::changed, this, [this] {
         // un filtro per etichetta resta valido: si rilegge l'elenco
         if (search_ && search_->text().contains(QLatin1String("tag:"), Qt::CaseInsensitive)) applyQuery(search_->text().trimmed());
@@ -380,7 +387,7 @@ MainWindow::MainWindow(const Config& config, const MainWindowOptions& options, Q
     unread_->setQueries([this] { return folders_->countableQueries(); });
     unread_->setMaildirOf([](const QString& q) { return MailIndex::maildirOfQuery(q); });
     unread_->setByMaildir([this](auto done) { index_->unreadByMaildir(std::move(done)); });
-    unread_->setSingle([this](const QString& q, auto done) { index_->countUnread(q, std::move(done)); });
+    unread_->setSingle([this](const QString& q, auto done) { index_->countUnread(expandTagQuery(q), std::move(done)); });
     connect(unread_, &UnreadCounter::countsReady, folders_, &FolderPane::setUnreadCounts);
     openTimer_ = new QTimer(this);
     openTimer_->setSingleShot(true);
@@ -645,16 +652,18 @@ void MainWindow::showNotice(const QString& title, const QString& text) {
 // ---- elenco e ricerca ----
 
 QString MainWindow::expandTagQuery(const QString& query) const {
-    if (!tags_ || !query.contains(QLatin1String("tag:"), Qt::CaseInsensitive)) return query;
-    static const QRegularExpression re(QStringLiteral("(?<![\\w:])tag:(?:\"([^\"]+)\"|(\\S+))"),
+    if (!query.contains(QLatin1String("tag:"), Qt::CaseInsensitive) && !query.contains(QLatin1String("gminbox:"))) return query;
+    // tag:<etichetta> (TagStore) e gminbox:<idAccount> (Posta in arrivo Gmail virtuale, InboxStore)
+    static const QRegularExpression re(QStringLiteral("(?<![\\w:])(tag|gminbox):(?:\"([^\"]+)\"|(\\S+))"),
                                        QRegularExpression::CaseInsensitiveOption);
     QString out;
     qsizetype last = 0;
     auto it = re.globalMatch(query);
     while (it.hasNext()) {
         const auto m = it.next();
-        const QString name = m.captured(1).isEmpty() ? m.captured(2) : m.captured(1);
-        QStringList ids = tags_->messageIds(name);
+        const QString name = m.captured(2).isEmpty() ? m.captured(3) : m.captured(2);
+        const bool isInbox = m.captured(1).compare(QLatin1String("gminbox"), Qt::CaseInsensitive) == 0;
+        QStringList ids = isInbox ? (inbox_ ? inbox_->messageIds(name) : QStringList()) : (tags_ ? tags_->messageIds(name) : QStringList());
         if (ids.size() > 1500) ids = ids.mid(0, 1500); // limite pratico della riga di comando
         QStringList parts;
         for (QString id : std::as_const(ids)) {
@@ -745,6 +754,73 @@ void MainWindow::buildTagMenu(QMenu* menu) {
         connect(gm->addAction(name), &QAction::triggered, this, [this, channel, name]() { importGmailLabels(channel, name); });
     }
     gm->setEnabled(!gm->isEmpty());
+    QMenu* gi = menu->addMenu(tr("Posta in arrivo Gmail: aggiorna da"));
+    gi->setObjectName(QStringLiteral("gmailInboxMenu"));
+    for (const Account& a : config_.accounts()) {
+        if (a.mbsyncChannel.isEmpty()) continue;
+        connect(gi->addAction(a.name.isEmpty() ? a.id : a.name), &QAction::triggered, this, [this, a]() { importGmailInbox(a); });
+    }
+    gi->setEnabled(!gi->isEmpty());
+}
+
+// Posta in arrivo virtuale: Gmail sincronizza solo «Tutti i messaggi», quindi la Posta in arrivo e'
+// l'insieme dei messaggi con l'etichetta \Inbox sul server (letta in sola lettura). Il primo
+// importo chiede conferma; poi si aggiorna da solo dopo ogni sincronizzazione.
+void MainWindow::importGmailInbox(const Account& account) {
+    if (gmailBusy_) return;
+    const bool silent = inbox_->has(account.id);
+    const QString name = account.name.isEmpty() ? account.id : account.name;
+    if (!silent &&
+        QMessageBox::question(this, tr("Posta in arrivo Gmail"),
+                              tr("Gmail sincronizza solo «Tutti i messaggi». Boma si collega in sola lettura al server IMAP di «%1» "
+                                 "con le credenziali di mbsync (~/.mbsyncrc) e legge quali messaggi sono in Posta in arrivo "
+                                 "(etichetta \\Inbox); la cartella «Posta in arrivo» di questo account li mostrerà senza duplicati. "
+                                 "Su Gmail non viene modificato nulla; l'elenco si aggiorna dopo ogni sincronizzazione. Continuare?")
+                                  .arg(name)) != QMessageBox::Yes)
+        return;
+    gmailBusy_ = true;
+    if (!silent) statusBar()->showMessage(tr("Lettura della Posta in arrivo di «%1»...").arg(name));
+    QPointer<MainWindow> self(this);
+    const QString id = account.id;
+    GmailLabels::fetch(runner_, QString(), opts_.mbsyncConfig, account.mbsyncChannel,
+                       [self, id, name, silent](QHash<QString, QStringList> map, QString err) {
+        if (!self) return;
+        self->gmailBusy_ = false;
+        // un'importazione parziale NON sostituisce l'insieme: farebbe sparire messaggi ancora in arrivo
+        if (!err.isEmpty()) {
+            self->statusBar()->clearMessage();
+            if (!silent) self->showNotice(tr("Posta in arrivo Gmail"), err);
+            self->runGmailInboxQueue();
+            return;
+        }
+        if (!self->inbox_->replace(id, map.keys()))
+            self->showNotice(tr("Posta in arrivo Gmail"), tr("Impossibile salvare: %1").arg(self->inbox_->lastError()));
+        else if (!silent)
+            self->statusBar()->showMessage(tr("«%1»: %n messaggi in Posta in arrivo", nullptr, int(map.size())).arg(name), 10000);
+        self->runGmailInboxQueue();
+    }, true);
+}
+
+void MainWindow::runGmailInboxQueue() {
+    if (gmailBusy_) return;
+    while (!inboxQueue_.isEmpty()) {
+        const QString id = inboxQueue_.takeFirst();
+        for (const Account& a : config_.accounts())
+            if (a.id == id) { importGmailInbox(a); return; }
+    }
+}
+
+void MainWindow::refreshGmailInboxNodes() {
+    QSet<QString> ids;
+    for (const Account& a : config_.accounts())
+        if (inbox_->has(a.id)) ids.insert(a.id);
+    if (ids == shownGmailInbox_) return;
+    shownGmailInbox_ = ids;
+    folders_->setGmailInbox(ids);
+    if (!muRoot_.isEmpty()) {
+        unread_->reset();
+        folders_->setMuRoot(muRoot_);
+    }
 }
 
 void MainWindow::importGmailLabels(const QString& channel, const QString& name) {
@@ -774,6 +850,7 @@ void MainWindow::importGmailLabels(const QString& channel, const QString& name) 
 
 void MainWindow::applyQuery(const QString& query) {
     keepPending_ = false;
+    lastQuery_ = query;
     model_->setQuery(expandTagQuery(query)); // generazione: i risultati della query precedente sono scartati
     if (model_->canFetchMore({})) model_->fetchMore({});
 }
@@ -1616,6 +1693,10 @@ void MainWindow::onSyncState(SyncService::State st, const QString&, const QStrin
         lastSync_ = QDateTime::currentDateTime();
         syncLabel_->setText(tr("Aggiornato alle %1").arg(lastSync_.toString(QStringLiteral("HH:mm"))));
         syncLabel_->setToolTip(QString());
+        inboxQueue_.clear();
+        for (const Account& a : config_.accounts())
+            if (!a.mbsyncChannel.isEmpty() && inbox_->has(a.id)) inboxQueue_ << a.id;
+        runGmailInboxQueue();
         runReindex();
         break;
     case SyncService::Failed:
@@ -1864,6 +1945,13 @@ void MainWindow::applyMuRoot(QString root, const QString& error)
     // Elimina solo con radice affidabile; l'euristica serve alle sole viste delle cartelle
     actions_->setMuRoot(muRootReliable_ ? root : QString());
     unread_->reset(); // l'elenco delle cartelle cambia: un giro in corso e' superato
+    {
+        QSet<QString> ids;
+        for (const Account& a : config_.accounts())
+            if (inbox_->has(a.id)) ids.insert(a.id);
+        shownGmailInbox_ = ids;
+        folders_->setGmailInbox(ids);
+    }
     folders_->setMuRoot(root);
     // "Non lette" esclude Cestino/Bozze/Inviata (cartelle relative alla radice di mu).
     // Con una radice dedotta male le esclusioni non trovano nulla: nessun danno.
