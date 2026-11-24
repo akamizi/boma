@@ -45,7 +45,7 @@ indicati sotto sono obiettivi di progetto, non risultati misurati.
 | Invio | **msmtp** | Un account msmtp per ogni identità; le credenziali le recupera `passwordeval` nella sua configurazione. |
 | Analisi e costruzione dei messaggi MIME | **GMime 3** (libreria) | Intestazioni, parti, allegati e firme; messaggi in uscita. |
 | Firma, cifratura, verifica, decifratura | **GnuPG** (`gpg`) con **gpg-agent** e **pinentry-qt** | Formato PGP/MIME. La password della chiave la chiede pinentry e la conserva gpg-agent per il tempo che hai configurato (consigliati 5 minuti, vedi «Configurazione»); Boma non la vede mai. |
-| Interfaccia | **Qt6 Widgets** | Tre colonne (cartelle, elenco, lettura) con barra di ricerca; all'avvio mostra le non lette. Cartelle mostrate per ogni account: Posta in arrivo, Inviata, Bozze, Cestino. |
+| Interfaccia | **Qt6 Widgets** | Tre colonne (cartelle, elenco, lettura) con barra di ricerca; all'avvio mostra le non lette. Cartelle mostrate per ogni account: Posta in arrivo, «Non lette» (solo i non letti dell'account: per Gmail quelli della Posta in arrivo, per gli altri quelli di tutte le cartelle tranne Cestino, Bozze e Inviata), Inviata, Bozze, Cestino. |
 | Filtri in ingresso | **Sieve** sul server | Non è compito di Boma. In Boma "filtrare" significa cercare. |
 
 L'unico punto in cui Boma scrive direttamente nel Maildir è la copia dei messaggi

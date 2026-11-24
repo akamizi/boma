@@ -16,6 +16,8 @@ namespace boma {
 // I conteggi dei non letti li calcola il chiamante (una query mu per cartella) e li
 // passa a setUnreadCounts: la cartella con non letti e' in grassetto, "Nome (N)";
 // i nodi senza Maildir propria (account, cartelle intermedie) mostrano la somma dei figli.
+// Sotto ogni account (con radice di mu nota) c'e' la vista «Non lette» dell'account: non entra nella
+// somma mostrata sul nodo account (duplicherebbe i messaggi delle cartelle).
 // Finche' la radice di mu non e' nota (setMuRoot) esiste solo "Non lette" e gli
 // account senza cartelle: le query di cartella sarebbero sbagliate.
 class FolderPane : public QTreeView {

@@ -145,6 +145,33 @@ void FolderPane::setMuRoot(const QString& muRoot) {
         } else {
             add(tr("Posta in arrivo"), QStringLiteral("INBOX"));
         }
+        // «Non lette» dell'account (non conta nella somma del nodo account: i messaggi sono gli stessi
+        // delle cartelle). Gmail con Posta in arrivo virtuale: i non letti di quella; altrimenti quelli di
+        // tutte le cartelle dell'account, tranne Cestino, Bozze e Inviata (come la vista globale).
+        {
+            QString uq;
+            if (muRoot.isEmpty()) {
+                // radice di mu ignota: niente viste
+            } else if (gmailInbox_.contains(a.id)) {
+                uq = QStringLiteral("gminbox:\"%1\" AND flag:unread AND NOT flag:trashed").arg(a.id);
+            } else if (QDir::cleanPath(a.maildirRoot) != QDir::cleanPath(muRoot)) {
+                const QString all = MailIndex::maildirQuery(muRoot, a.maildirRoot, QStringLiteral("*"));
+                if (!all.isEmpty()) {
+                    uq = all + QStringLiteral(" AND flag:unread AND NOT flag:trashed");
+                    for (const QString& f : {a.trashFolder, a.draftsFolder, a.sentFolder}) {
+                        const QString m = folderQuery(muRoot, a.maildirRoot, f);
+                        if (!m.isEmpty()) uq += QStringLiteral(" AND NOT ") + m;
+                    }
+                }
+            }
+            if (!uq.isEmpty()) {
+                auto* un = new QStandardItem(tr("Non lette"));
+                un->setData(uq, QueryRole);
+                un->setData(true, FolderRole);
+                un->setData(true, Qt::UserRole + 8); // vista, non cartella
+                top->appendRow(un);
+            }
+        }
         add(tr("Inviata"), a.sentFolder);
         add(tr("Bozze"), a.draftsFolder);
         add(tr("Cestino"), a.trashFolder);
@@ -181,7 +208,7 @@ void FolderPane::setUnreadCounts(const QHash<QString, int>& byQuery) {
         bool known = false;
         for (int i = 0; i < it->rowCount(); ++i) {
             const int c = apply(it->child(i));
-            if (c >= 0) { sum += c; known = true; }
+            if (c >= 0 && !it->child(i)->data(Qt::UserRole + 8).toBool()) { sum += c; known = true; }
         }
         int n = -1;
         if (it->data(Qt::UserRole + 2).toBool()) {

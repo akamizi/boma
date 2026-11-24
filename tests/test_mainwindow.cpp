@@ -366,6 +366,12 @@ private slots:
         for (int i = 0; i < acc->rowCount(); ++i)
             if (acc->child(i)->data(Qt::UserRole + 5).toString() == QLatin1String("Posta in arrivo")) { inbox = acc->child(i); ++n; }
         QCOMPARE(n, 1); // niente doppione con l'INBOX su disco
+        QStandardItem* un = acc->child(1); // subito dopo Posta in arrivo
+        QCOMPARE(un->data(Qt::UserRole + 5).toString(), QStringLiteral("Non lette"));
+        QCOMPARE(un->data(Qt::UserRole + 1).toString(), QStringLiteral("gminbox:\"g\" AND flag:unread AND NOT flag:trashed"));
+        // la somma dell'account non raddoppia: 3 non lette in Posta in arrivo e 3 nella vista = 3
+        p.setUnreadCounts({{inbox->data(Qt::UserRole + 1).toString(), 3}, {un->data(Qt::UserRole + 1).toString(), 3}});
+        QCOMPARE(acc->text(), QStringLiteral("G (3)"));
         QCOMPARE(inbox->data(Qt::UserRole + 1).toString(), QStringLiteral("gminbox:\"g\""));
         QVERIFY(inbox->data(Qt::UserRole + 6).toString().isEmpty()); // niente Maildir: niente menu "svuota"
         QVERIFY(!p.contextMenuFor(inbox->index()));
