@@ -584,7 +584,7 @@ QString MessageView::sanitizeHtmlImpl(const QString& s, qsizetype* consumed, boo
                 if (!body.contains(QLatin1String("url("), Qt::CaseInsensitive) &&
                     !body.contains(QLatin1String("@import"), Qt::CaseInsensitive) &&
                     !body.contains(QLatin1String("expression("), Qt::CaseInsensitive)) {
-                    out += cleanTag(tag, pol) + body + QLatin1String("</style>");
+                    out += cleanTag(tag, pol) + body.toString() + QLatin1String("</style>");
                 }
             }
             i = end;
