@@ -23,6 +23,7 @@ from email.parser import BytesHeaderParser
 
 CHUNK = 200
 PAUSE = 0.3          # secondi tra una richiesta e l'altra
+INBOX_MAX = 1500  # messaggi piu' recenti importati nella Posta in arrivo virtuale
 RETRIES = 4          # tentativi dopo OVERQUOTA
 RETRY_WAIT = 90      # secondi
 
@@ -213,6 +214,22 @@ def find_all_mail(conn):
     return "[Gmail]/All Mail"
 
 
+def parse_internaldates(data):
+    """[(secondi, numero di sequenza bytes)] da una risposta FETCH (INTERNALDATE); salta il resto."""
+    out = []
+    for item in data or []:
+        raw = item[0] if isinstance(item, tuple) else item
+        if not isinstance(raw, bytes):
+            continue
+        m = re.match(rb'^(\d+) \(.*INTERNALDATE "([^"]+)"', raw)
+        if not m:
+            continue
+        t = imaplib.Internaldate2tuple(b'INTERNALDATE "' + m.group(2) + b'"')
+        if t is not None:
+            out.append((time.mktime(t), m.group(1)))
+    return out
+
+
 def quote(s):
     return '"%s"' % s.replace("\\", "\\\\").replace('"', '\\"')
 
@@ -266,11 +283,30 @@ def run(config_path, channel, out=sys.stdout, inbox=False):
         # traffico che leggere tutta la cartella (Gmail limita la banda: OVERQUOTA).
         found = []
         for name in state["names"]:
-            # \Inbox e' un attributo di sistema: va passato come atomo, non come stringa tra virgolette
-            arg = name if inbox else quote(name)
+            # \Inbox (attributo di sistema) funziona come stringa tra virgolette ("\\Inbox"), l'atomo nudo
+            # viene rifiutato da Gmail (BAD Could not parse command)
+            arg = quote(name)
             typ, res = retrying(lambda c: c.search(None, "X-GM-LABELS", arg))
             if typ == "OK" and res and res[0]:
                 found.append((len(res[0].split()), name, res[0].split()))
+        if inbox:
+            # Posta in arrivo virtuale: solo gli ultimi INBOX_MAX messaggi PER DATA (INTERNALDATE, che e'
+            # la data di ricezione: l'ordine di arrivo sul server non coincide con la data); la query
+            # di mu non regge decine di migliaia di ID. Si scarica solo la data, non le intestazioni.
+            picked = []
+            for _, name, ids in found:
+                dated = []
+                for a in range(0, len(ids), 1000):
+                    part = b",".join(ids[a:a + 1000]).decode()
+                    typ, data = retrying(lambda c: c.fetch(part, "(INTERNALDATE)"))
+                    if typ != "OK":
+                        raise RuntimeError("FETCH fallito")
+                    dated += parse_internaldates(data)
+                    time.sleep(PAUSE)
+                dated.sort()
+                top = [seq for _, seq in dated[-INBOX_MAX:]]
+                picked.append((len(top), name, top))
+            found = picked
         found.sort(key=lambda t: t[0])  # prima le piccole: se si viene interrotti, resta il piu' utile
         done = 0
         partial = False
@@ -342,6 +378,10 @@ Near :lavoro-local:
     assert user_labels([b'(\\HasNoChildren) "/" "INBOX"', b'(\\HasNoChildren) "/" "Sent"', b'(\\HasNoChildren) "/" "Banca"',
                         b'(\\HasNoChildren \\Sent) "/" "[Gmail]/Posta inviata"', b'(\\HasChildren) "/" "A/B"',
                         b'(\\Noselect) "/" "[Gmail]"']) == ["Banca", "A/B"]
+    assert parse_internaldates([b'5 (INTERNALDATE "23-Nov-2026 10:00:00 +0100")', b")",
+                                b'7 (UID 9 INTERNALDATE "01-Jan-2020 00:00:00 +0000")']) == [
+        (time.mktime(imaplib.Internaldate2tuple(b'INTERNALDATE "23-Nov-2026 10:00:00 +0100"')), b"5"),
+        (time.mktime(imaplib.Internaldate2tuple(b'INTERNALDATE "01-Jan-2020 00:00:00 +0000"')), b"7")]
     assert find_all_mail.__name__
     print("ok")
 

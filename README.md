@@ -86,8 +86,9 @@ scritto e sincronizzato su disco in `tmp/`, poi pubblicato in `cur/` con `link()
   `~/.local/share/Boma/gmail-inbox.json` (Message-ID per account) e viene sostituito a ogni
   aggiornamento, quindi un messaggio archiviato su Gmail esce dalla Posta in arrivo; dopo il primo
   consenso si aggiorna da solo a ogni sincronizzazione. È una vista: non si può spostare nulla
-  «dentro» e l'archiviazione dal programma non toglie l'etichetta sul server. Mostra al massimo
-  1500 messaggi, come i filtri per etichetta.
+  «dentro» e l'archiviazione dal programma non toglie l'etichetta sul server. Mostra solo gli
+  ultimi 1500 messaggi in Posta in arrivo per data di ricezione: la query di mu non regge
+  decine di migliaia di ID.
 - Conversazioni: i messaggi che si citano a vicenda (Message-ID/References, letti da `mu`)
   sono raggruppati in una riga con il numero dei messaggi; il clic sull'etichetta «N ▸» apre
   e chiude la conversazione, spuntare la riga seleziona tutti i suoi messaggi. Il
