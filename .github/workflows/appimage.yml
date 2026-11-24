@@ -49,10 +49,10 @@ jobs:
         run: |
           export PATH="$PWD:$PATH"
           # il .desktop del pacchetto usa un'icona di tema (mail-client): qui serve quella inclusa
-          sed 's/^Icon=.*/Icon=boma/' packaging/boma.desktop > boma.desktop
+          sed -i 's/^Icon=.*/Icon=boma/' AppDir/usr/share/applications/boma.desktop
           ./linuxdeploy --appdir AppDir --plugin qt \
             --executable AppDir/usr/bin/boma \
-            --desktop-file boma.desktop \
+            --desktop-file AppDir/usr/share/applications/boma.desktop \
             --icon-file packaging/appimage/boma.svg
           # stile Adwaita: il plugin e le sue librerie (lo stesso Qt dell'AppImage)
           style=$(dpkg -L adwaita-qt6 | grep '/plugins/styles/.*\.so$' | head -n1)
