@@ -3,7 +3,9 @@ name: AppImage
 # Compila Boma come AppImage (Qt incluso: chi non ha Qt sul sistema non deve installarlo) e lo allega
 # alla release di GitHub del tag vX.Y.Z. Si puo' lanciare anche a mano (resta un artefatto del job).
 #
-# Dentro l'AppImage: Boma, Qt 6 (Ubuntu 24.04), la piattaforma Wayland/X11 e lo stile Adwaita
+# Costruita in un container Arch Linux (Qt 6 aggiornata, con lo schema chiaro/scuro di sistema): l'AppImage
+# richiede una glibc recente, come quella di Void o Arch; non parte su distribuzioni con glibc piu' vecchia.
+# Dentro l'AppImage: Boma, Qt 6, la piattaforma Wayland/X11 e lo stile Adwaita
 # (adwaita-qt6, compilato contro la stessa Qt, e' lo stile predefinito dell'AppImage).
 # NON dentro: mbsync, mu, msmtp, gpg e python3, che Boma lancia come programmi separati e che
 # devono essere installati sul sistema (su Void: isync mu4e msmtp gnupg python3).
@@ -17,18 +19,18 @@ permissions:
 
 jobs:
   appimage:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    container: archlinux:latest
     env:
-      APPIMAGE_EXTRACT_AND_RUN: "1" # niente FUSE sul runner
+      APPIMAGE_EXTRACT_AND_RUN: "1" # niente FUSE nel container
+      NO_STRIP: "1" # lo strip di linuxdeploy non capisce le librerie recenti di Arch (.relr.dyn)
     steps:
       - uses: actions/checkout@v4
 
       - name: Dipendenze
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build g++ pkg-config file wget \
-            qt6-base-dev qt6-wayland libgmime-3.0-dev adwaita-qt6
+          pacman -Syu --noconfirm --needed base-devel git cmake ninja pkgconf file wget github-cli \
+            qt6-base qt6-wayland gmime3 adwaita-qt6
 
       - name: Compila
         run: |
@@ -44,7 +46,7 @@ jobs:
 
       - name: Costruisce l'AppImage
         env:
-          QMAKE: /usr/lib/qt6/bin/qmake6
+          QMAKE: /usr/bin/qmake6
           LINUXDEPLOY_OUTPUT_VERSION: ${{ github.ref_name }}
         run: |
           export PATH="$PWD:$PATH"
@@ -55,7 +57,7 @@ jobs:
             --desktop-file AppDir/usr/share/applications/boma.desktop \
             --icon-file packaging/appimage/boma.svg
           # stile Adwaita: il plugin e le sue librerie (lo stesso Qt dell'AppImage)
-          style=$(dpkg -L adwaita-qt6 | grep '/plugins/styles/.*\.so$' | head -n1)
+          style=$(pacman -Ql adwaita-qt6 | awk '{print $2}' | grep '/plugins/styles/.*\.so$' | head -n1)
           test -n "$style" || { echo "plugin dello stile Adwaita non trovato"; exit 1; }
           mkdir -p AppDir/usr/plugins/styles
           cp "$style" AppDir/usr/plugins/styles/
@@ -72,6 +74,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           tag="${GITHUB_REF_NAME}"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "Boma ${tag#v}" --generate-notes
