@@ -80,7 +80,7 @@ QString mapValue(const QString& v, bool isBg, Ctx& ctx) {
         last = m.capturedEnd();
         ctx.changed = true;
     }
-    return out + QStringView(v).mid(last);
+    return out + QStringView(v).mid(last).toString();
 }
 
 // Proprieta' CSS con colori (dentro style="" o <style>).
@@ -100,7 +100,7 @@ QString mapCss(const QString& css, Ctx& ctx) {
         out += mapValue(m.captured(2), bg, ctx);
         last = m.capturedEnd(2);
     }
-    return out + QStringView(css).mid(last);
+    return out + QStringView(css).mid(last).toString();
 }
 
 QString mapTag(const QString& tag, Ctx& ctx) {
@@ -118,7 +118,7 @@ QString mapTag(const QString& tag, Ctx& ctx) {
                                               : mapValue(m.captured(2), name == QLatin1String("bgcolor"), ctx);
         last = m.capturedEnd(2);
     }
-    return out + QStringView(tag).mid(last);
+    return out + QStringView(tag).mid(last).toString();
 }
 
 } // namespace
@@ -139,7 +139,7 @@ QString darkenHtml(const QString& html, bool* changed) {
         if (part.startsWith(QLatin1String("<style"), Qt::CaseInsensitive)) {
             const qsizetype a = part.indexOf(QLatin1Char('>')) + 1;
             const qsizetype b = part.lastIndexOf(QLatin1String("</"));
-            out += QStringView(part).left(a) + mapCss(part.mid(a, b - a), ctx) + QStringView(part).mid(b);
+            out += QStringView(part).left(a).toString() + mapCss(part.mid(a, b - a), ctx) + QStringView(part).mid(b).toString();
         } else {
             out += mapTag(part, ctx);
         }
