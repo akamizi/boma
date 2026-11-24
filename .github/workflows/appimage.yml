@@ -30,7 +30,15 @@ jobs:
       - name: Dipendenze
         run: |
           pacman -Syu --noconfirm --needed base-devel git cmake ninja pkgconf file wget github-cli \
-            qt6-base qt6-wayland gmime3 adwaita-qt6
+            qt6-base qt6-wayland gmime3
+
+      # adwaita-qt6 non e' nei repository di Arch (solo AUR): si compila dai sorgenti, contro la stessa Qt
+      - name: Stile Adwaita
+        run: |
+          git clone --depth 1 --branch 1.4.2 https://github.com/FedoraQt/adwaita-qt.git
+          cmake -S adwaita-qt -B adwaita-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_QT6=ON -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build adwaita-build
+          DESTDIR="$PWD/adwaita-root" cmake --install adwaita-build
 
       - name: Compila
         run: |
@@ -57,7 +65,7 @@ jobs:
             --desktop-file AppDir/usr/share/applications/boma.desktop \
             --icon-file packaging/appimage/boma.svg
           # stile Adwaita: il plugin e le sue librerie (lo stesso Qt dell'AppImage)
-          style=$(pacman -Ql adwaita-qt6 | awk '{print $2}' | grep '/plugins/styles/.*\.so$' | head -n1)
+          style=$(find "$PWD/adwaita-root" -path '*/plugins/styles/*.so' | head -n1)
           test -n "$style" || { echo "plugin dello stile Adwaita non trovato"; exit 1; }
           mkdir -p AppDir/usr/plugins/styles
           cp "$style" AppDir/usr/plugins/styles/
