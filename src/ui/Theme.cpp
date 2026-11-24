@@ -24,6 +24,12 @@ Theme Theme::load() {
     QSettings s;
     Theme t;
     t.style = s.value(QStringLiteral("appearance/style")).toString();
+    // AppImage: lo stile Adwaita incluso e' il predefinito (somiglia a GTK), finche' non se ne sceglie un altro
+    if (t.style.isEmpty() && qEnvironmentVariableIsSet("APPIMAGE")) {
+        const QStringList keys = QStyleFactory::keys();
+        for (const QString& k : keys)
+            if (k.compare(QLatin1String("Adwaita"), Qt::CaseInsensitive) == 0) t.style = k;
+    }
     const QString sc = s.value(QStringLiteral("appearance/scheme"), QStringLiteral("system")).toString();
     t.scheme = (sc == QLatin1String("light") || sc == QLatin1String("dark")) ? sc : QStringLiteral("system");
     return t;

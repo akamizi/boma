@@ -496,6 +496,18 @@ che xbps installa da solo. Dopo l'installazione:
    `~/.config/boma/config.ini`, che si modifica anche da «Impostazioni»;
 3. per gli aggiornamenti: `sudo xbps-install -Su`.
 
+### AppImage (senza installare Qt)
+
+Per chi non vuole Qt sul sistema (per esempio con un ambiente tutto GTK) ogni release ha anche un
+`Boma-vX.Y.Z-x86_64.AppImage`, costruito da `.github/workflows/appimage.yml` (stesso tag del
+repository xbps). Contiene Boma, Qt 6 e lo stile Adwaita, che è lo stile predefinito dell'AppImage
+(si cambia in «Impostazioni»; lo schema chiaro/scuro funziona come al solito). Si scarica dalle
+release di GitHub, si rende eseguibile (`chmod +x`) e si lancia.
+
+**Non** contiene i programmi che Boma usa: devono essere installati sul sistema
+(su Void: `sudo xbps-install isync mu4e msmtp gnupg python3`). Gli aggiornamenti non sono
+automatici: si scarica il nuovo file.
+
 ### Come si pubblica una nuova versione (per chi mantiene il progetto)
 
 1. Alzare `VERSION` in `project(boma VERSION ...)` di `CMakeLists.txt` e fare il commit.
@@ -503,6 +515,6 @@ che xbps installa da solo. Dopo l'installazione:
    `.github/workflows/xbps.yml` compila il pacchetto in un container Void con il template
    `packaging/void/srcpkgs/boma/template`, lo firma con la chiave del secret `XBPS_PRIVATE_KEY`
    e aggiorna il ramo `gh-pages`. Si può anche lanciare a mano (*Actions → Repository xbps →
-   Run workflow*).
+   Run workflow*). Lo stesso tag costruisce anche l'AppImage (`appimage.yml`) e lo allega alla release.
 3. La chiave privata di firma non è nel repository: se cambia, cambia anche l'impronta qui sopra
    e gli utenti devono importare la nuova chiave.
