@@ -355,7 +355,11 @@ ParsedMessage MessageParser::parse(const QByteArray& raw, QString* error) {
     if (GDateTime* d = g_mime_message_get_date(msg)) {
         const qint64 secs = g_date_time_to_unix(d);
         const int off = int(g_date_time_get_utc_offset(d) / G_USEC_PER_SEC);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
         r.date = QDateTime::fromSecsSinceEpoch(secs, QTimeZone::fromSecondsAheadOfUtc(off));
+#else
+        r.date = QDateTime::fromSecsSinceEpoch(secs, Qt::OffsetFromUTC, off);
+#endif
     }
     Walker w;
     w.out = &r;

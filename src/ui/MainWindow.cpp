@@ -676,7 +676,7 @@ QString MainWindow::expandTagQuery(const QString& query) const {
         out += repl;
         last = m.capturedEnd();
     }
-    return out + QStringView(query).mid(last);
+    return out + QStringView(query).mid(last).toString();
 }
 
 void MainWindow::setCheckedTag(const QString& tag, bool on) {
