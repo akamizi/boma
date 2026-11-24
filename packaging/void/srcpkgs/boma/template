@@ -1,6 +1,6 @@
 # Template file for 'boma'
 pkgname=boma
-version=0.1.6
+version=0.1.7
 revision=1
 build_style=cmake
 configure_args="-DBUILD_TESTING=OFF"
