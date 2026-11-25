@@ -3,10 +3,11 @@ name: AppImage
 # Compila Boma come AppImage (Qt incluso: chi non ha Qt sul sistema non deve installarlo) e lo allega
 # alla release di GitHub del tag vX.Y.Z. Si puo' lanciare anche a mano (resta un artefatto del job).
 #
-# Costruita in un container Arch Linux (Qt 6 aggiornata, con lo schema chiaro/scuro di sistema): l'AppImage
-# richiede una glibc recente, come quella di Void o Arch; non parte su distribuzioni con glibc piu' vecchia.
+# Costruita in un container Fedora 41 (Qt 6.8 e glibc 2.40: parte su Void e su qualunque sistema con glibc >= 2.40;
+# un'immagine piu' recente, come Arch, richiederebbe una glibc che le distribuzioni non hanno ancora).
+# Solo X11 (xcb): niente plugin Wayland.
 # Dentro l'AppImage: Boma, Qt 6, la piattaforma Wayland/X11 e lo stile Adwaita
-# (adwaita-qt6, compilato contro la stessa Qt, e' lo stile predefinito dell'AppImage).
+# (adwaita-qt6 di Fedora, compilato contro la stessa Qt, e' lo stile predefinito dell'AppImage).
 # NON dentro: mbsync, mu, msmtp, gpg e python3, che Boma lancia come programmi separati e che
 # devono essere installati sul sistema (su Void: isync mu4e msmtp gnupg python3).
 on:
@@ -20,25 +21,18 @@ permissions:
 jobs:
   appimage:
     runs-on: ubuntu-latest
-    container: archlinux:latest
+    container: fedora:41
     env:
       APPIMAGE_EXTRACT_AND_RUN: "1" # niente FUSE nel container
-      NO_STRIP: "1" # lo strip di linuxdeploy non capisce le librerie recenti di Arch (.relr.dyn)
+      NO_STRIP: "1" # lo strip incluso in linuxdeploy e' vecchio e puo' fallire sulle librerie recenti
     steps:
       - uses: actions/checkout@v4
 
       - name: Dipendenze
         run: |
-          pacman -Syu --noconfirm --needed base-devel git cmake ninja pkgconf file wget github-cli \
-            qt6-base qt6-wayland gmime3
-
-      # adwaita-qt6 non e' nei repository di Arch (solo AUR): si compila dai sorgenti, contro la stessa Qt
-      - name: Stile Adwaita
-        run: |
-          git clone --depth 1 --branch 1.4.2 https://github.com/FedoraQt/adwaita-qt.git
-          cmake -S adwaita-qt -B adwaita-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_QT6=ON -DCMAKE_INSTALL_PREFIX=/usr
-          cmake --build adwaita-build
-          DESTDIR="$PWD/adwaita-root" cmake --install adwaita-build
+          dnf install -y gcc-c++ cmake ninja-build pkgconf-pkg-config file wget git gh \
+            qt6-qtbase-devel gmime30-devel adwaita-qt6 \
+            xcb-util-cursor xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util-wm
 
       - name: Compila
         run: |
@@ -65,7 +59,7 @@ jobs:
             --desktop-file AppDir/usr/share/applications/boma.desktop \
             --icon-file packaging/appimage/boma.svg
           # stile Adwaita: il plugin e le sue librerie (lo stesso Qt dell'AppImage)
-          style=$(find "$PWD/adwaita-root" -path '*/plugins/styles/*.so' | head -n1)
+          style=$(rpm -ql adwaita-qt6 | grep '/plugins/styles/.*\.so$' | head -n1)
           test -n "$style" || { echo "plugin dello stile Adwaita non trovato"; exit 1; }
           mkdir -p AppDir/usr/plugins/styles
           cp "$style" AppDir/usr/plugins/styles/
