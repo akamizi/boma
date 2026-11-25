@@ -59,8 +59,8 @@ jobs:
             --desktop-file AppDir/usr/share/applications/boma.desktop \
             --icon-file packaging/appimage/boma.svg
           # stile Adwaita: il plugin e le sue librerie (lo stesso Qt dell'AppImage)
-          style=$(rpm -ql adwaita-qt6 | grep '/plugins/styles/.*\.so$' | head -n1)
-          test -n "$style" || { echo "plugin dello stile Adwaita non trovato"; exit 1; }
+          style=$(find /usr/lib* -path '*/qt6/plugins/styles/*.so' -iname '*adwaita*' | head -n1)
+          test -n "$style" || { echo "plugin dello stile Adwaita non trovato"; rpm -ql adwaita-qt6; exit 1; }
           mkdir -p AppDir/usr/plugins/styles
           cp "$style" AppDir/usr/plugins/styles/
           ./linuxdeploy --appdir AppDir --deploy-deps-only AppDir/usr/plugins/styles
