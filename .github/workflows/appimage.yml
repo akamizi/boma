@@ -31,7 +31,7 @@ jobs:
       - name: Dipendenze
         run: |
           dnf install -y gcc-c++ cmake ninja-build pkgconf-pkg-config file wget git gh \
-            qt6-qtbase-devel gmime30-devel adwaita-qt6 \
+            qt6-qtbase-devel gmime30-devel libassuan2-devel adwaita-qt6 \
             xcb-util-cursor xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util-wm
 
       - name: Compila
