@@ -7,7 +7,7 @@ name: AppImage
 # un'immagine piu' recente, come Arch, richiederebbe una glibc che le distribuzioni non hanno ancora).
 # Solo X11 (xcb): niente plugin Wayland.
 # Dentro l'AppImage: Boma, Qt 6, la piattaforma Wayland/X11 e lo stile Adwaita
-# (adwaita-qt6 di Fedora, compilato contro la stessa Qt, e' lo stile predefinito dell'AppImage).
+# (adwaita-qt6, compilato contro la stessa Qt, e' lo stile predefinito dell'AppImage).
 # NON dentro: mbsync, mu, msmtp, gpg e python3, che Boma lancia come programmi separati e che
 # devono essere installati sul sistema (su Void: isync mu4e msmtp gnupg python3).
 on:
@@ -31,8 +31,16 @@ jobs:
       - name: Dipendenze
         run: |
           dnf install -y gcc-c++ cmake ninja-build pkgconf-pkg-config file wget git gh \
-            qt6-qtbase-devel gmime30-devel libassuan2-devel adwaita-qt6 \
+            qt6-qtbase-devel gmime30-devel libassuan2-devel qt6-qtbase-private-devel \
             xcb-util-cursor xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util-wm
+
+      # adwaita-qt6 non e' piu' nei repository di Fedora: si compila dai sorgenti, contro la stessa Qt
+      - name: Stile Adwaita
+        run: |
+          git clone --depth 1 --branch 1.4.2 https://github.com/FedoraQt/adwaita-qt.git
+          cmake -S adwaita-qt -B adwaita-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_QT6=ON -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build adwaita-build
+          DESTDIR="$PWD/adwaita-root" cmake --install adwaita-build
 
       - name: Compila
         run: |
@@ -59,8 +67,8 @@ jobs:
             --desktop-file AppDir/usr/share/applications/boma.desktop \
             --icon-file packaging/appimage/boma.svg
           # stile Adwaita: il plugin e le sue librerie (lo stesso Qt dell'AppImage)
-          style=$(find /usr/lib* -path '*/qt6/plugins/styles/*.so' -iname '*adwaita*' | head -n1)
-          test -n "$style" || { echo "plugin dello stile Adwaita non trovato"; rpm -ql adwaita-qt6; exit 1; }
+          style=$(find "$PWD/adwaita-root" -path '*/plugins/styles/*.so' | head -n1)
+          test -n "$style" || { echo "plugin dello stile Adwaita non trovato"; find adwaita-root -type f; exit 1; }
           mkdir -p AppDir/usr/plugins/styles
           cp "$style" AppDir/usr/plugins/styles/
           ./linuxdeploy --appdir AppDir --deploy-deps-only AppDir/usr/plugins/styles
